@@ -16,6 +16,7 @@ from app.schemas.auth import (
 )
 from app.services.google_oauth import GoogleOAuthService
 from app.services.auth_service import AuthService
+from app.services.youtube_service import YouTubeService
 from app.models.user import User
 
 router = APIRouter(prefix="/auth", tags=["auth"])
@@ -70,6 +71,12 @@ async def google_callback(
         # Create JWT tokens
         access_token = create_access_token(str(user.id), user.email)
         jti, refresh_token = await AuthService.create_jwt_refresh_token(db, user.id)
+
+        # Sync YouTube channel data (best-effort)
+        try:
+            await YouTubeService.sync_user_channel(db, user.id, token_data["access_token"])
+        except Exception as yt_exc:  # pragma: no cover - 방어적 로깅
+            print(f"Warning: Failed to sync YouTube data: {yt_exc}")
         
         return LoginResponse(
             user=UserResponse(
