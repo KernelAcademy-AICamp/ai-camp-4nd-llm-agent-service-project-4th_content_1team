@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     google_client_id: str
     google_client_secret: str
     google_redirect_uri: str
+
+    # YouTube API
+    youtube_api_key: str
     
     # JWT
     jwt_secret: str
