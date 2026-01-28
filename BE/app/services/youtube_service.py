@@ -1,5 +1,5 @@
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any, Dict, List, Optional
 
 import httpx
@@ -219,14 +219,14 @@ class YouTubeService:
             "ids": f"channel=={channel_id}",
             "dimensions": dimensions,
             "metrics": metrics,
-            "startDate": report_date.isoformat(),
+            "startDate": (report_date - timedelta(days=30)).isoformat(),
             "endDate": report_date.isoformat(),
         }
         headers = {"Authorization": f"Bearer {access_token}"}
         async with httpx.AsyncClient(timeout=15.0) as client:
             resp = await client.get(YouTubeService.ANALYTICS_URL, params=params, headers=headers)
-            # scope가 없으면 403이 반환될 수 있다.
-            if resp.status_code in (401, 403):
+            # scope가 없거나 권한/데이터 부족 시 400/401/403이 반환될 수 있다.
+            if resp.status_code in (400, 401, 403):
                 logger.info(
                     "YouTube Analytics skipped (status=%s, dims=%s, metrics=%s)",
                     resp.status_code,
@@ -255,7 +255,7 @@ class YouTubeService:
             access_token,
             channel_id,
             dimensions="ageGroup,gender",
-            metrics="viewerPercentage,views,watchTimeMinutes",
+            metrics="viewerPercentage",
             report_date=report_date,
         )
         if not report or not report.get("rows"):
@@ -328,7 +328,7 @@ class YouTubeService:
             access_token,
             channel_id,
             dimensions="country",
-            metrics="viewerPercentage,views,watchTimeMinutes",
+            metrics="views,estimatedMinutesWatched",
             report_date=report_date,
         )
         if not report or not report.get("rows"):
