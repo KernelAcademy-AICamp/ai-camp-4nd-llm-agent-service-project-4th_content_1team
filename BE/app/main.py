@@ -3,7 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
 from app.core.db import engine
-from app.api.routes import auth
+from app.api.routes import auth, youtube
 
 # Create FastAPI app
 app = FastAPI(
@@ -23,6 +23,7 @@ app.add_middleware(
 
 # Include routers
 app.include_router(auth.router)
+app.include_router(youtube.router)
 
 
 @app.get("/")

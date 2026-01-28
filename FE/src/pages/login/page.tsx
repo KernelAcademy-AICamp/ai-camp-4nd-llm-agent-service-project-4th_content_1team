@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import { Play, Sparkles, TrendingUp, Calendar, ImageIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
-import { googleLogin } from "../../lib/api"
+import { googleLogin } from "../../lib/api/index"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
