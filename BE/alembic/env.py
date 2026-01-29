@@ -17,6 +17,7 @@ from app.models.youtube_channel import (
     YTAudienceDaily,
     YTGeoDaily,
 )
+from app.models.competitor import CompetitorCollection, CompetitorVideo
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

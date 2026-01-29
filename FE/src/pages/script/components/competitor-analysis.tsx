@@ -17,9 +17,9 @@ import {
   Loader2,
   RefreshCw
 } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { searchYouTubeVideos, type VideoItem } from "../../../lib/api/index"
+import { searchYouTubeVideos, saveCompetitorVideos, type VideoItem } from "../../../lib/api/index"
 
 // TODO: 지워야함 샘플 데이터 (하드코딩)
 const SAMPLE_TITLE = "바이브 코딩으로 3시간 만에 웹서비스 만들기"
@@ -52,6 +52,33 @@ export function CompetitorAnalysis() {
     },
     staleTime: 1000 * 60 * 10, // 10분간 캐시
   })
+
+  // 검색 결과 10개를 DB에 자동 저장
+  const savedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!data?.videos.length) return
+    const key = data.videos.map(v => v.video_id).join(',')
+    if (savedRef.current === key) return
+    savedRef.current = key
+
+    saveCompetitorVideos({
+      policy_json: { query: data.query, keywords: SAMPLE_KEYWORDS },
+      videos: data.videos.map((v: VideoItem) => ({
+        youtube_video_id: v.video_id,
+        url: `https://www.youtube.com/watch?v=${v.video_id}`,
+        title: v.title,
+        channel_title: v.channel_title,
+        published_at: v.published_at,
+        metrics_json: {
+          view_count: v.statistics.view_count,
+          like_count: v.statistics.like_count,
+          comment_count: v.statistics.comment_count,
+          popularity_score: v.popularity_score,
+          days_since_upload: v.days_since_upload,
+        },
+      })),
+    }).catch(console.error)
+  }, [data])
 
   // VideoItem을 UI 형식으로 변환
   const competitorVideos = data?.videos.map((video: VideoItem) => ({
@@ -299,6 +326,7 @@ export function CompetitorAnalysis() {
               ))}
             </div>
           </ScrollArea>
+
         )}
       </CardContent>
     </Card>
