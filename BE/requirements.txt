@@ -27,3 +27,19 @@ python-cors==1.0.0
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.6
+
+# LangChain & AI
+langchain
+langchain-core
+langchain-openai
+langchain-google-genai
+langchain-community
+
+# Tools & Crawling
+tavily-python
+feedparser      # RSS 파싱
+trafilatura     # 뉴스 본문 추출
+beautifulsoup4  # HTML 파싱
+requests        # HTTP 요청
+lxml            # 파싱 가속
+playwright      # 브라우저 자동화 (이미지/표 추출)
