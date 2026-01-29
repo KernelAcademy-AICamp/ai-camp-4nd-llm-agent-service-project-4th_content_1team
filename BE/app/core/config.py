@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     # Application
     app_env: str = "development"
     
+    # YouTube Data API
+    youtube_api_key: str
+    
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins from comma-separated string."""

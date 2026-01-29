@@ -1,8 +1,10 @@
 import logging
-from datetime import datetime, date, timedelta
+import math
+from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 import httpx
+from fastapi import HTTPException
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -385,4 +387,281 @@ class YouTubeService:
                     watch_time_minutes=_to_float(row.get("watchTimeMinutes")),
                     raw_report_json=row,
                 )
+            )
+
+    # ==================== YouTube 비디오 트렌드 검색 기능 ====================
+
+    @staticmethod
+    async def search_popular_videos(
+        keywords: str,
+        title: Optional[str] = None,
+        max_results: int = 10,
+        api_key: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        트렌드 인기도 기준 YouTube 비디오 검색.
+        
+        Args:
+            keywords: 검색 키워드 (필수)
+            title: 제목 필터 (선택)
+            max_results: 반환할 결과 수 (기본 10)
+            api_key: YouTube Data API 키
+            
+        Returns:
+            트렌드 인기도순으로 정렬된 비디오 리스트
+            
+        알고리즘:
+            popularity_score = (views_per_day × recency_weight) + engagement_score
+            - views_per_day: 일일 조회수 (viewCount / days_since_upload)
+            - recency_weight: 신선도 가중치 (30일 이내 최대 2배)
+            - engagement_score: 참여도 (likeCount × 0.1 + commentCount × 0.05)
+        """
+        # 1. 검색 쿼리 구성
+        query = YouTubeService._build_query(keywords, title)
+        logger.info(f"YouTube search query: {query}")
+        
+        # 2. search.list로 video_ids 수집 (50개)
+        video_ids = await YouTubeService._search_video_ids(
+            query, api_key, fetch_count=50
+        )
+        
+        if not video_ids:
+            logger.warning(f"No videos found for query: {query}")
+            return []
+        
+        logger.info(f"Found {len(video_ids)} video IDs")
+        
+        # 3. videos.list로 상세 정보 조회
+        video_details = await YouTubeService._get_video_details(
+            video_ids, api_key
+        )
+        
+        logger.info(f"Retrieved details for {len(video_details)} videos")
+        
+        # 4. 트렌드 점수 계산
+        for video in video_details:
+            score, days = YouTubeService._calculate_popularity_score(video)
+            video["popularity_score"] = score
+            video["days_since_upload"] = days
+        
+        # 5. 정렬 및 상위 N개 반환
+        sorted_videos = sorted(
+            video_details,
+            key=lambda x: x.get("popularity_score", 0),
+            reverse=True
+        )
+        
+        result = sorted_videos[:max_results]
+        logger.info(f"Returning top {len(result)} videos")
+        
+        return result
+
+    @staticmethod
+    def _calculate_popularity_score(
+        video: Dict[str, Any]
+    ) -> tuple[float, int]:
+        """
+        트렌드 인기도 점수 계산.
+        
+        공식:
+            popularity_score = (views_per_day × recency_weight) + engagement_score
+            
+        where:
+            - views_per_day = viewCount / days_since_upload
+            - recency_weight = 1 + max(0, (30 - days_since_upload) / 30)
+            - engagement_score = likeCount × 0.1 + commentCount × 0.05
+        
+        Returns:
+            (popularity_score, days_since_upload)
+        """
+        # 업로드 날짜 파싱
+        published_at_str = video.get("snippet", {}).get("publishedAt")
+        if not published_at_str:
+            return (0.0, 0)
+        
+        try:
+            published_at = datetime.fromisoformat(
+                published_at_str.replace("Z", "+00:00")
+            )
+        except (ValueError, AttributeError):
+            logger.warning(f"Invalid publishedAt format: {published_at_str}")
+            return (0.0, 0)
+        
+        now = datetime.now(timezone.utc)
+        
+        # 경과 일수 (최소 1일)
+        days_since_upload = max((now - published_at).days, 1)
+        
+        # 통계 추출
+        stats = video.get("statistics", {})
+        try:
+            view_count = int(stats.get("viewCount", 0))
+            like_count = int(stats.get("likeCount", 0))
+            comment_count = int(stats.get("commentCount", 0))
+        except (ValueError, TypeError):
+            logger.warning(f"Invalid statistics for video: {video.get('id')}")
+            return (0.0, days_since_upload)
+        
+        # 1. 일일 조회수
+        views_per_day = view_count / days_since_upload
+
+        # 2. 신선도 가중치 (점진적 페널티 적용)
+        # - 30일 이내: 2.0 → 1.0 (보너스)
+        # - 31~90일: 1.0 → 0.5 (약한 페널티)
+        # - 91일+: 0.5 → 0.2 (강한 페널티, 최소 0.2)
+        if days_since_upload <= 30:
+            recency_weight = 2.0 - (days_since_upload / 30)  # 2.0 → 1.0
+        elif days_since_upload <= 90:
+            recency_weight = 1.0 - ((days_since_upload - 30) / 120)  # 1.0 → 0.5
+        else:
+            recency_weight = max(0.2, 0.5 - ((days_since_upload - 90) / 365))  # 최소 0.2
+
+        # 3. 참여도 점수 (비율 기반으로 정규화)
+        # 조회수 대비 참여율로 계산하여 오래된 영상의 누적 이점 제거
+        if view_count > 0:
+            like_ratio = like_count / view_count
+            comment_ratio = comment_count / view_count
+            # 참여율에 조회수 스케일 적용 (로그 스케일로 큰 영상 이점 완화)
+            view_scale = math.log10(max(view_count, 10))  # 최소 1
+            engagement_score = (like_ratio * 1000 + comment_ratio * 500) * view_scale
+        else:
+            engagement_score = 0
+
+        # 4. 최종 점수
+        popularity_score = (views_per_day * recency_weight) + engagement_score
+        
+        return (popularity_score, days_since_upload)
+
+    @staticmethod
+    def _build_query(keywords: str, title: Optional[str]) -> str:
+        """
+        검색 쿼리 생성 (최적화된 전략).
+        
+        전략: intitle: 연산자 활용
+        - keywords: 넓은 범위로 검색 (컨텐츠 전체)
+        - title: intitle: 연산자로 제목 필터링 (관련성 향상)
+        
+        예시:
+            - keywords="python tutorial", title="beginner"
+            - 결과: "python tutorial intitle:beginner"
+            - 의미: "python tutorial" 포함 & 제목에 "beginner" 포함
+        """
+        if not title:
+            return keywords
+        
+        # intitle: 연산자로 제목 필터링
+        # 공백 포함 시 따옴표로 감싸기
+        if " " in title:
+            return f'{keywords} intitle:"{title}"'
+        else:
+            return f"{keywords} intitle:{title}"
+
+    @staticmethod
+    async def _search_video_ids(
+        query: str,
+        api_key: str,
+        fetch_count: int = 50
+    ) -> List[str]:
+        """
+        search.list API로 video IDs 수집.
+        
+        Args:
+            query: 검색 쿼리
+            api_key: YouTube Data API 키
+            fetch_count: 가져올 비디오 수 (최대 50)
+            
+        Returns:
+            비디오 ID 리스트
+        """
+        params = {
+            "part": "id",
+            "q": query,
+            "type": "video",
+            "maxResults": min(fetch_count, 50),  # YouTube API 최대 50개
+            "key": api_key
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{YouTubeService.BASE_URL}/search",
+                    params=params
+                )
+                
+                # 할당량 초과 처리
+                if resp.status_code == 403:
+                    error_data = resp.json()
+                    error_reason = error_data.get("error", {}).get("errors", [{}])[0].get("reason", "")
+                    if "quotaExceeded" in error_reason:
+                        raise HTTPException(
+                            status_code=429,
+                            detail="YouTube API 일일 할당량 초과"
+                        )
+                
+                resp.raise_for_status()
+                data = resp.json()
+                
+                return [
+                    item["id"]["videoId"]
+                    for item in data.get("items", [])
+                    if item.get("id", {}).get("videoId")
+                ]
+        except httpx.TimeoutException:
+            logger.error(f"YouTube search API timeout for query: {query}")
+            raise HTTPException(
+                status_code=504,
+                detail="YouTube API 요청 시간 초과"
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error(f"YouTube search API error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"YouTube 검색 중 오류 발생: {str(e)}"
+            )
+
+    @staticmethod
+    async def _get_video_details(
+        video_ids: List[str],
+        api_key: str
+    ) -> List[Dict[str, Any]]:
+        """
+        videos.list API로 비디오 상세 정보 조회.
+        
+        Args:
+            video_ids: 비디오 ID 리스트
+            api_key: YouTube Data API 키
+            
+        Returns:
+            비디오 상세 정보 리스트
+        """
+        if not video_ids:
+            return []
+        
+        params = {
+            "part": "snippet,statistics",
+            "id": ",".join(video_ids),
+            "key": api_key
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{YouTubeService.BASE_URL}/videos",
+                    params=params
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                
+                return data.get("items", [])
+        except httpx.TimeoutException:
+            logger.error("YouTube videos API timeout")
+            raise HTTPException(
+                status_code=504,
+                detail="YouTube API 요청 시간 초과"
+            )
+        except httpx.HTTPStatusError as e:
+            logger.error(f"YouTube videos API error: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail=f"비디오 정보 조회 중 오류 발생: {str(e)}"
             )
