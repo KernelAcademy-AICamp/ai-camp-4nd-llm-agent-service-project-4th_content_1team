@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # YouTube Data API
     youtube_api_key: str
     
+    # OpenAI API
+    openai_api_key: str = ""  # 테스트 시 optional
+    
     @property
     def cors_origins_list(self) -> list[str]:
         """Parse CORS origins from comma-separated string."""
