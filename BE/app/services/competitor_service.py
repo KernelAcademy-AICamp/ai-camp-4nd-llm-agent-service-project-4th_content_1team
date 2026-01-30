@@ -101,7 +101,12 @@ class CompetitorService:
                 detail=f"경쟁 영상을 찾을 수 없습니다: {competitor_video_id}"
             )
         
-        # 2. YouTube 댓글 API로 댓글 가져오기
+        # 2. 비디오의 채널 ID 가져오기 (채널 주인 댓글 필터링용)
+        video_channel_id = await CompetitorService._get_video_channel_id(
+            video.youtube_video_id
+        )
+        
+        # 3. YouTube 댓글 API로 댓글 가져오기
         # 정렬 후 필터링을 위해 더 많이 가져옴 (YouTube API 최대 100개)
         fetch_count = min(max_results * 2, 100)
         comments_data = await CompetitorService._fetch_youtube_comments(
@@ -113,13 +118,39 @@ class CompetitorService:
             logger.warning(f"댓글을 찾을 수 없습니다: {video.youtube_video_id}")
             return []
         
-        # 3. 좋아요, 싫어요, 하트 순으로 정렬
-        sorted_comments = CompetitorService._sort_comments_by_engagement(comments_data)
+        # 4. 채널 주인 댓글 제외
+        if video_channel_id:
+            filtered_comments = [
+                comment
+                for comment in comments_data
+                if comment.get("author_channel_id") != video_channel_id
+            ]
+            
+            excluded_count = len(comments_data) - len(filtered_comments)
+            if excluded_count > 0:
+                logger.info(
+                    f"채널 주인 댓글 {excluded_count}개 제외: 전체 {len(comments_data)}개 중 {len(filtered_comments)}개 남음"
+                )
+        else:
+            # 채널 ID를 가져올 수 없는 경우 필터링 건너뛰기
+            filtered_comments = comments_data
+            logger.warning(
+                f"비디오 채널 ID를 가져올 수 없어 채널 주인 댓글 필터링을 건너뜁니다: {video.youtube_video_id}"
+            )
         
-        # 4. 상위 N개만 선택
+        if not filtered_comments:
+            logger.warning(
+                f"채널 주인 댓글 제외 후 댓글이 없습니다: {video.youtube_video_id}"
+            )
+            return []
+        
+        # 5. 좋아요, 싫어요, 하트 순으로 정렬
+        sorted_comments = CompetitorService._sort_comments_by_engagement(filtered_comments)
+        
+        # 6. 상위 N개만 선택
         top_comments = sorted_comments[:max_results]
         
-        # 5. 기존 댓글 삭제 (중복 방지)
+        # 7. 기존 댓글 삭제 (중복 방지)
         await db.execute(
             delete(VideoCommentSample).where(
                 VideoCommentSample.competitor_video_id == competitor_video_id
@@ -127,7 +158,7 @@ class CompetitorService:
         )
         await db.flush()
         
-        # 6. 새 댓글 저장
+        # 8. 새 댓글 저장
         comment_samples = []
         for comment_data in top_comments:
             comment_sample = VideoCommentSample(
@@ -142,7 +173,7 @@ class CompetitorService:
         
         await db.commit()
         
-        # 7. 저장된 댓글 새로고침
+        # 9. 저장된 댓글 새로고침
         for comment in comment_samples:
             await db.refresh(comment)
         
@@ -287,15 +318,73 @@ class CompetitorService:
                 except (ValueError, AttributeError):
                     logger.warning(f"Invalid publishedAt format: {published_at_str}")
             
+            # 댓글 작성자의 채널 ID
+            author_channel_id = None
+            author_channel = comment_snippet.get("authorChannelId")
+            if author_channel and isinstance(author_channel, dict):
+                author_channel_id = author_channel.get("value")
+            
             return {
                 "comment_id": comment_id,
                 "text": text,
                 "likes": like_count,
                 "dislikes": dislike_count,
                 "published_at": published_at,
+                "author_channel_id": author_channel_id,
             }
         except Exception as e:
             logger.warning(f"댓글 파싱 실패: {e}")
+            return None
+
+    @staticmethod
+    async def _get_video_channel_id(video_id: str) -> Optional[str]:
+        """
+        YouTube 비디오의 채널 ID를 가져오기.
+        
+        Args:
+            video_id: YouTube 비디오 ID
+            
+        Returns:
+            채널 ID 또는 None
+        """
+        BASE_URL = "https://www.googleapis.com/youtube/v3"
+        api_key = settings.youtube_api_key
+        
+        params = {
+            "part": "snippet",
+            "id": video_id,
+            "key": api_key,
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(
+                    f"{BASE_URL}/videos",
+                    params=params,
+                )
+                
+                if resp.status_code == 403:
+                    error_data = resp.json()
+                    error_reason = (
+                        error_data.get("error", {})
+                        .get("errors", [{}])[0]
+                        .get("reason", "")
+                    )
+                    if "quotaExceeded" in error_reason:
+                        logger.warning("YouTube API 할당량 초과로 채널 ID 조회 실패")
+                        return None
+                
+                resp.raise_for_status()
+                data = resp.json()
+                
+                items = data.get("items", [])
+                if items:
+                    snippet = items[0].get("snippet", {})
+                    return snippet.get("channelId")
+                
+                return None
+        except Exception as e:
+            logger.warning(f"비디오 채널 ID 조회 실패: {video_id} - {e}")
             return None
 
     @staticmethod
