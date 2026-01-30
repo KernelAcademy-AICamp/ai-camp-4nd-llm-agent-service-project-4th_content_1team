@@ -47,3 +47,27 @@ class CompetitorVideo(Base):
     selection_json = Column(JSONB, nullable=True)
 
     collection = relationship("CompetitorCollection", back_populates="videos")
+    comment_samples = relationship(
+        "VideoCommentSample",
+        back_populates="video",
+        cascade="all, delete-orphan",
+    )
+
+
+class VideoCommentSample(Base):
+    """비디오 댓글 샘플."""
+
+    __tablename__ = "video_comment_samples"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    competitor_video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("competitor_videos.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    comment_id = Column(Text, nullable=True)
+    text = Column(Text, nullable=False)
+    likes = Column(Integer, nullable=True)
+    published_at = Column(DateTime(timezone=True), nullable=True)
+
+    video = relationship("CompetitorVideo", back_populates="comment_samples")

@@ -27,6 +27,11 @@ wheels/
 .env
 .env.local
 
+# YouTube Cookies (보안)
+config/youtube_cookies.txt
+*.cookies.txt
+cookies/
+
 # IDEs
 .vscode/
 .idea/

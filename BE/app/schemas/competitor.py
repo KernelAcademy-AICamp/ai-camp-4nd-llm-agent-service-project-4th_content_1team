@@ -31,3 +31,41 @@ class CompetitorSaveResponse(BaseModel):
     collection_id: UUID
     generated_at: datetime
     video_count: int
+
+
+class VideoCommentSampleIn(BaseModel):
+    """댓글 샘플 입력."""
+
+    comment_id: Optional[str] = None
+    text: str
+    likes: Optional[int] = None
+    published_at: Optional[datetime] = None
+
+
+class VideoCommentSampleOut(BaseModel):
+    """댓글 샘플 출력."""
+
+    id: UUID
+    competitor_video_id: UUID
+    comment_id: Optional[str] = None
+    text: str
+    likes: Optional[int] = None
+    published_at: Optional[datetime] = None
+
+    class Config:
+        from_attributes = True
+
+
+class FetchCommentsRequest(BaseModel):
+    """댓글 가져오기 요청."""
+
+    competitor_video_id: UUID
+    max_results: int = Field(default=10, ge=1, le=100)
+
+
+class FetchCommentsResponse(BaseModel):
+    """댓글 가져오기 응답."""
+
+    competitor_video_id: UUID
+    comment_count: int
+    comments: List[VideoCommentSampleOut]

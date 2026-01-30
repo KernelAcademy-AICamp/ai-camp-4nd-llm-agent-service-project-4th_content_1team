@@ -18,6 +18,7 @@ from app.models.youtube_channel import (
     YTGeoDaily,
 )
 from app.models.competitor import CompetitorCollection, CompetitorVideo
+from app.models.caption import VideoCaption
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

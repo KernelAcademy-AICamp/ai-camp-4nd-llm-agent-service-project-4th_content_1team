@@ -23,6 +23,7 @@ export interface VideoItem {
     statistics: VideoStatistics;
     popularity_score: number;
     days_since_upload: number;
+    has_caption: boolean;
 }
 
 export interface VideoSearchResponse {

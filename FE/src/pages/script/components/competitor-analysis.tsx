@@ -19,7 +19,7 @@ import {
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { searchYouTubeVideos, saveCompetitorVideos, type VideoItem } from "../../../lib/api/index"
+import { searchYouTubeVideos, saveCompetitorVideos, fetchSubtitles, type VideoItem } from "../../../lib/api/index"
 
 // TODO: 지워야함 샘플 데이터 (하드코딩)
 const SAMPLE_TITLE = "바이브 코딩으로 3시간 만에 웹서비스 만들기"
@@ -76,8 +76,18 @@ export function CompetitorAnalysis() {
           popularity_score: v.popularity_score,
           days_since_upload: v.days_since_upload,
         },
+        caption_meta_json: {
+          has_caption: v.has_caption,
+        },
       })),
-    }).catch(console.error)
+    })
+      .then(() => {
+        // TODO: 나중에 테스트하기 위해 자막 가져오기 비활성화
+        // 경쟁 영상 저장 성공 후 자막 자동 조회 및 저장
+        // const videoIds = data.videos.map((v: VideoItem) => v.video_id)
+        // return fetchSubtitles({ video_ids: videoIds, languages: ["ko", "en"] })
+      })
+      .catch(console.error)
   }, [data])
 
   // VideoItem을 UI 형식으로 변환
