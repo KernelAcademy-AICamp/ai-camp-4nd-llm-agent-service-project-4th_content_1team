@@ -9,6 +9,8 @@ from app.models.youtube_channel import (
     YTAudienceDaily,
     YTGeoDaily,
 )
+from app.models.thumbnail_strategy import ThumbnailStrategy
+from app.models.thumbnail_generation import ThumbnailGeneration
 
 __all__ = [
     "User",
@@ -20,4 +22,6 @@ __all__ = [
     "YTChannelTopic",
     "YTAudienceDaily",
     "YTGeoDaily",
+    "ThumbnailStrategy",
+    "ThumbnailGeneration",
 ]
