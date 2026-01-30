@@ -23,3 +23,4 @@ class User(Base):
     oauth_accounts = relationship("OAuthAccount", back_populates="user", cascade="all, delete-orphan")
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     jwt_refresh_tokens = relationship("JWTRefreshToken", back_populates="user", cascade="all, delete-orphan")
+    thumbnail_generations = relationship("ThumbnailGeneration", back_populates="user", cascade="all, delete-orphan")
