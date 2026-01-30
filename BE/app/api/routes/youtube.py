@@ -56,7 +56,8 @@ async def search_videos(request: VideoSearchRequest):
         for v in raw_videos:
             snippet = v.get("snippet", {})
             stats = v.get("statistics", {})
-            
+            content_details = v.get("contentDetails", {})
+
             try:
                 video_item = VideoItem(
                     video_id=v["id"],
@@ -74,7 +75,8 @@ async def search_videos(request: VideoSearchRequest):
                         comment_count=int(stats.get("commentCount", 0))
                     ),
                     popularity_score=v.get("popularity_score", 0.0),
-                    days_since_upload=v.get("days_since_upload", 0)
+                    days_since_upload=v.get("days_since_upload", 0),
+                    has_caption=content_details.get("caption", "false") == "true"
                 )
                 videos.append(video_item)
             except (ValueError, KeyError) as e:

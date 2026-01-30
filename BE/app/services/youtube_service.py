@@ -638,7 +638,7 @@ class YouTubeService:
             return []
         
         params = {
-            "part": "snippet,statistics",
+            "part": "snippet,statistics,contentDetails",
             "id": ",".join(video_ids),
             "key": api_key
         }

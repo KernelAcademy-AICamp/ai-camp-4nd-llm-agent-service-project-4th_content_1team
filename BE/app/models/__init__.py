@@ -9,6 +9,8 @@ from app.models.youtube_channel import (
     YTAudienceDaily,
     YTGeoDaily,
 )
+from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
+from app.models.caption import VideoCaption
 
 __all__ = [
     "User",
@@ -20,4 +22,8 @@ __all__ = [
     "YTChannelTopic",
     "YTAudienceDaily",
     "YTGeoDaily",
+    "CompetitorCollection",
+    "CompetitorVideo",
+    "VideoCommentSample",
+    "VideoCaption",
 ]
