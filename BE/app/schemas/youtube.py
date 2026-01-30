@@ -61,6 +61,10 @@ class VideoItem(BaseModel):
         ...,
         description="업로드 후 경과 일수"
     )
+    has_caption: bool = Field(
+        default=False,
+        description="자막 존재 여부 (contentDetails.caption)"
+    )
 
 
 class VideoSearchResponse(BaseModel):

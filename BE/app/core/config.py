@@ -1,4 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
 
 
 class Settings(BaseSettings):
@@ -40,6 +41,10 @@ class Settings(BaseSettings):
     
     # YouTube Data API
     youtube_api_key: str
+    
+    # YouTube Subtitle (자막 다운로드 설정)
+    youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
+    youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
     
     @property
     def cors_origins_list(self) -> list[str]:
