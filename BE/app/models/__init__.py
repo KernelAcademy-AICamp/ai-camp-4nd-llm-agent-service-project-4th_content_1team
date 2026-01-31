@@ -11,6 +11,8 @@ from app.models.youtube_channel import (
 )
 from app.models.thumbnail_strategy import ThumbnailStrategy
 from app.models.thumbnail_generation import ThumbnailGeneration
+from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
+from app.models.caption import VideoCaption
 
 __all__ = [
     "User",
@@ -24,4 +26,8 @@ __all__ = [
     "YTGeoDaily",
     "ThumbnailStrategy",
     "ThumbnailGeneration",
+    "CompetitorCollection",
+    "CompetitorVideo",
+    "VideoCommentSample",
+    "VideoCaption",
 ]
