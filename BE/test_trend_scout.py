@@ -33,6 +33,23 @@ def run_test():
         result_tech = trend_scout_node(state_tech)
         queries = result_tech["researchPlan"]["newsQuery"]
         print(f"✅ 추출된 검색어: {queries}")
+
+        # [디버깅] 수집된 댓글 확인을 위해 내부 함수 직접 호출해보기
+        print("\n🔍 [댓글 수집 데이터 검증]")
+        from src.script_gen.nodes.trend_scout import _fetch_reddit_json, _determine_subreddits
+        
+        targets = _determine_subreddits(state_tech["channel_profile"]["topics"])
+        raw_posts = _fetch_reddit_json(targets)
+        
+        for i, post in enumerate(raw_posts[:3]): # 상위 3개만 출력
+            print(f"\n📌 Post #{i+1}: {post['title']}")
+            print(f"   (Subreddit: r/{post['subreddit']}, Score: {post['score']})")
+            if 'top_comments' in post and post['top_comments']:
+                print("   💬 Top Comments:")
+                for comment in post['top_comments']:
+                    print(f"      - {comment}")
+            else:
+                print("   ⚠️ 댓글 없음 (또는 수집 실패)")
     except Exception as e:
         print(f"❌ 에러 발생: {e}")
 

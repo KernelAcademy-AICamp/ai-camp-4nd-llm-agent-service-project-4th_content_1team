@@ -60,12 +60,17 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
     full_articles = _crawl_and_analyze(unique_articles)
     
-    # 5. 결과 반환 (차트가 있는 기사 우선 정렬)
+    # 5. [Fact Extractor] 팩트 구조화 및 시각화 제안 (New!)
+    # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
+    structured_facts = _structure_facts(full_articles)
+    
+    # 6. 결과 반환 (차트가 있는 기사 우선 정렬)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
     
     return {
         "news_data": {
             "articles": full_articles,
+            "structured_facts": structured_facts, # 구조화된 팩트 리스트 추가
             "queries_used": base_queries,
             "collected_at": datetime.now().isoformat()
         }
@@ -543,6 +548,41 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                 
                 browser.close()
                 
+                # [AI] 핵심 문단 추출 (Summary 대신 Key Paragraphs Extraction)
+                try:
+                    # 텍스트가 너무 길면 앞부분 4000자만 사용 (비용 절감 및 토큰 제한 고려)
+                    # 하지만 핵심 내용이 뒤에 있을 수도 있으니... 일단 4000자로 제한합니다.
+                    # 뉴스 기사는 보통 역피라미드 구조라 앞부분에 핵심이 많음.
+                    input_text = text[:4000] 
+                    
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if api_key and len(input_text) > 300: # 너무 짧으면 굳이 추출 안 함
+                        llm_extract = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.0)
+                        
+                        extract_prompt = f"""
+                        Extract ALL key paragraphs from the news article below.
+                        
+                        CRITICAL RULES:
+                        1. **NO SUMMARIZATION**: Do NOT summarize or rewrite. Copy the paragraphs EXACTLY as they appear in the text.
+                        2. **NO LIMIT**: Extract ALL paragraphs that contain facts, data, expert quotes, or key insights.
+                        3. **FILTERING**: Exclude advertisements, reporter's email, "subscribe" pleas, or unrelated footer info.
+                        4. **OUTPUT**: Return the selected paragraphs separated by double newlines.
+                        
+                        [Article Text]
+                        {input_text}
+                        """
+                        
+                        msg = HumanMessage(content=extract_prompt)
+                        res = llm_extract.invoke([msg])
+                        item["summary"] = res.content.strip()
+                        logger.debug(f"[AI] 핵심 문단 추출 완료: {len(item['summary'])}자")
+                    else:
+                        item["summary"] = text[:1000] + "..." # API 없거나 너무 짧으면 그냥 앞부분 사용
+
+                except Exception as e:
+                    logger.warning(f"핵심 문단 추출 실패: {e}")
+                    item["summary"] = text[:1000] # 실패 시 fallback
+
                 item["content"] = text
                 item["images"] = final_images
                 item["charts"] = charts
@@ -560,3 +600,86 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
             if res: results.append(res)
             
     return results
+
+
+def _structure_facts(articles: List[Dict]) -> List[Dict]:
+    """
+    [Fact Extractor]
+    수집된 기사들의 핵심 문단(summary)을 종합 분석하여 구조화된 팩트 리스트를 생성합니다.
+    중복 제거, 출처 매핑, 시각화 제안(Visual Plan)을 포함합니다.
+    """
+    if not articles:
+        return []
+        
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key: return []
+        
+        # 1. 기사 텍스트 모으기
+        combined_text = ""
+        for i, art in enumerate(articles):
+            summary = art.get("summary", "")
+            if len(summary) > 50: # 내용이 있는 경우만
+                combined_text += f"\n[Article {i}] Title: {art['title']}\n{summary}\n"
+        
+        if len(combined_text) < 100:
+            return []
+
+        # 2. GPT 로직
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.3)
+        
+        prompt = f"""
+        Analyze the following news articles and extract structured facts.
+        
+        [TASK]
+        1. **Extraction**: Extract key facts (Statistics, Quotes, Key Events).
+        2. **Deduplication**: Merge similar facts from different articles into one.
+        3. **Source Mapping**: Usage 'source_indices' list (e.g., [0, 2]) to track where the fact came from.
+        4. **Visual Proposal**: Suggest how to visualize this fact in a video.
+           - Options: "Chart" (for trends/comparisons), "Quote Card" (for sayings), "Text Overlay" (for key terms), "Timeline" (for dates), "None".
+        
+        [OUTPUT FORMAT]
+        Return a JSON list of objects:
+        [
+          {{
+            "category": "Statistic" | "Quote" | "Event" | "Fact",
+            "content": "Fact description (e.g., Sales increased by 50%)",
+            "value": "Key number/date if applicable (e.g., 50%)",
+            "source_indices": [0, 2],
+            "visual_proposal": "Chart" | "Quote Card" | "Text Overlay" | "Timeline" | "None"
+          }}
+        ]
+        
+        [ARTICLES]
+        {combined_text[:10000]} 
+        """
+        # 텍스트 길이 제한 (토큰 보호)
+        
+        msg = HumanMessage(content=prompt)
+        res = llm.invoke([msg])
+        
+        # JSON 파싱
+        content = res.content.replace("```json", "").replace("```", "").strip()
+        
+        # 가끔 배열이 아닌 객체로 오거나 텍스트가 섞일 수 있음 -> 파싱 시도
+        try:
+            facts = json.loads(content)
+            if isinstance(facts, list):
+                return facts
+            else:
+                return []
+        except:
+            # 파싱 실패 시 대괄호 찾아서 재시도
+            try:
+                start = content.find('[')
+                end = content.rfind(']')
+                if start != -1 and end != -1:
+                    return json.loads(content[start:end+1])
+            except:
+                pass
+                
+            return []
+            
+    except Exception as e:
+        logger.warning(f"Fact Structure Failed: {e}")
+        return []
