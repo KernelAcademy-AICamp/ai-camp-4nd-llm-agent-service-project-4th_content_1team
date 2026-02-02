@@ -100,7 +100,7 @@ export default function OnboardingPage() {
   // 분석된 카테고리 텍스트
   const getAnalyzedCategoryText = () => {
     if (!persona?.analyzed_categories || persona.analyzed_categories.length === 0) {
-      return "Education / Tech"
+      return "분석된 카테고리 없음"
     }
     return persona.analyzed_categories.join(", ")
   }

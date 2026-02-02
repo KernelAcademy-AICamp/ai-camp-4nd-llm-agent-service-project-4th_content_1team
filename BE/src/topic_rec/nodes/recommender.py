@@ -5,12 +5,12 @@ Recommender Node - LLM-based Topic Recommendation
 계층 구조 클러스터에서 관련 트렌드를 필터링하여 추천합니다.
 """
 
-import os
 import json
 import re
 import requests
 from typing import List, Dict
 
+from app.core.config import settings
 from src.topic_rec.state import (
     TopicRecState, TopicCluster, Recommendation,
     CategoryCluster, SubCategoryCluster,
@@ -65,8 +65,8 @@ class LLMRecommender:
     """LLM-based recommender supporting Ollama and Gemini"""
 
     def __init__(self):
-        self.ollama_model = os.getenv("OLLAMA_MODEL", "llama3.2")
-        self.gemini_key = os.getenv("GEMINI_API_KEY")
+        self.ollama_model = "llama3.2"
+        self.gemini_key = settings.gemini_api_key
 
         self.provider = None
         self.model = None

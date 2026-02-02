@@ -29,12 +29,3 @@ export const refreshToken = async (refreshTokenValue: string): Promise<RefreshTo
     });
     return response.data;
 };
-
-// 테스트 로그인 (개발/시연용)
-export const testLogin = async (username: string, password: string): Promise<LoginResponse> => {
-    const response = await api.post('/auth/test-login', {
-        username,
-        password,
-    });
-    return response.data;
-};

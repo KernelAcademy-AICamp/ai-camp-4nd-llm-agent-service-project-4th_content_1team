@@ -6,7 +6,7 @@ logging.basicConfig(level=logging.INFO)
 
 from app.core.config import settings
 from app.core.db import engine
-from app.api.routes import auth, youtube, competitor, subtitle, persona
+from app.api.routes import auth, youtube, competitor, subtitle, persona, recommendations
 
 # Create FastAPI app
 app = FastAPI(
@@ -30,6 +30,7 @@ app.include_router(youtube.router)
 app.include_router(competitor.router)
 app.include_router(subtitle.router)
 app.include_router(persona.router)
+app.include_router(recommendations.router)
 
 
 @app.get("/")
