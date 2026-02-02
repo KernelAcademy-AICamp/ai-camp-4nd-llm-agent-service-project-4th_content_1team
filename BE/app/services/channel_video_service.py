@@ -4,7 +4,6 @@
 사용자 채널의 영상 목록과 성과 통계를 수집합니다.
 YouTube Data API를 사용하여 영상 메타데이터와 통계를 가져옵니다.
 """
-import os
 from datetime import date
 from typing import List, Optional
 from uuid import UUID
@@ -14,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.channel_video import YTChannelVideo, YTVideoStats
+from app.core.config import settings
 
 
 # YouTube Data API 기본 URL
@@ -188,7 +188,7 @@ async def sync_channel_videos(
     Returns:
         저장된 YTChannelVideo 목록
     """
-    api_key = os.getenv("YOUTUBE_API_KEY")
+    api_key = settings.youtube_api_key
     if not api_key:
         raise ValueError("YOUTUBE_API_KEY 환경변수가 설정되지 않았습니다.")
 
@@ -207,7 +207,9 @@ async def sync_channel_videos(
     videos_detail = await fetch_video_details(video_ids, api_key)
     detail_map = {v["video_id"]: v for v in videos_detail}
 
-    # 4. DB에 저장 (upsert)
+    # 4. DB에 저장 (upsert) - Race condition 처리 포함
+    from sqlalchemy.exc import IntegrityError
+
     saved_videos = []
     for basic in videos_basic:
         vid = basic["video_id"]
@@ -254,7 +256,12 @@ async def sync_channel_videos(
             db.add(video)
             saved_videos.append(video)
 
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        # Race condition: 다른 요청이 먼저 저장함 → 기존 데이터 사용
+        await db.rollback()
+        return await get_channel_videos(db, channel_id)
 
     # 5. 통계도 함께 저장
     await sync_video_stats(db, saved_videos, detail_map)
