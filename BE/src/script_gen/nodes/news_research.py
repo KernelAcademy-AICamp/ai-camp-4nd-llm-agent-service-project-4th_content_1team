@@ -665,6 +665,10 @@ def _structure_facts(articles: List[Dict]) -> List[Dict]:
         try:
             facts = json.loads(content)
             if isinstance(facts, list):
+                # [FIX] 각 팩트에 UUID 부여 (Fact ID 표준화)
+                for fact in facts:
+                    if "id" not in fact:
+                        fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
                 return facts
             else:
                 return []
@@ -674,7 +678,12 @@ def _structure_facts(articles: List[Dict]) -> List[Dict]:
                 start = content.find('[')
                 end = content.rfind(']')
                 if start != -1 and end != -1:
-                    return json.loads(content[start:end+1])
+                    parsed_facts = json.loads(content[start:end+1])
+                    # UUID 부여
+                    for fact in parsed_facts:
+                        if "id" not in fact:
+                            fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
+                    return parsed_facts
             except:
                 pass
                 
