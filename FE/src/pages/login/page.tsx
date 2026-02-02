@@ -12,7 +12,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/ta
 import { Play, Sparkles, TrendingUp, Calendar, ImageIcon } from "lucide-react"
 import { Link } from "react-router-dom"
 import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
-import { googleLogin } from "../../lib/api/index"
+import { googleLogin, getMyPersona, testLogin } from "../../lib/api/index"
 
 export default function LoginPage() {
   const [email, setEmail] = useState("")
@@ -40,8 +40,15 @@ export default function LoginPage() {
             localStorage.setItem('refreshToken', response.tokens.refreshToken)
           }
 
-          // 온보딩 페이지로 이동
-          navigate('/onboarding')
+          // 페르소나 존재 확인 후 라우팅
+          try {
+            await getMyPersona()
+            // 페르소나가 있으면 대시보드로 이동
+            navigate('/dashboard')
+          } catch {
+            // 페르소나가 없으면 온보딩으로 이동
+            navigate('/onboarding')
+          }
         } catch (err: any) {
           console.error('Google login failed:', err)
           setError(err.response?.data?.detail || '로그인에 실패했습니다. 다시 시도해주세요.')
@@ -58,6 +65,35 @@ export default function LoginPage() {
 
   const handleGoogleLogin = () => {
     initiateGoogleLogin()
+  }
+
+  // 이메일/비밀번호 로그인 (테스트용: test / 1234)
+  const handleEmailLogin = async () => {
+    setIsLoading(true)
+    setError(null)
+
+    try {
+      const response = await testLogin(email, password)
+
+      // 토큰 저장
+      if (response.tokens) {
+        localStorage.setItem('accessToken', response.tokens.accessToken)
+        localStorage.setItem('refreshToken', response.tokens.refreshToken)
+      }
+
+      // 페르소나 존재 확인 후 라우팅
+      try {
+        await getMyPersona()
+        navigate('/dashboard')
+      } catch {
+        navigate('/onboarding')
+      }
+    } catch (err: any) {
+      console.error('Login failed:', err)
+      setError(err.response?.data?.detail || '로그인에 실패했습니다. (테스트: test / 1234)')
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   return (
@@ -193,11 +229,16 @@ export default function LoginPage() {
                         className="h-12"
                       />
                     </div>
-                    <Link to="/onboarding">
-                      <Button className="w-full h-12 bg-primary hover:bg-primary/90">
-                        로그인
-                      </Button>
-                    </Link>
+                    <Button
+                      onClick={handleEmailLogin}
+                      disabled={isLoading}
+                      className="w-full h-12 bg-primary hover:bg-primary/90"
+                    >
+                      로그인
+                    </Button>
+                    <p className="text-xs text-muted-foreground text-center mt-2">
+                      테스트 계정: test / 1234
+                    </p>
                   </div>
                 </TabsContent>
 

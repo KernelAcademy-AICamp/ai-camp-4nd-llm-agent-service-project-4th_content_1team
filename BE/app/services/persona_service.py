@@ -3,13 +3,13 @@
 
 규칙 기반 해석 + LLM 해석을 종합하여 최종 페르소나를 생성합니다.
 """
-import os
 from typing import List, Optional
 from dataclasses import asdict
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.models.channel_persona import ChannelPersona
 from app.models.channel_video import YTChannelVideo, YTVideoStats
 from app.services.persona_analyzer import (
@@ -67,9 +67,12 @@ async def generate_persona(
     audience_data = await _get_audience_data(db, channel_id)
     geo_data = await _get_geo_data(db, channel_id)
 
+    # 3.5. 채널 통계에서 구독자 수 조회
+    subscriber_count = await _get_subscriber_count(db, channel_id)
+
     # 4. 규칙 기반 해석
     rule_interpretations = _run_rule_interpretations(
-        subscriber_count=channel.subscriber_count or 0,
+        subscriber_count=subscriber_count,
         audience_data=audience_data,
         geo_data=geo_data,
         video_stats=videos,
@@ -130,6 +133,29 @@ async def _get_channel_videos_with_stats(
         ))
 
     return video_stats_list
+
+
+async def _get_subscriber_count(
+    db: AsyncSession,
+    channel_id: str,
+) -> int:
+    """채널 통계에서 최신 구독자 수 조회."""
+    try:
+        from app.models.youtube_channel import YTChannelStatsDaily
+        stmt = (
+            select(YTChannelStatsDaily)
+            .where(YTChannelStatsDaily.channel_id == channel_id)
+            .order_by(YTChannelStatsDaily.date.desc())
+            .limit(1)
+        )
+        result = await db.execute(stmt)
+        stats = result.scalar_one_or_none()
+
+        if stats and stats.subscriber_count:
+            return stats.subscriber_count
+        return 0
+    except Exception:
+        return 0
 
 
 async def _get_audience_data(
@@ -250,7 +276,7 @@ async def _synthesize_persona(
     import httpx
     import json
 
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = settings.gemini_api_key
 
     # 해석 결과를 텍스트로 정리
     context = _format_interpretations_for_llm(
@@ -285,7 +311,9 @@ async def _synthesize_persona(
     "optimal_duration": "적정 영상 길이 (예: 10~15분)",
     "growth_opportunities": ["성장 기회1", "성장 기회2"],
     "topic_keywords": ["키워드1", "키워드2", "키워드3"],
-    "style_keywords": ["스타일키워드1", "스타일키워드2"]
+    "style_keywords": ["스타일키워드1", "스타일키워드2"],
+    "analyzed_categories": ["채널 카테고리1", "카테고리2 (예: 교육, 기술, 프로그래밍)"],
+    "analyzed_subcategories": ["세부 카테고리1", "세부 카테고리2 (예: 웹개발, JavaScript, AI)"]
 }}
 ```
 
@@ -439,7 +467,9 @@ async def _save_persona(
     channel_id: str,
     persona_data: dict,
 ) -> ChannelPersona:
-    """페르소나를 DB에 저장 (upsert)."""
+    """페르소나를 DB에 저장 (upsert). Race condition 처리 포함."""
+    from sqlalchemy.exc import IntegrityError
+
     stmt = select(ChannelPersona).where(ChannelPersona.channel_id == channel_id)
     result = await db.execute(stmt)
     existing = result.scalar_one_or_none()
@@ -451,12 +481,29 @@ async def _save_persona(
                 setattr(existing, key, value)
         persona = existing
     else:
-        # 새로 생성
-        persona = ChannelPersona(
-            channel_id=channel_id,
-            **persona_data,
-        )
-        db.add(persona)
+        # 새로 생성 시도
+        try:
+            persona = ChannelPersona(
+                channel_id=channel_id,
+                **persona_data,
+            )
+            db.add(persona)
+            await db.commit()
+            await db.refresh(persona)
+            return persona
+        except IntegrityError:
+            # Race condition: 다른 요청이 먼저 생성함 → rollback 후 업데이트
+            await db.rollback()
+            stmt = select(ChannelPersona).where(ChannelPersona.channel_id == channel_id)
+            result = await db.execute(stmt)
+            existing = result.scalar_one_or_none()
+            if existing:
+                for key, value in persona_data.items():
+                    if hasattr(existing, key):
+                        setattr(existing, key, value)
+                persona = existing
+            else:
+                raise  # 정말 예상치 못한 상황
 
     await db.commit()
     await db.refresh(persona)
