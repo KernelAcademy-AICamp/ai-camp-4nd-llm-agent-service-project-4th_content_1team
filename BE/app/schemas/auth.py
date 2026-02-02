@@ -15,12 +15,6 @@ class RefreshTokenRequest(BaseModel):
     refresh_token: str
 
 
-class TestLoginRequest(BaseModel):
-    """Request schema for test login (development only)."""
-    username: str
-    password: str
-
-
 # Response schemas
 class UserResponse(BaseModel):
     """User response schema."""

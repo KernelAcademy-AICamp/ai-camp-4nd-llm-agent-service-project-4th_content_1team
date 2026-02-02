@@ -13,6 +13,7 @@ from app.models.thumbnail_strategy import ThumbnailStrategy
 from app.models.thumbnail_generation import ThumbnailGeneration
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
 from app.models.caption import VideoCaption
+from app.models.topic_recommendation import TopicRecommendation
 
 __all__ = [
     "User",
@@ -30,4 +31,5 @@ __all__ = [
     "CompetitorVideo",
     "VideoCommentSample",
     "VideoCaption",
+    "TopicRecommendation",
 ]
