@@ -41,7 +41,10 @@ class Settings(BaseSettings):
     
     # YouTube Data API
     youtube_api_key: str
-    
+
+    # Gemini API
+    gemini_api_key: Optional[str] = None
+
     # YouTube Subtitle (자막 다운로드 설정)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
     youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
