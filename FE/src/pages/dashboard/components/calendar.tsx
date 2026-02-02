@@ -4,7 +4,7 @@ import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Button } from "../../../components/ui/button"
 import { Badge } from "../../../components/ui/badge"
-import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, Flame, Zap, Check, X, RefreshCw } from "lucide-react"
+import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, Flame, Zap, Check, X } from "lucide-react"
 import {
   Popover,
   PopoverContent,
@@ -19,106 +19,20 @@ interface ContentTopic {
   type: string
   week: number
   confirmed?: boolean
+  // API 추천 데이터 추가 필드
+  based_on_topic?: string
+  trend_basis?: string
+  recommendation_reason?: string
+  content_angles?: string[]
+  thumbnail_idea?: string
+  urgency?: string
 }
 
 interface ContentCalendarProps {
   weeklyUploads: number
   onTopicConfirm?: (topic: ContentTopic) => void
   confirmedTopics?: ContentTopic[]
-}
-
-const initialContentTopics: ContentTopic[] = [
-  {
-    id: 1,
-    title: "2026 게임 트렌드 예측",
-    reason: "연초 트렌드 예측 콘텐츠가 높은 조회수를 기록합니다. 검색량 +340% 증가",
-    type: "trend",
-    week: 1
-  },
-  {
-    id: 2,
-    title: "신작 게임 리뷰",
-    reason: "1월 출시 예정 대작 게임들에 대한 관심이 급증하고 있습니다",
-    type: "hot",
-    week: 1
-  },
-  {
-    id: 3,
-    title: "게임 초보자 가이드",
-    reason: "새해를 맞아 새로운 취미를 찾는 시청자가 많습니다. 에버그린 콘텐츠로 장기적 조회수 확보",
-    type: "evergreen",
-    week: 2
-  },
-  {
-    id: 4,
-    title: "e스포츠 대회 분석",
-    reason: "1월 주요 e스포츠 대회 시즌 시작. 관련 검색량 급증 예상",
-    type: "event",
-    week: 2
-  },
-  {
-    id: 5,
-    title: "게임 할인 정보 총정리",
-    reason: "설날 연휴 할인 시즌에 맞춘 실용 콘텐츠. 높은 저장률 예상",
-    type: "trend",
-    week: 3
-  },
-  {
-    id: 6,
-    title: "멀티플레이 게임 추천",
-    reason: "설날 연휴 시즌, 친구/가족과 함께하는 게임 수요 증가",
-    type: "seasonal",
-    week: 3
-  },
-  {
-    id: 7,
-    title: "인디게임 발굴 시리즈",
-    reason: "언더레이더 인디게임에 대한 관심 증가 추세",
-    type: "hot",
-    week: 4
-  },
-  {
-    id: 8,
-    title: "게임 세팅 최적화",
-    reason: "새해 PC 업그레이드 시즌, 최적화 관련 검색 증가",
-    type: "evergreen",
-    week: 4
-  },
-]
-
-const alternativeTopics: Record<number, ContentTopic[]> = {
-  1: [
-    { id: 101, title: "2026 기대작 게임 TOP 10", reason: "새해 기대작 목록은 항상 높은 관심을 받습니다", type: "trend", week: 1 },
-    { id: 102, title: "게임 유튜버가 알려주는 꿀팁", reason: "실용적인 팁 콘텐츠는 저장률이 높습니다", type: "evergreen", week: 1 },
-  ],
-  2: [
-    { id: 201, title: "스팀 베스트셀러 분석", reason: "스팀 인기 게임 분석은 꾸준한 검색량을 보입니다", type: "hot", week: 1 },
-    { id: 202, title: "게임 스트리머 추천", reason: "커뮤니티 관련 콘텐츠로 구독자 확보 가능", type: "trend", week: 1 },
-  ],
-  3: [
-    { id: 301, title: "무료 게임 BEST 5", reason: "무료 게임 추천은 항상 높은 클릭률을 보입니다", type: "trend", week: 2 },
-    { id: 302, title: "게임 입문 가이드 2026", reason: "새해 새로운 시작을 원하는 시청자 타겟", type: "evergreen", week: 2 },
-  ],
-  4: [
-    { id: 401, title: "프로게이머 인터뷰", reason: "e스포츠 시즌과 연계한 콘텐츠", type: "event", week: 2 },
-    { id: 402, title: "게임 대회 하이라이트", reason: "대회 시즌 관련 편집 콘텐츠 수요 증가", type: "event", week: 2 },
-  ],
-  5: [
-    { id: 501, title: "할인 게임 숨은 명작", reason: "세일 시즌 숨겨진 보석 찾기 콘텐츠", type: "trend", week: 3 },
-    { id: 502, title: "게임 번들 분석", reason: "번들 상품 비교 분석 콘텐츠", type: "trend", week: 3 },
-  ],
-  6: [
-    { id: 601, title: "파티 게임 추천", reason: "연휴 시즌 가족/친구 모임용 게임", type: "seasonal", week: 3 },
-    { id: 602, title: "협동 게임 BEST", reason: "함께하는 게임 수요 증가 시즌", type: "seasonal", week: 3 },
-  ],
-  7: [
-    { id: 701, title: "숨겨진 명작 인디게임", reason: "인디게임 팬덤 타겟 콘텐츠", type: "hot", week: 4 },
-    { id: 702, title: "인디게임 개발자 인터뷰", reason: "스토리텔링 콘텐츠로 구독자 충성도 향상", type: "hot", week: 4 },
-  ],
-  8: [
-    { id: 801, title: "저사양 PC 게임 추천", reason: "저사양 관련 검색량 꾸준", type: "evergreen", week: 4 },
-    { id: 802, title: "게임 녹화 세팅 가이드", reason: "크리에이터 지망생 타겟 콘텐츠", type: "evergreen", week: 4 },
-  ],
+  externalTopics?: ContentTopic[]
 }
 
 const typeIcons = {
@@ -131,11 +45,17 @@ const typeIcons = {
 
 const weekDays = ["일", "월", "화", "수", "목", "금", "토"]
 
-export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics = [] }: ContentCalendarProps) {
+export function ContentCalendar({
+  weeklyUploads,
+  onTopicConfirm,
+  confirmedTopics = [],
+  externalTopics = []
+}: ContentCalendarProps) {
   const [currentMonth, setCurrentMonth] = useState(new Date(2026, 0))
-  const [contentTopics, setContentTopics] = useState<ContentTopic[]>(initialContentTopics)
   const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
-  const [replacementIndex, setReplacementIndex] = useState<Record<number, number>>({})
+
+  // 외부에서 받은 주제들을 사용
+  const contentTopics = externalTopics
 
   const filteredTopics = useMemo(() => {
     const topicsPerWeek = weeklyUploads
@@ -177,6 +97,7 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
     const weekTopics = filteredTopics.filter(t => t.week === week)
     const dayOfWeek = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day).getDay()
 
+    // 주말(토, 일)에 주제 배치
     if (dayOfWeek === 0 || dayOfWeek === 6) {
       const index = dayOfWeek === 6 ? 0 : 1
       if (weekTopics[index]) {
@@ -184,6 +105,7 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
       }
     }
 
+    // 수요일에 세 번째 주제 배치 (주 3회 이상일 때)
     if (dayOfWeek === 3 && weekTopics.length > 2) {
       return [weekTopics[2]]
     }
@@ -193,25 +115,8 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
 
   const handleConfirmTopic = (topic: ContentTopic) => {
     const confirmedTopic = { ...topic, confirmed: true }
-    setContentTopics(prev =>
-      prev.map(t => t.id === topic.id ? confirmedTopic : t)
-    )
     onTopicConfirm?.(confirmedTopic)
     setOpenPopoverId(null)
-  }
-
-  const handleDiscardTopic = (topic: ContentTopic) => {
-    const alternatives = alternativeTopics[topic.id] || []
-    const currentIndex = replacementIndex[topic.id] || 0
-    const nextIndex = (currentIndex + 1) % alternatives.length
-
-    if (alternatives.length > 0) {
-      const replacement = alternatives[currentIndex]
-      setContentTopics(prev =>
-        prev.map(t => t.id === topic.id ? { ...replacement, id: topic.id, week: topic.week } : t)
-      )
-      setReplacementIndex(prev => ({ ...prev, [topic.id]: nextIndex }))
-    }
   }
 
   const prevMonth = () => {
@@ -223,7 +128,7 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
   }
 
   const isTopicConfirmed = (topicId: number) => {
-    return confirmedTopics.some(t => t.id === topicId) || contentTopics.find(t => t.id === topicId)?.confirmed
+    return confirmedTopics.some(t => t.id === topicId)
   }
 
   return (
@@ -272,7 +177,7 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
                     </span>
                     <div className="mt-1 space-y-1">
                       {topics.map((topic) => {
-                        const typeInfo = typeIcons[topic.type as keyof typeof typeIcons]
+                        const typeInfo = typeIcons[topic.type as keyof typeof typeIcons] || typeIcons.trend
                         const Icon = typeInfo.icon
                         const confirmed = isTopicConfirmed(topic.id)
 
@@ -303,7 +208,9 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
                                     </div>
                                     <div className="flex-1">
                                       <h4 className="font-semibold text-sm">{topic.title}</h4>
-                                      <p className="text-xs text-muted-foreground capitalize">{topic.type} 콘텐츠</p>
+                                      <p className="text-xs text-muted-foreground capitalize">
+                                        {topic.based_on_topic || topic.type} 콘텐츠
+                                      </p>
                                     </div>
                                     {confirmed && (
                                       <Badge variant="default" className="bg-accent text-accent-foreground text-xs">
@@ -313,33 +220,62 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
                                   </div>
                                 </div>
 
-                                {/* Reason */}
-                                <div className="bg-muted/50 rounded-lg p-3">
-                                  <p className="text-xs font-medium text-muted-foreground mb-1">추천 이유</p>
-                                  <p className="text-sm">{topic.reason}</p>
-                                </div>
+                                {/* 트렌드 근거 */}
+                                {topic.trend_basis && (
+                                  <div className="bg-muted/50 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-muted-foreground mb-1">트렌드 근거</p>
+                                    <p className="text-sm">{topic.trend_basis}</p>
+                                  </div>
+                                )}
+
+                                {/* 추천 이유 */}
+                                {topic.recommendation_reason && (
+                                  <div className="bg-primary/10 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-primary mb-1">추천 이유</p>
+                                    <p className="text-sm">{topic.recommendation_reason}</p>
+                                  </div>
+                                )}
+
+                                {/* 콘텐츠 관점 */}
+                                {topic.content_angles && topic.content_angles.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-medium text-muted-foreground mb-2">콘텐츠 관점</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {topic.content_angles.map((angle, i) => (
+                                        <Badge key={i} variant="outline" className="text-xs">
+                                          {angle}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
+                                {/* 썸네일 아이디어 */}
+                                {topic.thumbnail_idea && (
+                                  <div className="bg-muted/30 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-muted-foreground mb-1">썸네일 아이디어</p>
+                                    <p className="text-sm italic">{topic.thumbnail_idea}</p>
+                                  </div>
+                                )}
+
+                                {/* 기본 이유 (API 데이터가 없을 때) */}
+                                {!topic.trend_basis && !topic.recommendation_reason && topic.reason && (
+                                  <div className="bg-muted/50 rounded-lg p-3">
+                                    <p className="text-xs font-medium text-muted-foreground mb-1">추천 이유</p>
+                                    <p className="text-sm">{topic.reason}</p>
+                                  </div>
+                                )}
 
                                 {/* Actions */}
                                 {!confirmed ? (
-                                  <div className="flex gap-2">
-                                    <Button
-                                      size="sm"
-                                      className="flex-1 bg-accent hover:bg-accent/90"
-                                      onClick={() => handleConfirmTopic(topic)}
-                                    >
-                                      <Check className="w-4 h-4 mr-1" />
-                                      주제 확정하기
-                                    </Button>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      className="flex-1 bg-transparent"
-                                      onClick={() => handleDiscardTopic(topic)}
-                                    >
-                                      <RefreshCw className="w-4 h-4 mr-1" />
-                                      다른 주제 추천
-                                    </Button>
-                                  </div>
+                                  <Button
+                                    size="sm"
+                                    className="w-full bg-accent hover:bg-accent/90"
+                                    onClick={() => handleConfirmTopic(topic)}
+                                  >
+                                    <Check className="w-4 h-4 mr-1" />
+                                    주제 확정하기
+                                  </Button>
                                 ) : (
                                   <div className="flex gap-2">
                                     <Link to={`/script?topic=${encodeURIComponent(topic.title)}`} className="flex-1">
@@ -347,17 +283,6 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
                                         스크립트 작성하기
                                       </Button>
                                     </Link>
-                                    <Button
-                                      size="sm"
-                                      variant="outline"
-                                      onClick={() => {
-                                        setContentTopics(prev =>
-                                          prev.map(t => t.id === topic.id ? { ...t, confirmed: false } : t)
-                                        )
-                                      }}
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </Button>
                                   </div>
                                 )}
                               </div>
@@ -379,7 +304,7 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
             const Icon = value.icon
             const labels: Record<string, string> = {
               trend: "트렌드",
-              hot: "인기",
+              hot: "인기/긴급",
               evergreen: "에버그린",
               event: "이벤트",
               seasonal: "시즌"
@@ -400,6 +325,15 @@ export function ContentCalendar({ weeklyUploads, onTopicConfirm, confirmedTopics
             <span className="text-muted-foreground">확정됨</span>
           </div>
         </div>
+
+        {/* 주제 없을 때 안내 */}
+        {contentTopics.length === 0 && (
+          <div className="mt-4 p-4 rounded-lg bg-muted/30 text-center">
+            <p className="text-sm text-muted-foreground">
+              상단의 AI 추천에서 주제를 선택하여 캘린더에 추가하세요
+            </p>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

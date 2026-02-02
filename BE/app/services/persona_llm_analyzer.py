@@ -8,12 +8,13 @@ Gemini API를 사용하여 채널 콘텐츠를 분석합니다.
 2. 히트 vs 저조 영상 비교 → 성공 요인, 피해야 할 방향
 3. 채널 설명 분석 → 정체성, 브랜딩 수준
 """
-import os
 import json
 from typing import List, Optional
 from dataclasses import dataclass, asdict
 
 import httpx
+
+from app.core.config import settings
 
 
 # Gemini API 설정
@@ -106,7 +107,7 @@ async def analyze_video_titles(titles: List[str]) -> Optional[TitleAnalysisResul
     Returns:
         TitleAnalysisResult or None
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = settings.gemini_api_key
     if not api_key:
         print("GEMINI_API_KEY not set")
         return None
@@ -185,7 +186,7 @@ async def analyze_hit_vs_low(
     Returns:
         HitVsLowResult or None
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = settings.gemini_api_key
     if not api_key:
         return None
 
@@ -261,7 +262,7 @@ async def analyze_channel_description(
     Returns:
         DescriptionAnalysisResult or None
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = settings.gemini_api_key
     if not api_key:
         return None
 
@@ -365,7 +366,7 @@ async def analyze_channel_categories(
     Returns:
         CategoryAnalysisResult or None
     """
-    api_key = os.getenv("GEMINI_API_KEY")
+    api_key = settings.gemini_api_key
     if not api_key:
         print("GEMINI_API_KEY not set")
         return None
