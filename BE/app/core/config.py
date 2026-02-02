@@ -43,20 +43,20 @@ class Settings(BaseSettings):
     youtube_api_key: str
     
     # OpenAI API (for LLM)
-    openai_api_key: Optional[str] = None
+    openai_api_key: str
     
     # Gemini API
-    gemini_api_key: Optional[str] = None
+    gemini_api_key: str
     
     # Google API (for search, etc.)
-    google_api_key: Optional[str] = None
+    google_api_key: str
     
     # Tavily API (for news search)
-    tavily_api_key: Optional[str] = None
+    tavily_api_key: str
     
     # Naver API (for Korean news)
-    naver_client_id: Optional[str] = None
-    naver_client_secret: Optional[str] = None
+    naver_client_id: str
+    naver_client_secret: str
     
     # YouTube Subtitle (자막 다운로드 설정)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
