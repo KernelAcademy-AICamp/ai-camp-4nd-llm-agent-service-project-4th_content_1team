@@ -12,6 +12,7 @@ import logging
 sys.path.insert(0, os.path.abspath(os.path.dirname(__file__)))
 
 from src.script_gen.graph import generate_script
+import json
 
 # 로깅 설정
 logging.basicConfig(
@@ -22,11 +23,25 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def save_json(step_name, data):
+    """중간 결과 저장 헬퍼"""
+    filename = f"result_{step_name}.json"
+    try:
+        # Pydantic 모델인 경우 dict로 변환
+        if hasattr(data, 'model_dump'):
+            data = data.model_dump()
+        
+        with open(filename, 'w', encoding='utf-8') as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        print(f"   💾 [{step_name}] 저장 완료: {filename}")
+    except Exception as e:
+        print(f"   ⚠️ [{step_name}] 저장 실패: {e}")
+
 def test_full_pipeline():
-    """전체 파이프라인 테스트"""
+    """전체 파이프라인 테스트 (단계별 저장 포함)"""
     
     print("=" * 80)
-    print("🚀 Script Generation Pipeline 통합 테스트 시작")
+    print("🚀 Script Generation Pipeline 통합 테스트 (Step-by-Step Logging)")
     print("=" * 80)
     
     # 테스트 입력
@@ -40,89 +55,136 @@ def test_full_pipeline():
     }
     
     print(f"\n📌 주제: {topic}")
-    print(f"📌 채널: {channel_profile['name']}")
-    print(f"📌 타겟: {channel_profile['target_audience']}\n")
+    
+    # [Direct Node Execution to capture intermediate states]
+    # graph.py의 CompiledGraph를 쓰면 중간 상태를 보기 힘드므로
+    # 여기서는 노드 함수를 직접 순차 실행하여 결과를 저장합니다.
+    
+    from src.script_gen.nodes.trend_scout import trend_scout_node
+    from src.script_gen.nodes.planner import planner_node
+    from src.script_gen.nodes.news_research import news_research_node
+    from src.script_gen.nodes.yt_fetcher import yt_fetcher_node
+    from src.script_gen.nodes.competitor_anal import competitor_anal_node
+    from src.script_gen.nodes.insight_builder import insight_builder_node
+    from src.script_gen.nodes.writer import writer_node
+    from src.script_gen.nodes.verifier import verifier_node
+    
+    # 초기 State
+    state = {
+        "topic": topic,
+        "topic_request_id": "test_req_001",  # 필수 필드 추가
+        "channel_profile": channel_profile
+    }
     
     try:
-        # 파이프라인 실행
-        print("⏳ 파이프라인 실행 중... (Full Pipeline: 8 Nodes)")
-        print("   0️⃣ Trend Scout: 레딧 트렌드 키워드 수집")
-        print("   1️⃣ Planner: 목차 및 질문 생성")
-        print("   2️⃣ News Research: 뉴스 수집 및 팩트 추출 (병렬)")
-        print("   3️⃣ YT Fetcher: 유튜브 영상 검색 (병렬)")
-        print("   4️⃣ Competitor Analyzer: 경쟁사 분석")
-        print("   5️⃣ Insight Builder: 전략 수립 (2-Pass)")
-        print("   6️⃣ Writer: 대본 작성")
-        print("   7️⃣ Verifier: 팩트 체크 & 출처 정리\n")
+        # [Smart Resume Logic]
+        # Step 6(InsightPack)와 Step 3(NewsData)가 있다면 로드하고 바로 Writer로 점프
+        should_skip_to_writer = False
+        if os.path.exists("result_06_InsightPack.json") and os.path.exists("result_03_NewsResearch.json"):
+            print("\n⏩ [RESUME] 기존 파일 발견! Insight Builder 단계까지 건너뛰고 Writer부터 시작합니다.")
+            try:
+                with open("result_03_NewsResearch.json", "r", encoding="utf-8") as f:
+                    state.update(json.load(f))
+                with open("result_06_InsightPack.json", "r", encoding="utf-8") as f:
+                    state.update(json.load(f))
+                should_skip_to_writer = True
+            except Exception as e:
+                print(f"⚠️ 파일 로드 실패, 처음부터 시작합니다: {e}")
+
+        if not should_skip_to_writer:
+            # 1. Trend Scout
+            print("\n🔹 [Step 1] Trend Scout 실행 중...")
+            res_1 = trend_scout_node(state)
+            state.update(res_1)
+            save_json("01_TrendScout", res_1)
+            
+            # 2. Planner
+            print("\n🔹 [Step 2] Planner 실행 중...")
+            res_2 = planner_node(state)
+            state.update(res_2)
+            save_json("02_Planner", res_2)
+            
+            # 3. News Research & YT Fetcher (Sequential for Test)
+            print("\n🔹 [Step 3] News Research 실행 중...")
+            res_3 = news_research_node(state)
+            state.update(res_3)
+            save_json("03_NewsResearch", res_3)
+            
+            print("\n🔹 [Step 4] YT Fetcher 실행 중...")
+            res_4 = yt_fetcher_node(state)
+            state.update(res_4)
+            save_json("04_YTFetcher", res_4)
+            
+            # 4. Competitor Analyzer
+            print("\n🔹 [Step 5] Competitor Analyzer 실행 중...")
+            res_5 = competitor_anal_node(state)
+            state.update(res_5)
+            save_json("05_Competitor", res_5)
+            
+            # 5. Insight Builder
+            print("\n🔹 [Step 6] Insight Builder 실행 중...")
+            res_6 = insight_builder_node(state)
+            state.update(res_6)
+            save_json("06_InsightPack", res_6)
         
-        result = generate_script(topic, channel_profile)
+        # 6. Writer
+        print("\n🔹 [Step 7] Writer 실행 중...")
+        res_7 = writer_node(state)
+        state.update(res_7)
+        save_json("07_ScriptDraft", res_7)
         
-        # 결과 출력
+        # 7. Verifier
+        print("\n🔹 [Step 8] Verifier 실행 중...")
+        res_8 = verifier_node(state)
+        state.update(res_8)
+        save_json("08_VerifierOutput", res_8)
+        
+        # [Manual Result Construction]
+        # graph.py의 출력 형태와 유사하게 수동으로 구성
+        result = {
+            "topic": topic,
+            "script_draft_id": state.get("script_draft", {}).get("script_draft_id"),
+            "generated_at": state.get("script_draft", {}).get("generated_at"),
+            "metadata": state.get("script_draft", {}).get("metadata", {}),
+            "script": state.get("script_draft", {}).get("script", {}),
+            "news_data": state.get("news_data", {}),
+            "verifier_output": state.get("verifier_output", {})
+        }
+
         print("\n" + "=" * 80)
-        print("✅ 대본 생성 완료!")
+        print("✅ 전체 파이프라인 완주 성공!")
+        print("📂 현재 폴더에 생성된 'result_*.json' 파일들을 확인하세요.")
         print("=" * 80)
         
-        print(f"\n📄 Script ID: {result.get('script_draft_id')}")
-        print(f"📅 생성 시각: {result.get('generated_at')}")
-        
-        metadata = result.get('metadata', {})
-        print(f"\n📊 메타데이터:")
-        print(f"   - 제목: {metadata.get('title')}")
-        print(f"   - 훅 타입: {metadata.get('hookType')}")
-        print(f"   - 예상 길이: {metadata.get('estimatedDurationMin')}분")
-        print(f"   - 난이도: {metadata.get('readingLevel')}")
-        
+        # 상세 결과 출력 (화면용)
         script = result.get('script', {})
         hook = script.get('hook', {})
         chapters = script.get('chapters', [])
         
-        print(f"\n🎬 Hook (처음 15초):")
-        print(f"   {hook.get('text', 'N/A')[:200]}...")
+        print("\n� [상세 대본 내용]")
+        print("-" * 40)
         
-        print(f"\n📚 챕터 구성 ({len(chapters)}개):")
-        for i, ch in enumerate(chapters, 1):
-            print(f"   {i}. {ch.get('title', 'Untitled')}")
-            print(f"      - 비트 수: {len(ch.get('beats', []))}개")
+        # 1. Hook
+        print(f"\n[Hook]")
+        # Schema 변경 대응: visualDescription -> on_screen_cues / text -> text
+        print(f"Text: {hook.get('text', 'N/A')[:50]}...")
         
-        closing = script.get('closing', {})
-        print(f"\n🎯 마무리 CTA:")
-        print(f"   {closing.get('cta', 'N/A')}")
-        
-        # Quality Report
-        quality = result.get('quality_report', {})
-        print(f"\n📈 품질 리포트:")
-        print(f"   - 사용된 Fact 수: {len(quality.get('used_fact_ids', []))}개")
-        print(f"   - 미사용 필수 Fact: {len(quality.get('unused_required_fact_ids', []))}개")
-        
-        # Verification Report
-        verifier_output = result.get('verifier_output', {})
-        if verifier_output:
-            ver_report = verifier_output.get('verification_report', {})
-            print(f"\n✅ 검증 리포트:")
-            print(f"   - 검증 통과 Beat: {ver_report.get('verified_beats', 0)}/{ver_report.get('total_beats', 0)}개")
-            print(f"   - 유효 Fact 참조: {ver_report.get('valid_fact_references', 0)}/{ver_report.get('total_fact_references', 0)}개")
-            print(f"   - 발견된 이슈: {len(ver_report.get('issues', []))}개")
-            print(f"   - 의심스러운 Beat: {len(ver_report.get('suspicious_beats', []))}개")
-            
-            # 출처 맵 요약
-            source_map = verifier_output.get('source_map', [])
-            print(f"\n📚 출처 맵:")
-            print(f"   - 춝 {len(source_map)}개 Beat에 출처 연결")
-            if source_map:
-                print(f"   - 예시: Beat '{source_map[0].get('beat_id')}' → {len(source_map[0].get('sources', []))}개 출처")
-        
+        # 2. Body
+        for ch in chapters:
+            print(f"\n[Chapter {ch.get('chapter_id')}] {ch.get('title')}")
+            for beat in ch.get('beats', []):
+                print(f"  - ({beat.get('purpose')}): {beat.get('line', 'N/A')[:30]}...")
+
         print("\n" + "=" * 80)
         print("✨ 테스트 성공!")
         print("=" * 80)
         
         return result
-        
+
     except Exception as e:
-        print("\n" + "=" * 80)
-        print("❌ 테스트 실패!")
-        print("=" * 80)
-        print(f"\n에러: {e}")
-        logger.error("Pipeline 실행 실패", exc_info=True)
+        print("\n❌ 테스트 중단 (Error Occurred)")
+        print(f"Error: {e}")
+        logger.error("Pipeline Flow Error", exc_info=True)
         raise
 
 

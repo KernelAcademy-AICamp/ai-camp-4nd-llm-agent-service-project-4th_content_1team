@@ -81,19 +81,58 @@ def _search_youtube_videos(queries: List[str], max_results: int = 5) -> List[Dic
     
     for query in queries:
         try:
-            # 간단한 검색 (DB 없이 API만)
-            # 실제 구현: youtube_service의 로직을 직접 호출하거나 HTTP 요청
-            # 여기서는 Mock 데이터로 대체 (실제 API 키 필요)
-            
-            logger.info(f"검색 중: {query}")
-            
-            # TODO: 실제 YouTube Data API v3 호출
-            # 현재는 구조만 정의
-            videos = _mock_youtube_search(query, max_results)
+            # 실전: YouTube Data API v3 호출
+            import os
+            from googleapiclient.discovery import build
+
+            api_key = os.getenv("YOUTUBE_API_KEY")
+            if not api_key:
+                logger.warning("YOUTUBE_API_KEY Missing, using Mock")
+                videos = _mock_youtube_search(query, max_results)
+            else:
+                logger.info(f"YouTube API 호출: {query}")
+                youtube = build("youtube", "v3", developerKey=api_key)
+                
+                req = youtube.search().list(
+                    q=query,
+                    part="snippet",
+                    maxResults=max_results,
+                    type="video",
+                    order="viewCount"
+                )
+                res = req.execute()
+                
+                videos = []
+                for item in res.get("items", []):
+                    vid = item["id"]["videoId"]
+                    snippet = item["snippet"]
+                    
+                    # 통계 정보 추가 조회 (조회수 등)
+                    stats_req = youtube.videos().list(
+                        part="statistics",
+                        id=vid
+                    )
+                    stats_res = stats_req.execute()
+                    stats = stats_res["items"][0]["statistics"] if stats_res["items"] else {}
+                    
+                    videos.append({
+                        "video_id": vid,
+                        "title": snippet["title"],
+                        "channel_title": snippet["channelTitle"],
+                        "view_count": int(stats.get("viewCount", 0)),
+                        "like_count": int(stats.get("likeCount", 0)),
+                        "comment_count": int(stats.get("commentCount", 0)),
+                        "published_at": snippet["publishedAt"],
+                        "url": f"https://www.youtube.com/watch?v={vid}"
+                    })
+
             all_videos.extend(videos)
             
         except Exception as e:
             logger.warning(f"쿼리 '{query}' 검색 실패: {e}")
+            # 실패 시 Mock으로 폴백 (테스트 안전성)
+            videos = _mock_youtube_search(query, max_results)
+            all_videos.extend(videos)
             continue
     
     # 중복 제거 (video_id 기준)

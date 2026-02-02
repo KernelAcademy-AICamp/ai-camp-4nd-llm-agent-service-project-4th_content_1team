@@ -1,0 +1,286 @@
+{
+  "verifier_output": {
+    "verified": false,
+    "source_map": [],
+    "verification_report": {
+      "total_beats": 17,
+      "verified_beats": 10,
+      "total_fact_references": 0,
+      "valid_fact_references": 0,
+      "issues": [
+        {
+          "beat_id": "hook",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID '현대경제신문_전망'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "hook",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID '현대경제신문_해석'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "hook",
+          "issue_type": "suspicious_claim",
+          "description": "출처 표현('~에 따르면')이 있지만 Fact 참조가 없습니다",
+          "severity": "warning",
+          "suggested_action": "add_source"
+        },
+        {
+          "beat_id": "b1",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_001'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "b2",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_002'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "b2",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_004'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "b2",
+          "issue_type": "suspicious_claim",
+          "description": "출처 표현('~에 따르면')이 있지만 Fact 참조가 없습니다",
+          "severity": "warning",
+          "suggested_action": "add_source"
+        },
+        {
+          "beat_id": "b4",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_003'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "b2",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_005'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        },
+        {
+          "beat_id": "b3",
+          "issue_type": "invalid_fact_id",
+          "description": "Fact ID 'fact_006'가 존재하지 않습니다",
+          "severity": "critical",
+          "suggested_action": "delete"
+        }
+      ],
+      "suspicious_beats": [
+        "hook",
+        "b2"
+      ]
+    },
+    "beat_verifications": [
+      {
+        "beat_id": "hook",
+        "beat_text": "당신은 방산 산업에 투자할 준비가 되어 있나요? 현재 방위산업 관련 주식이 급격히 상승하고 있다는 소식이 전해지고 있습니다. 현대경제신문에 따르면, 방산 기업들의 기술력과 수출이 증가하면서 주가 상승에 기여하고 있다는 분석이 나왔습니다. 이는 단순한 통계가 아니라, 앞으로의 투자 방향을 결정짓는 중요한 신호일 수 있습니다. 이제 기술과 인간 행동의 변화가 투자에 미치는 영향을 이해하는 것이 더욱 중요해졌습니다. 기술의 발전이 우리의 생활 방식을 어떻게 바꾸고 있는지, 그리고 그 변화가 투자에 어떤 영향을 미치는지에 대해 함께 알아보겠습니다. 오늘 이 영상에서는 기술 투자에 대한 새로운 시각을 제시하며, 방산 산업의 미래에 대해 논의해 보겠습니다!",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "hook",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID '현대경제신문_전망'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          },
+          {
+            "beat_id": "hook",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID '현대경제신문_해석'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          },
+          {
+            "beat_id": "hook",
+            "issue_type": "suspicious_claim",
+            "description": "출처 표현('~에 따르면')이 있지만 Fact 참조가 없습니다",
+            "severity": "warning",
+            "suggested_action": "add_source"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b1",
+        "beat_text": "In the realm of technology investment, data is often hailed as the gold standard for decision-making. Yet, relying solely on data can lead to significant disconnects between perceived trends and actual consumer behavior. This is particularly true in the tech industry, where rapid changes in consumer preferences can render data-driven forecasts obsolete.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b1",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_001'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b2",
+        "beat_text": "A prime example of this disconnect can be seen in the case of the smartphone market. Many investors were convinced that the surge in data regarding smartphone sales would translate to long-term success for certain companies. However, what they failed to account for was the shifting consumer sentiment towards brand loyalty and product differentiation. As newer brands emerged, established players lost market share faster than expected, leading to significant stock price drops. This illustrates that data, while important, can miss the underlying emotional drivers that influence consumer choices.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b2",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_002'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b3",
+        "beat_text": "Moreover, understanding consumer emotions is crucial. As noted by an industry expert, 'In the tech landscape, it’s not just about what the data shows; it's about how people feel about the products.' This perspective is essential as technology increasingly intersects with daily life. Consumers are drawn to products that resonate with them on an emotional level, often making decisions based on feelings rather than cold, hard data.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b4",
+        "beat_text": "The cautionary tales of companies that have faltered due to an over-reliance on data are numerous. For instance, Delta Airlines faced criticism during the pandemic for its data-driven approach to route planning. The company had relied heavily on pre-pandemic travel data, neglecting to factor in the emotional toll of the pandemic on consumers. As a result, its recovery strategy was misaligned with the actual consumer sentiment, leading to slower recovery rates than its competitors. The lesson here is clear: data needs to be contextualized within the framework of human behavior.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b5",
+        "beat_text": "As we move forward, the challenge for investors in the tech space will be to strike a balance between leveraging data analytics and understanding the nuanced human elements that drive technology usage. The key takeaway is that while data can provide valuable insights, it is the comprehension of emotional drivers and consumer sentiment that will ultimately guide successful investments. As one expert aptly put it, 'Data without context is just noise.' Therefore, savvy investors must cultivate a deeper understanding of the human factors at play in technology trends to avoid pitfalls and capitalize on emerging opportunities.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b1",
+        "beat_text": "In the rapidly evolving landscape of technology investments, understanding consumer behavior has become paramount. It's no longer sufficient to rely solely on data analytics; investors must delve into the intricacies of human preferences and motivations that drive tech adoption.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b2",
+        "beat_text": "Research shows that consumer feedback is instrumental in shaping market trends. For instance, recent analyses indicate that the defense industry is experiencing a surge in stock prices due to advancements in technology and increased exports, demonstrating how consumer demand for more sophisticated defense solutions is influencing corporate growth.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b2",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_004'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          },
+          {
+            "beat_id": "b2",
+            "issue_type": "suspicious_claim",
+            "description": "출처 표현('~에 따르면')이 있지만 Fact 참조가 없습니다",
+            "severity": "warning",
+            "suggested_action": "add_source"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b3",
+        "beat_text": "Psychological factors also play a crucial role in technology adoption. For example, consumers often gravitate toward technologies that enhance their daily lives or provide a sense of security. This is particularly evident in the growing interest in AI technologies for security purposes, as highlighted by experts who note that AI is poised to bring innovative changes to the security sector.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b4",
+        "beat_text": "As noted by experts, the growth potential of the defense industry signals positive opportunities for investors. With defense companies strengthening their technological capabilities and expanding their presence in global markets, the insights derived from consumer behavior regarding security needs can lead to lucrative investment strategies.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b4",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_003'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b5",
+        "beat_text": "Leveraging consumer behavior insights requires an active approach. Investors should engage with consumer feedback, analyze trends in tech usage, and understand the emotional drivers behind tech adoption. For instance, the recent recovery of airlines post-COVID-19 has demonstrated that companies focusing on enhancing customer experience are more likely to thrive in the competitive landscape.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b6",
+        "beat_text": "Ultimately, the intersection of consumer insights and technology investment is a dynamic environment. As more consumers embrace technology that aligns with their values and needs, investors who can effectively interpret these behavioral patterns will position themselves advantageously in the marketplace. The future of tech investment lies in not just understanding numbers, but in connecting with the human stories behind them.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b1",
+        "beat_text": "In a rapidly evolving technological landscape, the intersection of human behavior and technology presents a unique opportunity for investors. Understanding not just what technology does, but how people engage with it, is crucial for making informed investment decisions.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b2",
+        "beat_text": "Investors must create a balanced strategy that integrates consumer insights. This means going beyond mere data analytics and engaging with potential users to understand their preferences, pain points, and expectations from technology.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b2",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_005'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b3",
+        "beat_text": "For instance, let’s consider the emerging trend of AI in the security sector. As highlighted in recent analyses, AI is poised to bring about revolutionary changes in how security is managed. This is not merely a technological advancement; it reflects a shift in human behavior towards prioritizing safety in an increasingly digital world.",
+        "fact_references": [],
+        "issues": [
+          {
+            "beat_id": "b3",
+            "issue_type": "invalid_fact_id",
+            "description": "Fact ID 'fact_006'가 존재하지 않습니다",
+            "severity": "critical",
+            "suggested_action": "delete"
+          }
+        ],
+        "verified": false
+      },
+      {
+        "beat_id": "b4",
+        "beat_text": "Moreover, as we navigate this new era, companies like Delta Airlines are reshaping their business models to align with shifting consumer expectations. By prioritizing customer experience over traditional cost-cutting measures, they are setting an example of how understanding consumer sentiment can drive company growth and resilience.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      },
+      {
+        "beat_id": "b5",
+        "beat_text": "In conclusion, the future of technology investment lies in bridging the gap between tech and humanity. As we continue to see advancements in fields like AI, the successful investor will be the one who can anticipate human behavior and adapt their strategies accordingly, ensuring that their investments not only yield financial returns but also contribute positively to society.",
+        "fact_references": [],
+        "issues": [],
+        "verified": true
+      }
+    ]
+  }
+}
