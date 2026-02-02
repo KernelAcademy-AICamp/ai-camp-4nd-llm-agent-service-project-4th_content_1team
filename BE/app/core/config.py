@@ -45,6 +45,9 @@ class Settings(BaseSettings):
     # OpenAI API (for LLM)
     openai_api_key: str
     
+    # Gemini API
+    gemini_api_key: Optional[str] = None
+    
     # Google API (for search, etc.)
     google_api_key: Optional[str] = None
     
