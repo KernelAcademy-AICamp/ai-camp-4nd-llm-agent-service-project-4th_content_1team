@@ -6,14 +6,15 @@ import { ContentCalendar } from "./components/calendar"
 import { UploadSettings } from "./components/upload-settings"
 import { ConfirmedTopicsPanel } from "./components/confirmed-topics-panel"
 import { RecommendationCards } from "./components/recommendation-cards"
-import type { RecommendationItem } from "../../lib/api/types"
+import type { TopicResponse } from "../../lib/api/types"
 
 interface ContentTopic {
-  id: number
+  id: string
   title: string
   reason: string
   type: string
-  week: number
+  date: string  // "2024-02-15" 형식
+  week?: number  // 레거시 호환
   confirmed?: boolean
   // API 추천 데이터 추가 필드
   based_on_topic?: string
@@ -22,6 +23,8 @@ interface ContentTopic {
   content_angles?: string[]
   thumbnail_idea?: string
   urgency?: string
+  search_keywords?: string[]
+  topic_type?: 'channel' | 'trend'
 }
 
 // urgency를 type으로 매핑
@@ -35,28 +38,29 @@ export default function DashboardPage() {
   const [weeklyUploads, setWeeklyUploads] = useState(2)
   const [confirmedTopics, setConfirmedTopics] = useState<ContentTopic[]>([])
   const [calendarTopics, setCalendarTopics] = useState<ContentTopic[]>([])
-  const [nextId, setNextId] = useState(1000) // API 추천 주제용 ID
-
   // 추천 → 캘린더 추가
-  const handleAddToCalendar = (recommendation: RecommendationItem, week: number) => {
+  const handleAddToCalendar = (topic: TopicResponse, date: string) => {
     const newTopic: ContentTopic = {
-      id: nextId,
-      title: recommendation.title,
-      reason: recommendation.recommendation_reason || recommendation.trend_basis,
-      type: urgencyToType[recommendation.urgency] || "trend",
-      week: week,
-      confirmed: false,
+      id: topic.id,
+      title: topic.title,
+      reason: topic.recommendation_reason || topic.trend_basis || "",
+      type: urgencyToType[topic.urgency] || "trend",
+      date: date,
+      confirmed: true,  // 날짜 지정 = 확정
       // 추가 정보 보존
-      based_on_topic: recommendation.based_on_topic,
-      trend_basis: recommendation.trend_basis,
-      recommendation_reason: recommendation.recommendation_reason,
-      content_angles: recommendation.content_angles,
-      thumbnail_idea: recommendation.thumbnail_idea,
-      urgency: recommendation.urgency,
+      based_on_topic: topic.based_on_topic || undefined,
+      trend_basis: topic.trend_basis || undefined,
+      recommendation_reason: topic.recommendation_reason || undefined,
+      content_angles: topic.content_angles,
+      thumbnail_idea: topic.thumbnail_idea || undefined,
+      urgency: topic.urgency,
+      search_keywords: topic.search_keywords,
+      topic_type: topic.topic_type,
     }
 
     setCalendarTopics(prev => [...prev, newTopic])
-    setNextId(prev => prev + 1)
+    // 확정된 주제 패널에도 추가
+    setConfirmedTopics(prev => [...prev, newTopic])
   }
 
   // 캘린더에서 주제 확정
