@@ -60,12 +60,28 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
     full_articles = _crawl_and_analyze(unique_articles)
     
-    # 5. 결과 반환 (차트가 있는 기사 우선 정렬)
+    # 5. [Fact Extractor] 팩트 구조화 및 시각화 제안 (New!)
+    # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
+    structured_facts = _structure_facts(full_articles)
+    
+    # 6. 결과 반환 (차트가 있는 기사 우선 정렬)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
     
+    # [NEW] Writer에게 전달할 Opinions 모음 (모든 기사의 오피니언 통합)
+    structured_opinions = []
+    for art in full_articles:
+        ops = art.get("analysis", {}).get("opinions", [])
+        if ops:
+            # 출처(Source)를 앞에 붙여서 구체화 (예: "[매일경제] [전문가] ...")
+            source = art.get("source", "Unknown")
+            for op in ops:
+                structured_opinions.append(f"[{source}] {op}")
+
     return {
         "news_data": {
             "articles": full_articles,
+            "structured_facts": structured_facts, # 구조화된 팩트 리스트
+            "structured_opinions": structured_opinions, # [NEW] 구조화된 오피니언 리스트
             "queries_used": base_queries,
             "collected_at": datetime.now().isoformat()
         }
@@ -357,6 +373,9 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                     browser.close()
                     return None
                 
+                # [ID 생성] URL 해시 기반 고유 ID 부여 (Verifier 연결용)
+                item["id"] = hashlib.md5(item["url"].encode()).hexdigest()
+
                 # 이미지 추출 (Lazy Loading 지원 + Aggressive Mode)
                 # data-src, data-original, data-url 우선 확인
                 images_found = []
@@ -543,6 +562,92 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                 
                 browser.close()
                 
+                # [AI] 기사 분석 및 UI용 데이터 구조화 (Fact vs Opinion)
+                try:
+                    # 텍스트가 너무 길면 앞부분 4000자만 사용
+                    input_text = text[:4000] 
+                    
+                    api_key = os.getenv("OPENAI_API_KEY")
+                    if api_key and len(input_text) > 300:
+                        llm_extract = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.0)
+                        
+                        analysis_prompt = f"""
+                        Analyze the news article below and return a JSON object with the following fields:
+
+                        1. "source": Name of the news outlet/press (e.g., "TechCrunch", "매일경제"). Extract from text or infer from context.
+                        2. "summary_short": A single sentence summary of the most critical point (Korean).
+                        3. "analysis": An object containing two lists:
+                            - "facts": A list of objective facts, statistics, specific numbers, and confirmed events (Korean).
+                            - "opinions": A list of subjective claims, interpretations, and predictions (Korean). 
+                                          **CRITICAL EXECUTION & SORTING ORDER (Final Logic)**:
+                                          
+                                          1. **Extraction (UNLIMITED)**:
+                                             - Extract ALL explicit quotes/opinions from specific speakers (`[전문가]`, `[업계]`, `[분석]`).
+                                             - Extract ALL valid `[전망]` (Outlook) and `[해석]` (Insight) from the text.
+                                          
+                                          2. **Slot Filling Strategy (Target: 5 Items)**:
+                                             - **Slot 1 (Mandatory)**: Best `[전망]`
+                                             - **Slot 2 (Mandatory)**: Best `[해석]`
+                                             - **Slot 3 (Priority)**: `[전문가]` if exists. Else -> Backfill with extra `[전망]`.
+                                             - **Slot 4 (Priority)**: `[업계]` if exists. Else -> Backfill with extra `[해석]`.
+                                             - **Slot 5 (Priority)**: `[분석]` if exists. Else -> Backfill with extra `[전망]` or `[해석]`.
+                                          
+                                          3. **Final Grouping (Strict Sorting)**:
+                                             Regardless of how slots were filled, you MUST sort the final list in this grouped order:
+                                             
+                                             **GROUP 1**: All `[전망]` items (Original + Backfilled)
+                                             **GROUP 2**: All `[해석]` items (Original + Backfilled)
+                                             **GROUP 3**: All `[전문가]` items
+                                             **GROUP 4**: All `[업계]` items
+                                             **GROUP 5**: All `[분석]` items
+                                          
+                                          Example Output (Grouped):
+                                          "[전망] 2026년 성장세 지속", "[전망] (추가) 아시아 시장 확대", "[해석] 규제 완화 덕분", "[전문가] 김교수는...", "[업계] 이대표는..."
+                        4. "key_paragraphs": Extract ALL original distinct paragraphs that contain facts/data (No rewriting, just copy-paste). Separated by double newlines.
+
+                        [Article Text]
+                        {input_text}
+                        """
+                        
+                        msg = HumanMessage(content=analysis_prompt)
+                        res = llm_extract.invoke([msg])
+                        
+                        # JSON 파싱
+                        content = res.content.replace("```json", "").replace("```", "").strip()
+                        try:
+                            data = json.loads(content)
+                            item["source"] = data.get("source", "Unknown")
+                            item["summary_short"] = data.get("summary_short", "")
+                            item["analysis"] = data.get("analysis", {"facts": [], "opinions": []})
+                            
+                            # 기존 파이프라인(Writer 등)을 위해 summary 필드에는 원문 핵심 문단을 유지
+                            item["summary"] = data.get("key_paragraphs", text[:1000]) 
+                            
+                            logger.info(f"[AI] 기사 분석 완료: {item['source']} (Facts: {len(item['analysis']['facts'])}, Opinions: {len(item['analysis']['opinions'])})")
+                        except json.JSONDecodeError:
+                            logger.warning("[AI] JSON 파싱 실패, fallback 수행")
+                            item["source"] = "Unknown"
+                            item["summary_short"] = item.get("desc", "")
+                            item["analysis"] = {"facts": [], "opinions": []}
+                            item["summary"] = text[:1000]
+                            
+                    else:
+                        item["source"] = "Unknown"
+                        item["summary_short"] = item.get("desc", "")
+                        item["analysis"] = {"facts": [], "opinions": []}
+                        item["summary"] = text[:1000] + "..." 
+
+                except Exception as e:
+                    logger.warning(f"기사 분석 실패: {e}")
+                    item["summary"] = text[:1000]
+                    item["source"] = "Unknown"
+                    item["summary_short"] = item.get("desc", "")
+                    item["analysis"] = {"facts": [], "opinions": []}
+
+                except Exception as e:
+                    logger.warning(f"핵심 문단 추출 실패: {e}")
+                    item["summary"] = text[:1000] # 실패 시 fallback
+
                 item["content"] = text
                 item["images"] = final_images
                 item["charts"] = charts
@@ -560,3 +665,104 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
             if res: results.append(res)
             
     return results
+
+
+def _structure_facts(articles: List[Dict]) -> List[Dict]:
+    """
+    [Fact Extractor]
+    수집된 기사들의 핵심 문단(summary)을 종합 분석하여 구조화된 팩트 리스트를 생성합니다.
+    중복 제거, 출처 매핑, 시각화 제안(Visual Plan)을 포함합니다.
+    """
+    if not articles:
+        return []
+        
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key: return []
+        
+        # 1. 기사 텍스트 모으기
+        combined_text = ""
+        for i, art in enumerate(articles):
+            summary = art.get("summary", "")
+            if len(summary) > 50: # 내용이 있는 경우만
+                combined_text += f"\n[Article {i}] Title: {art['title']}\n{summary}\n"
+        
+        if len(combined_text) < 100:
+            return []
+
+        # 2. GPT 로직
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.3)
+        
+        prompt = f"""
+        Analyze the following news articles and extract structured facts.
+        
+        [TASK]
+        1. **Extraction**: Extract key facts (Statistics, Quotes, Key Events).
+        2. **Deduplication**: Merge similar facts from different articles into one.
+        3. **Source Mapping**: Usage 'source_indices' list (e.g., [0, 2]) to track where the fact came from.
+        4. **Visual Proposal**: Suggest how to visualize this fact in a video.
+           - Options: "Chart" (for trends/comparisons), "Quote Card" (for sayings), "Text Overlay" (for key terms), "Timeline" (for dates), "None".
+        
+        [OUTPUT FORMAT]
+        Return a JSON list of objects:
+        [
+          {{
+            "category": "Statistic" | "Quote" | "Event" | "Fact",
+            "content": "Fact description (e.g., Sales increased by 50%)",
+            "value": "Key number/date if applicable (e.g., 50%)",
+            "source_indices": [0, 2],
+            "visual_proposal": "Chart" | "Quote Card" | "Text Overlay" | "Timeline" | "None"
+          }}
+        ]
+        
+        [ARTICLES]
+        {combined_text[:10000]} 
+        """
+        # 텍스트 길이 제한 (토큰 보호)
+        
+        msg = HumanMessage(content=prompt)
+        res = llm.invoke([msg])
+        
+        # JSON 파싱
+        content = res.content.replace("```json", "").replace("```", "").strip()
+        
+        # 가끔 배열이 아닌 객체로 오거나 텍스트가 섞일 수 있음 -> 파싱 시도
+        try:
+            facts = json.loads(content)
+            if isinstance(facts, list):
+                # [FIX] 각 팩트에 UUID 부여 및 Article ID 매핑 (Verifier 연결용)
+                for fact in facts:
+                    if "id" not in fact:
+                        fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
+                    
+                    # Source Indices([0, 2])를 -> 실제 article_id로 변환
+                    indices = fact.get("source_indices", [])
+                    if indices and isinstance(indices, list):
+                        # 첫 번째 출처를 대표 ID로 매핑
+                        first_idx = indices[0]
+                        if isinstance(first_idx, int) and 0 <= first_idx < len(articles):
+                            fact["article_id"] = articles[first_idx].get("id")
+
+                return facts
+            else:
+                return []
+        except:
+            # 파싱 실패 시 대괄호 찾아서 재시도
+            try:
+                start = content.find('[')
+                end = content.rfind(']')
+                if start != -1 and end != -1:
+                    parsed_facts = json.loads(content[start:end+1])
+                    # UUID 부여
+                    for fact in parsed_facts:
+                        if "id" not in fact:
+                            fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
+                    return parsed_facts
+            except:
+                pass
+                
+            return []
+            
+    except Exception as e:
+        logger.warning(f"Fact Structure Failed: {e}")
+        return []

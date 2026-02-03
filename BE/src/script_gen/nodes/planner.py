@@ -40,12 +40,16 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     
     # --- 1. 입력 데이터 추출 ---
-    # state에서 topic과 channel_profile을 가져옴
+    # state에서 topic과 channel_profile, trend_analysis를 가져옴
     topic = state.get("topic")
     channel_profile = state.get("channel_profile", {})
+    trend_analysis = state.get("trend_analysis") # Trend Scout 결과 가져오기
     
     if not topic:
         raise ValueError("Topic is required in state")
+    
+    if trend_analysis:
+        logger.info(f"Trend Analysis detected: {len(trend_analysis.get('top_comments', []))} comments found")
     
     
     # --- 1.5. News RAG: 최신 뉴스 검색 ---
@@ -70,7 +74,8 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 channel_profile, 
                 attempt, 
                 last_error,
-                recent_news  # News RAG 결과 전달
+                recent_news,  # News RAG 결과 전달
+                trend_analysis # Trend Scout 결과 전달 (New!)
             )
             
             
@@ -184,58 +189,78 @@ def _build_planner_prompt(
     channel_profile: Dict, 
     attempt: int = 0,
     last_error: Optional[str] = None,
-    recent_news: Optional[List[Dict[str, str]]] = None
+    recent_news: Optional[List[Dict[str, str]]] = None,
+    trend_analysis: Optional[Dict] = None
 ) -> str:
     """
     Planner용 프롬프트를 생성하는 헬퍼 함수
-    재시도 시에는 피드백을 포함합니다.
-    
-    Args:
-        topic: 주제
-        channel_profile: 채널 정보
-        attempt: 현재 시도 횟수 (0부터 시작)
-        last_error: 이전 시도의 에러 메시지
-    
-    Returns:
-        완성된 프롬프트 문자열
+    레이아웃: 기본 정보 -> 뉴스 RAG -> 트렌드 분석(New!) -> 개인화
     """
     
     # --- 기본 프롬프트 (영어로 작성) ---
     category = channel_profile.get("category", "general")
     target_audience = channel_profile.get("target_audience", "general viewers")
     
-    # 확장 프로필 (있으면 사용, 없으면 무시)
-    average_duration = channel_profile.get("average_duration")  # 분 단위
-    content_style = channel_profile.get("content_style")  # 리스트형/스토리형/튜토리얼형
-    recent_feedback = channel_profile.get("recent_feedback", [])  # 댓글 피드백 리스트
+    # 확장 프로필
+    average_duration = channel_profile.get("average_duration")
+    content_style = channel_profile.get("content_style")
+    recent_feedback = channel_profile.get("recent_feedback", [])
     
-    # News RAG: 최신 뉴스 컨텍스트 추가
+    # [News RAG] 최신 뉴스 컨텍스트
     news_context = ""
     if recent_news and len(recent_news) > 0:
-        news_context = "\n\n**Recent News Context** (Use this to make the content brief more relevant and timely):\n"
+        news_context = "\n\n**Recent News Context** (Use this for factual accuracy):\n"
         for i, news in enumerate(recent_news, 1):
             news_context += f"{i}. {news['title']}\n   {news['snippet']}\n"
+
+    # [Trend Scout] 커뮤니티 반응 컨텍스트 (New!)
+    trend_context = ""
+    if trend_analysis:
+        trend_context = "\n\n**COMMUNITY REACTIONS (Trend Scout)**:\n"
+        # 트렌드 키워드나 댓글 요약 등이 있다면 여기에 포함
+        # 현재 trend_analysis 구조에 따라 유동적으로 처리
+        # 예: {"keywords": [...], "top_comments": [...]} 가정
+        if "keywords" in trend_analysis:
+            trend_context += f"- Hot Keywords: {', '.join(trend_analysis['keywords'])}\n"
+        
+        # 댓글이나 여론 정보가 있다면 추가 (Trend Scout V2 결과)
+        # (구현에 따라 state에서 가져오는 방식이 다를 수 있음)
+        if "sentiment_summary" in trend_analysis:
+            trend_context += f"- Overall Sentiment: {trend_analysis['sentiment_summary']}\n"
+        if "top_comments" in trend_analysis and len(trend_analysis["top_comments"]) > 0:
+            trend_context += "- Key Comments/Reactions:\n"
+            for i, comment in enumerate(trend_analysis["top_comments"][:3], 1):
+                trend_context += f"  {i}. {comment}\n"
     
-    # 채널 개인화 컨텍스트 추가
+    # [Personalization] 채널 맞춤
     personalization_context = ""
     if average_duration or content_style or recent_feedback:
-        personalization_context = "\n\n**Channel Personalization** (Adapt your brief to match this channel's style):\n"
-        
+        personalization_context = "\n\n**Channel Personalization**:\n"
         if average_duration:
-            personalization_context += f"- Average Video Length: {average_duration} minutes (structure chapters to fit this duration)\n"
-        
+            personalization_context += f"- Average Video Length: {average_duration} mins\n"
         if content_style:
-            personalization_context += f"- Preferred Content Style: {content_style} (follow this format in your narrative structure)\n"
-        
-        if recent_feedback and len(recent_feedback) > 0:
-            personalization_context += f"- Recent Viewer Feedback: {', '.join(recent_feedback[:3])} (address these concerns)\n"
+            personalization_context += f"- Style: {content_style}\n"
+        if recent_feedback:
+            personalization_context += f"- Recent Feedback: {', '.join(recent_feedback[:3])}\n"
     
-    base_prompt = f"""You are an expert YouTube content planner specializing in informational videos.
+    base_prompt = f"""You are an expert YouTube content planner specializing in high-engagement videos.
 
 **Topic**: {topic}
 **Channel Category**: {category}
 **Target Audience**: {target_audience}
-**Language**: Korean (ALL titles, questions, and content MUST be written in Korean){news_context}{personalization_context}
+**Language**: Korean (ALL output must be in Korean)
+
+{news_context}{trend_context}{personalization_context}
+
+**STRATEGIC INSTRUCTION (Critial for High Views)**:
+1. **Analyze Community Intent**: Look at the 'COMMUNITY REACTIONS (Trend Scout)' (if provided).
+   - If people are **Angry** -> Structure the narrative around "Why they are mad" and "Who is responsible".
+   - If people are **Confused** -> Structure it as a "Myth-busting" or "Clear Explanation" guide.
+   - If people are **Excited** -> Focus on "What you need to prepare" or "Hidden features".
+   - 대중의 반응(특히 부정적 감정이나 뜨거운 이슈)을 챕터 구성의 핵심 테마로 삼을 것.
+2. **Fact + Opinion Structure**:
+   - Don't just list facts. Use facts to back up a strong opinion or counter-intuitive insight.
+   - Example: Instead of "Apple released Vision Pro", use "Why Vision Pro might FAIL (despite the specs)".
 
 Create a comprehensive content brief for this video. You MUST respond with a valid JSON object following this exact structure:
 

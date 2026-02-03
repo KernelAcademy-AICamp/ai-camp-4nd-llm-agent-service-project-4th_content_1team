@@ -12,7 +12,7 @@ from app.schemas.auth import (
     TokensResponse,
     RefreshResponse,
     LogoutResponse,
-    RefreshTokenRequest
+    RefreshTokenRequest,
 )
 from app.services.google_oauth import GoogleOAuthService
 from app.services.auth_service import AuthService

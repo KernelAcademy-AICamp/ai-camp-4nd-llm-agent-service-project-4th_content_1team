@@ -3,3 +3,5 @@ export * from './auth.types';
 export * from './youtube.types';
 export * from './competitor.types';
 export * from './subtitle.types';
+export * from './persona.types';
+export * from './recommendation.types';
