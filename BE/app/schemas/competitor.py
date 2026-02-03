@@ -69,3 +69,32 @@ class FetchCommentsResponse(BaseModel):
     competitor_video_id: UUID
     comment_count: int
     comments: List[VideoCommentSampleOut]
+
+
+class VideoAnalyzeRequest(BaseModel):
+    """영상 내용 분석 요청."""
+
+    youtube_video_id: str
+
+
+class VideoAnalyzeResponse(BaseModel):
+    """영상 내용 분석 응답."""
+
+    summary: str
+    strengths: List[str]
+    weaknesses: List[str]
+
+
+class BatchAnalyzeRequest(BaseModel):
+    """영상 배치 분석 요청."""
+
+    youtube_video_ids: List[str] = Field(..., min_length=1, max_length=20)
+
+
+class BatchAnalyzeResponse(BaseModel):
+    """영상 배치 분석 응답."""
+
+    total: int
+    processed: int
+    skipped: int
+    failed: int

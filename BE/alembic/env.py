@@ -19,6 +19,7 @@ from app.models.youtube_channel import (
 )
 from app.models.competitor import CompetitorCollection, CompetitorVideo
 from app.models.caption import VideoCaption
+from app.models.video_content_analysis import VideoContentAnalysis
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

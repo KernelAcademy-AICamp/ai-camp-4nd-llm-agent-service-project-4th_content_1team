@@ -42,6 +42,7 @@ class Settings(BaseSettings):
     # YouTube Data API
     youtube_api_key: str
     
+
     # OpenAI API (for LLM)
     openai_api_key: str
     
@@ -57,6 +58,7 @@ class Settings(BaseSettings):
     # Naver API (for Korean news)
     naver_client_id: str
     naver_client_secret: str
+
     
     # YouTube Subtitle (자막 다운로드 설정)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)

@@ -13,6 +13,7 @@ from app.models.thumbnail_strategy import ThumbnailStrategy
 from app.models.thumbnail_generation import ThumbnailGeneration
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
 from app.models.caption import VideoCaption
+from app.models.video_content_analysis import VideoContentAnalysis
 from app.models.content_topic import ChannelTopic, TrendTopic
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "CompetitorVideo",
     "VideoCommentSample",
     "VideoCaption",
+    "VideoContentAnalysis",
     "ChannelTopic",
     "TrendTopic",
 ]
