@@ -151,17 +151,32 @@ Recommend {top_n} topics. For each provide:
 - based_on_topic: 어떤 트렌드 기반인지
 - trend_basis: 왜 지금 핫한지 (구체적 데이터 포함)
 - recommendation_reason: 왜 이 채널에 적합한지
-- search_keywords: 스크립트 작성을 위한 검색 키워드
-  - youtube_main: 메인 영상 검색용 한국어 키워드 3개
-  - youtube_reference: 참고 영상 검색용 키워드 3개
-  - google_news: 최신 뉴스/기사 검색용 키워드 3개
-  - google_research: 심층 자료/논문 검색용 키워드 3개
+- search_keywords: 스크립트 자료조사용 검색 키워드 (3~5개, 배열)
+
+  [키워드 도출법]
+  "이 스크립트를 쓰려면 어떤 자료가 필요하지?" 먼저 생각하고,
+  그 자료를 실제로 찾을 수 있는 검색어를 도출할 것
+
+  [좋은 키워드 기준]
+  1. 실제 검색 시 관련 영상/기사/자료가 충분히 존재함
+  2. 검색 결과가 이 스크립트 작성에 직접 도움됨
+  3. 너무 광범위하지 않고 적절히 구체적임
+
+  [금지]
+  - 검색해도 결과 없을 키워드
+  - 주제와 연결 약한 범용 키워드
+  - 개수 채우기용 filler
+
+  [참고]
+  - title에 있는 핵심 개념 포함
+  - 좋은 키워드가 3개뿐이면 3개만 (억지로 채우지 말 것)
+
 - content_angles: 2-3개의 구체적인 콘텐츠 접근 방식
 - thumbnail_idea: 썸네일 구성 아이디어
 - urgency: urgent(즉시)/normal(1주내)/evergreen(상시)
 
 ## Respond in JSON only (Korean)
-[{{"title":"..","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","search_keywords":{{"youtube_main":["a","b","c"],"youtube_reference":["a","b","c"],"google_news":["a","b","c"],"google_research":["a","b","c"]}},"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"urgent"}}]"""
+[{{"title":"..","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"urgent"}}]"""
 
     def _call_ollama(self, prompt: str) -> str:
         url = "http://localhost:11434/api/generate"
@@ -197,14 +212,20 @@ Recommend {top_n} topics. For each provide:
                     valid = []
                     for item in result:
                         if isinstance(item, dict) and "title" in item:
-                            # search_keywords 파싱 (새 형식 + 구 형식 호환)
-                            raw_keywords = item.get("search_keywords", {})
-                            search_keywords = {
-                                "youtube_main": raw_keywords.get("youtube_main", raw_keywords.get("youtube", [])),
-                                "youtube_reference": raw_keywords.get("youtube_reference", []),
-                                "google_news": raw_keywords.get("google_news", []),
-                                "google_research": raw_keywords.get("google_research", raw_keywords.get("google", [])),
-                            }
+                            # search_keywords 파싱 (단순 배열 형식)
+                            raw_keywords = item.get("search_keywords", [])
+
+                            # 배열이면 그대로, 객체면 모든 값 합쳐서 배열로
+                            if isinstance(raw_keywords, list):
+                                search_keywords = raw_keywords
+                            elif isinstance(raw_keywords, dict):
+                                # 레거시 호환: 객체면 모든 키워드 합침
+                                search_keywords = []
+                                for key in ["youtube_main", "youtube_reference", "google_news", "google_research", "youtube", "google"]:
+                                    search_keywords.extend(raw_keywords.get(key, []))
+                                search_keywords = list(set(search_keywords))[:5]  # 중복 제거 후 최대 5개
+                            else:
+                                search_keywords = []
 
                             valid.append({
                                 "title": item.get("title", "N/A"),
@@ -233,12 +254,7 @@ Recommend {top_n} topics. For each provide:
                 "based_on_topic": c.name,
                 "trend_basis": f"{c.item_count}개 항목, 점수 {c.cluster_score:.3f}",
                 "recommendation_reason": "자동 생성 (LLM 실패)",
-                "search_keywords": {
-                    "youtube_main": c.keywords[:3],
-                    "youtube_reference": c.keywords[:3],
-                    "google_news": c.keywords[:3],
-                    "google_research": c.keywords[:3],
-                },
+                "search_keywords": c.keywords[:5],  # 단순 배열로 변경
                 "content_angles": ["트렌드 요약", "심층 분석", "향후 전망"],
                 "thumbnail_idea": f"{c.name} 관련 이미지",
                 "urgency": "normal",
