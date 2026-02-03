@@ -1,19 +1,14 @@
 import logging
-import re
-import json
 import time
 import asyncio
+import os
+import tempfile
 from typing import Optional
+import json
 
-import httpx
+import yt_dlp
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
-    TranscriptsDisabled,
-    NoTranscriptFound,
-    VideoUnavailable
-)
 
 from app.models.caption import VideoCaption
 from app.models.competitor import CompetitorVideo
@@ -23,11 +18,57 @@ logger = logging.getLogger(__name__)
 
 
 class SubtitleService:
+    """
+    yt-dlp 기반 YouTube 자막 추출 서비스.
+    
+    공식 가이드 참고:
+    - CLI: yt-dlp --write-auto-subs URL
+    - API: ydl_opts = {'writeautomaticsub': True}
+    """
 
     _last_request_time: float = 0
-    _MIN_INTERVAL = 5.0  # 3초 → 5초로 증가 (Rate Limiting 강화)
+    _MIN_INTERVAL = 2.0
+    _proxy_rr_idx: int = 0
 
-    # ── Public API ──────────────────────────────────────
+    # ── 프록시 관리 ──────────────────────────────────────
+
+    @staticmethod
+    def _get_proxy_pool() -> list[str]:
+        """ENV에서 프록시 풀 파싱."""
+        import re
+        raw = (settings.youtube_proxy_url or "").strip()
+        if not raw:
+            return []
+        return [p.strip() for p in re.split(r"[,\n;]+", raw) if p.strip()]
+
+    @staticmethod
+    def _pick_proxy() -> Optional[str]:
+        """라운드로빈으로 프록시 선택."""
+        pool = SubtitleService._get_proxy_pool()
+        if not pool:
+            return None
+        picked = pool[SubtitleService._proxy_rr_idx % len(pool)]
+        SubtitleService._proxy_rr_idx += 1
+        return picked
+
+    @staticmethod
+    def _redact_proxy(proxy_url: str) -> str:
+        """로그용 프록시 마스킹."""
+        import re
+        return re.sub(r"(https?://[^:]+):[^@]+@", r"\1:***@", proxy_url)
+
+    # ── Rate Limiting ──────────────────────────────────────
+
+    @staticmethod
+    async def _throttle():
+        """요청 간 최소 간격 보장."""
+        elapsed = time.time() - SubtitleService._last_request_time
+        wait = SubtitleService._MIN_INTERVAL - elapsed
+        if wait > 0:
+            await asyncio.sleep(wait)
+        SubtitleService._last_request_time = time.time()
+
+    # ── 핵심: yt-dlp로 자막 추출 ──────────────────────────────────────
 
     @staticmethod
     async def fetch_subtitles(
@@ -35,251 +76,428 @@ class SubtitleService:
         languages: list[str],
         db: Optional[AsyncSession] = None,
     ) -> list[dict]:
+        """
+        yt-dlp로 자막 다운로드.
+        
+        CLI 명령어 참고: yt-dlp --write-auto-subs URL
+        API 변환: {'writeautomaticsub': True}
+        
+        Args:
+            video_ids: YouTube 영상 ID 리스트
+            languages: 우선순위 언어 코드 (예: ["ko", "en"])
+            db: DB 세션 (자막 캐싱용)
+        
+        Returns:
+            [{"video_id": "...", "status": "success", "tracks": [...]}]
+        """
         results = []
+        proxy_pool = SubtitleService._get_proxy_pool()
+        max_attempts = min(len(proxy_pool), 5) if proxy_pool else 3
+
         for video_id in video_ids:
             await SubtitleService._throttle()
-            result = await SubtitleService._fetch_innertube(video_id, languages)
+            
+            result = None
+            last_error = None
+
+            # 프록시를 바꿔가며 재시도
+            for attempt in range(max_attempts):
+                proxy_url = SubtitleService._pick_proxy() if proxy_pool else None
+                
+                try:
+                    # yt-dlp는 동기 함수이므로 스레드에서 실행
+                    result = await asyncio.to_thread(
+                        SubtitleService._fetch_subtitle_with_ytdlp,
+                        video_id,
+                        languages,
+                        proxy_url
+                    )
+                    
+                    # 성공하면 바로 종료
+                    cue_count = sum(len(t.get("cues", [])) for t in result.get("tracks", []))
+                    if result.get("status") == "success" and cue_count > 0:
+                        logger.info(
+                            f"[SUBTITLE] ✓ 성공 [{video_id}] "
+                            f"attempt={attempt+1}, cues={cue_count}, "
+                            f"proxy={SubtitleService._redact_proxy(proxy_url) if proxy_url else 'none'}"
+                        )
+                        break
+                    
+                    # 자막 없음은 재시도 불필요
+                    if result.get("no_captions") and not result.get("error"):
+                        logger.info(f"[SUBTITLE] 자막 없음 (실제) [{video_id}]")
+                        break
+                    
+                    # 429 에러는 다음 프록시로 재시도
+                    err = result.get("error", "")
+                    if "429" in err or "Too Many Requests" in err or "sign in" in err.lower():
+                        last_error = err
+                        logger.warning(
+                            f"[SUBTITLE] ⚠ 프록시 전환 재시도 [{video_id}] "
+                            f"attempt={attempt+1}/{max_attempts}, error={err[:80]}"
+                        )
+                        if attempt < max_attempts - 1:
+                            await asyncio.sleep(2.0)
+                            continue
+                        
+                except Exception as e:
+                    last_error = str(e)
+                    logger.error(f"[SUBTITLE] ✗ 예외 발생 [{video_id}] {type(e).__name__}: {e}")
+                    if attempt < max_attempts - 1:
+                        await asyncio.sleep(2.0)
+                        continue
+                    break
+
+            # 최종 결과 처리
+            if result is None or result.get("status") != "success":
+                result = {
+                    "video_id": video_id,
+                    "status": "failed",
+                    "source": "yt-dlp",
+                    "tracks": [],
+                    "no_captions": True,
+                    "error": last_error or "Unknown error",
+                }
+                logger.error(f"[SUBTITLE] ✗ 최종 실패 [{video_id}] error={last_error}")
+
             results.append(result)
-            if db is not None:
+            
+            # DB 저장 (성공한 경우만)
+            cue_count = sum(len(t.get("cues", [])) for t in result.get("tracks", []))
+            if db is not None and result.get("status") == "success" and cue_count > 0:
+                logger.info(f"[SUBTITLE] → DB 저장 시작 [{video_id}] cues={cue_count}")
                 await SubtitleService._save_caption(db, video_id, result)
+
         return results
 
-    # ── Private: Innertube pipeline ─────────────────────
-
     @staticmethod
-    async def _fetch_innertube(video_id: str, languages: list[str]) -> dict:
-        """Innertube API로 자막 트랙을 가져와 파싱 (1차 시도)."""
+    def _fetch_subtitle_with_ytdlp(
+        video_id: str,
+        languages: list[str],
+        proxy_url: Optional[str],
+    ) -> dict:
+        """
+        yt-dlp로 자막 메타데이터만 추출 (download=False).
+        
+        전략:
+        1. yt-dlp.extract_info(download=False) → 자막 URL만 가져오기
+        2. httpx로 자막 직접 다운로드 (프록시 사용)
+        3. JSON3 파싱
+        """
+        url = f"https://www.youtube.com/watch?v={video_id}"
+        # yt-dlp 옵션 (메타데이터만 추출, 다운로드 안 함)
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': False,  # 전체 메타데이터 추출
+        }
+        
+        # 프록시 설정
+        if proxy_url:
+            ydl_opts['proxy'] = proxy_url
+            logger.info(
+                f"[SUBTITLE] yt-dlp 프록시 [{video_id}]: "
+                f"{SubtitleService._redact_proxy(proxy_url)}"
+            )
+        
+        # 쿠키 설정 (선택사항)
+        cookie_path = SubtitleService._get_cookie_path()
+        if cookie_path:
+            ydl_opts['cookiefile'] = cookie_path
+            logger.info(f"[SUBTITLE] yt-dlp 쿠키 [{video_id}]: {cookie_path}")
+        
         try:
-            player_response = await SubtitleService._fetch_player_response(video_id)
-            tracks_meta = SubtitleService._extract_caption_tracks(player_response)
-
-            if not tracks_meta:
-                logger.warning(f"Innertube에서 자막 트랙 없음, 라이브러리로 폴백 [{video_id}]")
-                # 폴백: youtube-transcript-api로 재시도 (Cookies/Proxy 사용)
-                return await SubtitleService._fetch_with_library(
-                    video_id,
-                    languages,
-                    cookies=settings.youtube_cookies_file,
-                    proxies=SubtitleService._get_proxy_config()
-                )
-
-            # 필터: 요청된 언어만
-            filtered = [
-                t for t in tracks_meta
-                if t["language_code"] in languages
-            ]
-            if not filtered:
-                filtered = tracks_meta  # 없으면 전부
-
-            tracks = []
-            for meta in filtered:
-                content = await SubtitleService._download_subtitle_track(meta["base_url"])
-                cues = SubtitleService._parse_subtitle(content)
-                tracks.append({
-                    "language_code": meta["language_code"],
-                    "language_name": meta["language_name"],
-                    "is_auto_generated": meta["is_auto_generated"],
-                    "cues": cues,
-                })
-                await asyncio.sleep(0.5)  # 트랙 간 짧은 딜레이
-
+            # 버전 로그 (최초 1회)
+            if not hasattr(SubtitleService, '_ytdlp_version_logged'):
+                logger.info(f"[SUBTITLE] yt-dlp version: {yt_dlp.version.__version__}")
+                SubtitleService._ytdlp_version_logged = True
+            
+            logger.info(f"[SUBTITLE] yt-dlp 메타데이터 추출 시작 [{video_id}]")
+            
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                # extract_info(download=False) → 자막 URL만 가져오기
+                info = ydl.extract_info(url, download=False)
+            
+            if not info:
+                return {
+                    "video_id": video_id,
+                    "status": "failed",
+                    "source": "yt-dlp",
+                    "tracks": [],
+                    "no_captions": True,
+                    "error": "Failed to extract video info",
+                }
+            
+            # 자막 메타데이터 추출
+            subtitles = info.get('subtitles', {})
+            automatic_captions = info.get('automatic_captions', {})
+            
+            logger.info(
+                f"[SUBTITLE] 메타데이터 추출 완료 [{video_id}] "
+                f"subtitles={list(subtitles.keys())}, "
+                f"auto_captions={list(automatic_captions.keys())}"
+            )
+            
+            # 언어 우선순위대로 시도
+            for lang in languages:
+                # 1) 수동 자막 우선
+                if lang in subtitles:
+                    subtitle_url = SubtitleService._get_json3_url(subtitles[lang])
+                    if subtitle_url:
+                        cues = SubtitleService._download_and_parse(subtitle_url, proxy_url)
+                        if cues:
+                            logger.info(
+                                f"[SUBTITLE] ✓ 수동 자막 [{video_id}] "
+                                f"lang={lang}, cues={len(cues)}"
+                            )
+                            return {
+                                "video_id": video_id,
+                                "status": "success",
+                                "source": "yt-dlp",
+                                "tracks": [{
+                                    "language_code": lang,
+                                    "language_name": lang,
+                                    "is_auto_generated": False,
+                                    "cues": cues,
+                                }],
+                                "no_captions": False,
+                                "error": None,
+                            }
+                
+                # 2) 자동생성 자막
+                if lang in automatic_captions:
+                    subtitle_url = SubtitleService._get_json3_url(automatic_captions[lang])
+                    if subtitle_url:
+                        cues = SubtitleService._download_and_parse(subtitle_url, proxy_url)
+                        if cues:
+                            logger.info(
+                                f"[SUBTITLE] ✓ 자동생성 자막 [{video_id}] "
+                                f"lang={lang}, cues={len(cues)}"
+                            )
+                            return {
+                                "video_id": video_id,
+                                "status": "success",
+                                "source": "yt-dlp",
+                                "tracks": [{
+                                    "language_code": lang,
+                                    "language_name": lang,
+                                    "is_auto_generated": True,
+                                    "cues": cues,
+                                }],
+                                "no_captions": False,
+                                "error": None,
+                            }
+            
+            # 자막 없음
             return {
                 "video_id": video_id,
-                "status": "success",
-                "source": "innertube",
-                "tracks": tracks,
-                "no_captions": False,
+                "status": "no_subtitle",
+                "source": "yt-dlp",
+                "tracks": [],
+                "no_captions": True,
                 "error": None,
             }
-
+        
+        except yt_dlp.utils.DownloadError as e:
+            error_msg = str(e)
+            logger.error(f"[SUBTITLE] yt-dlp DownloadError [{video_id}]: {error_msg}")
+            
+            # 429나 sign in 에러는 프록시 전환으로 해결 가능
+            if any(x in error_msg.lower() for x in ["429", "too many requests", "sign in"]):
+                return {
+                    "video_id": video_id,
+                    "status": "failed",
+                    "source": "yt-dlp",
+                    "tracks": [],
+                    "no_captions": True,
+                    "error": "429 Too Many Requests",
+                }
+            
+            return {
+                "video_id": video_id,
+                "status": "failed",
+                "source": "yt-dlp",
+                "tracks": [],
+                "no_captions": True,
+                "error": error_msg,
+            }
         except Exception as e:
-            logger.warning(f"Innertube 자막 조회 실패, 라이브러리로 폴백 [{video_id}]: {e}")
-            # 폴백: youtube-transcript-api로 재시도 (Cookies/Proxy 사용)
-            return await SubtitleService._fetch_with_library(
-                video_id,
-                languages,
-                cookies=settings.youtube_cookies_file,
-                proxies=SubtitleService._get_proxy_config()
-            )
+            error_msg = f"{type(e).__name__}: {e}"
+            logger.error(f"[SUBTITLE] yt-dlp 예외 [{video_id}]: {error_msg}")
+            return {
+                "video_id": video_id,
+                "status": "failed",
+                "source": "yt-dlp",
+                "tracks": [],
+                "no_captions": True,
+                "error": error_msg,
+            }
 
     @staticmethod
-    async def _fetch_player_response(video_id: str) -> dict:
-        """YouTube watch page에서 ytInitialPlayerResponse JSON 추출."""
-        url = f"https://www.youtube.com/watch?v={video_id}"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Accept-Language": "en-US,en;q=0.9",
-        }
-
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
-            resp = await client.get(url, headers=headers)
-            resp.raise_for_status()
-
-        html = resp.text
-
-        # ytInitialPlayerResponse 시작 위치 찾기
-        marker = "ytInitialPlayerResponse"
-        idx = html.find(marker)
-        if idx == -1:
-            raise ValueError(f"ytInitialPlayerResponse를 찾을 수 없음: {video_id}")
-
-        # '=' 이후 '{' 시작 위치 찾기
-        eq_idx = html.index("=", idx)
-        brace_start = html.index("{", eq_idx)
-
-        # brace counting으로 전체 JSON 객체 추출
-        depth = 0
-        i = brace_start
-        while i < len(html):
-            ch = html[i]
-            if ch == "{":
-                depth += 1
-            elif ch == "}":
-                depth -= 1
-                if depth == 0:
-                    break
-            elif ch == '"':
-                # 문자열 내부 스킵 (escape 처리)
-                i += 1
-                while i < len(html) and html[i] != '"':
-                    if html[i] == "\\":
-                        i += 1  # escape 다음 문자 스킵
-                    i += 1
-            i += 1
-
-        json_str = html[brace_start:i + 1]
-        return json.loads(json_str)
+    def _get_json3_url(subtitle_formats: list) -> Optional[str]:
+        """
+        자막 포맷 리스트에서 json3 URL 추출.
+        
+        yt-dlp 자막 형식:
+        [
+            {"ext": "srv3", "url": "https://..."},
+            {"ext": "json3", "url": "https://..."},
+            {"ext": "vtt", "url": "https://..."},
+        ]
+        """
+        if not subtitle_formats or not isinstance(subtitle_formats, list):
+            return None
+        
+        # json3 포맷 우선
+        for fmt in subtitle_formats:
+            if fmt.get('ext') == 'json3' and fmt.get('url'):
+                return fmt['url']
+        
+        # json3 없으면 첫 번째 URL
+        for fmt in subtitle_formats:
+            if fmt.get('url'):
+                return fmt['url']
+        
+        return None
 
     @staticmethod
-    def _extract_caption_tracks(player_response: dict) -> list[dict]:
-        """playerResponse에서 captionTracks 추출."""
+    def _download_and_parse(subtitle_url: str, proxy_url: Optional[str]) -> list[dict]:
+        """
+        자막 URL을 httpx로 다운로드하고 파싱.
+        
+        이 함수는 동기 함수입니다 (asyncio.to_thread에서 호출).
+        """
+        import httpx
+        
         try:
-            caption_tracks = (
-                player_response
-                .get("captions", {})
-                .get("playerCaptionsTracklistRenderer", {})
-                .get("captionTracks", [])
-            )
-        except (KeyError, AttributeError):
+            logger.info(f"[SUBTITLE] 자막 URL 다운로드 시작: {subtitle_url[:80]}...")
+            
+            client_opts = {
+                'timeout': 15.0,
+                'follow_redirects': True,
+            }
+            if proxy_url:
+                client_opts['proxy'] = proxy_url
+                logger.info(f"[SUBTITLE] httpx 프록시 사용: {SubtitleService._redact_proxy(proxy_url)}")
+            
+            with httpx.Client(**client_opts) as client:
+                resp = client.get(subtitle_url)
+                resp.raise_for_status()
+                content = resp.text
+            
+            logger.info(f"[SUBTITLE] 자막 다운로드 성공, size={len(content)}")
+            
+            # JSON3 파싱
+            return SubtitleService._parse_json3(content)
+            
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 429:
+                logger.warning(f"[SUBTITLE] 자막 다운로드 429: {subtitle_url[:80]}")
+                raise  # 상위로 전파 → 프록시 전환
+            logger.warning(f"[SUBTITLE] 자막 다운로드 HTTP 에러 {e.response.status_code}")
+            return []
+        except Exception as e:
+            logger.warning(f"[SUBTITLE] 자막 다운로드 실패: {e}")
             return []
 
-        results = []
-        for track in caption_tracks:
-            lang_code = track.get("languageCode", "")
-            kind = track.get("kind", "")
-            name_obj = track.get("name", {})
-            # name can be {runs: [{text: "..."}]} or {simpleText: "..."}
-            if "runs" in name_obj:
-                lang_name = name_obj["runs"][0].get("text", lang_code)
-            else:
-                lang_name = name_obj.get("simpleText", lang_code)
-
-            results.append({
-                "base_url": track["baseUrl"],
-                "language_code": lang_code,
-                "language_name": lang_name,
-                "is_auto_generated": kind == "asr",
-            })
-
-        return results
+    @staticmethod
+    def _get_cookie_path() -> Optional[str]:
+        """
+        쿠키 파일 절대 경로 반환 및 검증.
+        
+        yt-dlp 쿠키 요구사항 (공식 FAQ):
+        - Mozilla/Netscape 형식
+        - 첫 줄: # HTTP Cookie File 또는 # Netscape HTTP Cookie File
+        - Windows: CRLF newline (\r\n)
+        """
+        cookie_path = settings.youtube_cookies_file
+        
+        if not cookie_path:
+            logger.warning("[SUBTITLE] ENV에 YOUTUBE_COOKIES_FILE이 설정되지 않음")
+            return None
+        
+        # 절대 경로면 그대로 사용
+        if os.path.isabs(cookie_path):
+            abs_path = os.path.normpath(cookie_path)  # 경로 정규화
+        else:
+            # 상대 경로면 BE 디렉토리 기준으로 변환
+            # __file__ = BE/app/services/subtitle_service.py
+            # BE 디렉토리 = dirname(dirname(dirname(__file__)))
+            base_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            abs_path = os.path.normpath(os.path.join(base_dir, cookie_path))
+        
+        # 파일 존재 확인
+        if not os.path.exists(abs_path):
+            logger.warning(f"[SUBTITLE] 쿠키 파일 없음: {abs_path}")
+            return None
+        
+        # 파일 형식 검증
+        try:
+            with open(abs_path, 'r', encoding='utf-8') as f:
+                first_line = f.readline().strip()
+                
+            valid_headers = ['# HTTP Cookie File', '# Netscape HTTP Cookie File']
+            if not any(first_line.startswith(h) for h in valid_headers):
+                logger.warning(
+                    f"[SUBTITLE] 쿠키 파일 형식 오류: "
+                    f"첫 줄이 Netscape 형식이 아님. first_line='{first_line}'"
+                )
+                return None
+            
+            logger.info(f"[SUBTITLE] ✓ 쿠키 파일 검증 완료: {abs_path}")
+            return abs_path
+            
+        except Exception as e:
+            logger.warning(f"[SUBTITLE] 쿠키 파일 검증 실패: {e}")
+            return None
 
     @staticmethod
-    async def _download_subtitle_track(base_url: str) -> str:
-        """baseUrl로 WebVTT 자막 다운로드. fmt를 강제로 vtt로 설정."""
-        # 기존 fmt 파라미터를 vtt로 교체
-        url = re.sub(r"[&?]fmt=[^&]*", "", base_url)
-        url += "&fmt=vtt"
-
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            resp = await client.get(url)
-            resp.raise_for_status()
-            content = resp.text
-
-        # VTT가 아닌 XML이 반환된 경우 srv3 XML로 재시도 후 XML 파싱
-        if content.strip().startswith("<?xml") or content.strip().startswith("<transcript"):
-            logger.warning("VTT 요청했으나 XML 반환됨, srv3로 재시도")
-            url2 = re.sub(r"[&?]fmt=[^&]*", "", base_url) + "&fmt=srv3"
-            async with httpx.AsyncClient(timeout=15.0) as client:
-                resp2 = await client.get(url2)
-                resp2.raise_for_status()
-                return "XML:" + resp2.text  # prefix로 XML 구분
-
-        return content
-
-    @staticmethod
-    def _parse_subtitle(content: str) -> list[dict]:
-        """VTT 또는 XML(srv3) 자막을 {start, end, text} 리스트로 파싱."""
-        if content.startswith("XML:"):
-            return SubtitleService._parse_srv3_xml(content[4:])
-        return SubtitleService._parse_vtt(content)
-
-    @staticmethod
-    def _parse_vtt(vtt_content: str) -> list[dict]:
-        """WebVTT를 {start, end, text} 리스트로 파싱."""
-        cues = []
-        pattern = re.compile(
-            r"(\d{2}:\d{2}:\d{2}\.\d{3})\s+-->\s+(\d{2}:\d{2}:\d{2}\.\d{3})"
-        )
-
-        lines = vtt_content.split("\n")
-        i = 0
-        while i < len(lines):
-            match = pattern.match(lines[i].strip())
-            if match:
-                start = SubtitleService._vtt_time_to_seconds(match.group(1))
-                end = SubtitleService._vtt_time_to_seconds(match.group(2))
-                i += 1
-                text_lines = []
-                while i < len(lines) and lines[i].strip():
-                    text_lines.append(lines[i].strip())
-                    i += 1
-                text = " ".join(text_lines)
-                # Strip VTT tags like <c>, </c>, inline timestamps
-                text = re.sub(r"<[^>]+>", "", text)
-                text = text.strip()
+    def _parse_json3(json_content: str) -> list[dict]:
+        """
+        YouTube JSON3 형식 파싱.
+        
+        구조:
+        {
+            "events": [
+                {
+                    "tStartMs": 0,
+                    "dDurationMs": 2500,
+                    "segs": [{"utf8": "안녕하세요"}]
+                }
+            ]
+        }
+        """
+        try:
+            data = json.loads(json_content)
+            events = data.get('events', [])
+            
+            cues = []
+            for event in events:
+                t_start_ms = event.get('tStartMs', 0)
+                d_duration_ms = event.get('dDurationMs', 0)
+                segs = event.get('segs', [])
+                
+                if not segs:
+                    continue
+                
+                # 여러 세그먼트를 하나의 텍스트로 합침
+                text = ''.join(seg.get('utf8', '') for seg in segs).strip()
+                
                 if text:
-                    cues.append({"start": start, "end": end, "text": text})
-            else:
-                i += 1
+                    cues.append({
+                        "start": t_start_ms / 1000.0,
+                        "end": (t_start_ms + d_duration_ms) / 1000.0,
+                        "text": text,
+                    })
+            
+            logger.info(f"[SUBTITLE] JSON3 파싱 완료: cues={len(cues)}")
+            return cues
+            
+        except Exception as e:
+            logger.warning(f"[SUBTITLE] JSON3 파싱 실패: {e}")
+            return []
 
-        return cues
-
-    @staticmethod
-    def _parse_srv3_xml(xml_content: str) -> list[dict]:
-        """YouTube srv3 XML 자막을 파싱. <text start="0.0" dur="2.5">텍스트</text>"""
-        import html
-        cues = []
-        pattern = re.compile(
-            r'<text\s+start="([\d.]+)"\s+dur="([\d.]+)"[^>]*>(.*?)</text>',
-            re.DOTALL,
-        )
-        for m in pattern.finditer(xml_content):
-            start = float(m.group(1))
-            dur = float(m.group(2))
-            text = html.unescape(m.group(3))
-            text = re.sub(r"<[^>]+>", "", text).strip()
-            if text:
-                cues.append({"start": start, "end": round(start + dur, 3), "text": text})
-        return cues
-
-    @staticmethod
-    def _vtt_time_to_seconds(time_str: str) -> float:
-        """HH:MM:SS.mmm -> float seconds."""
-        h, m, rest = time_str.split(":")
-        s, ms = rest.split(".")
-        return int(h) * 3600 + int(m) * 60 + int(s) + int(ms) / 1000
-
-    # ── Private: Rate Limiting ─────────────────────────
-
-    @staticmethod
-    async def _throttle():
-        elapsed = time.time() - SubtitleService._last_request_time
-        wait = SubtitleService._MIN_INTERVAL - elapsed
-        if wait > 0:
-            await asyncio.sleep(wait)
-        SubtitleService._last_request_time = time.time()
-
-    # ── Private: DB 저장 ───────────────────────────────
+    # ── DB 저장 ──────────────────────────────────────
 
     @staticmethod
     async def _save_caption(
@@ -287,32 +505,60 @@ class SubtitleService:
         youtube_video_id: str,
         result: dict,
     ) -> None:
+        """자막을 DB에 저장 (CompetitorVideo와 연결)."""
         try:
-            stmt = select(CompetitorVideo).where(
-                CompetitorVideo.youtube_video_id == youtube_video_id
+            cue_total = sum(len(t.get("cues", [])) for t in result.get("tracks", []))
+            if result.get("status") != "success" or cue_total == 0:
+                logger.warning(
+                    f"[SUBTITLE] DB 저장 실패 조건 [{youtube_video_id}] "
+                    f"status={result.get('status')}, cues={cue_total}"
+                )
+                return
+
+            # CompetitorVideo 조회
+            stmt = (
+                select(CompetitorVideo)
+                .where(CompetitorVideo.youtube_video_id == youtube_video_id)
+                .limit(1)
             )
             row = await db.execute(stmt)
             comp_video = row.scalar_one_or_none()
 
             if comp_video is None:
-                logger.debug(f"CompetitorVideo 없음, 저장 스킵: {youtube_video_id}")
+                logger.warning(f"[SUBTITLE] CompetitorVideo 없음, 저장 스킵 [{youtube_video_id}]")
                 return
 
+            logger.debug(
+                f"[SUBTITLE] CompetitorVideo 발견 [{youtube_video_id}] "
+                f"id={comp_video.id}"
+            )
+
+            # 기존 자막 조회
             stmt2 = select(VideoCaption).where(
                 VideoCaption.competitor_video_id == comp_video.id
             )
             row2 = await db.execute(stmt2)
             existing = row2.scalar_one_or_none()
 
+            # 저장할 데이터
             segments_data = {
-                "source": result.get("source", "unknown"),  # innertube 또는 library
+                "source": result.get("source", "yt-dlp"),
                 "tracks": result.get("tracks", []),
                 "no_captions": result.get("no_captions", False),
             }
 
+            # Update or Insert
             if existing:
+                logger.info(
+                    f"[SUBTITLE] video_captions 업데이트 [{youtube_video_id}] "
+                    f"caption_id={existing.id}, tracks={len(segments_data['tracks'])}, cues={cue_total}"
+                )
                 existing.segments_json = segments_data
             else:
+                logger.info(
+                    f"[SUBTITLE] video_captions 신규 생성 [{youtube_video_id}] "
+                    f"competitor_video_id={comp_video.id}, tracks={len(segments_data['tracks'])}, cues={cue_total}"
+                )
                 caption = VideoCaption(
                     competitor_video_id=comp_video.id,
                     segments_json=segments_data,
@@ -320,200 +566,8 @@ class SubtitleService:
                 db.add(caption)
 
             await db.commit()
-            logger.info(f"자막 DB 저장 완료 [{youtube_video_id}]")
+            logger.info(f"[SUBTITLE] ✓ DB 커밋 완료 [{youtube_video_id}] → video_captions 테이블")
+            
         except Exception as e:
-            logger.error(f"자막 DB 저장 실패 [{youtube_video_id}]: {e}")
+            logger.error(f"[SUBTITLE] ✗ DB 저장 예외 [{youtube_video_id}]: {type(e).__name__}: {e}")
             await db.rollback()
-
-    # ── Private: youtube-transcript-api 라이브러리 사용 ─────
-
-    @staticmethod
-    async def _fetch_with_library(
-        video_id: str,
-        languages: list[str],
-        cookies: Optional[str] = None,
-        proxies: Optional[dict] = None
-    ) -> dict:
-        """
-        youtube-transcript-api 라이브러리로 자막 추출 (2차 시도).
-        
-        언어 폴백 전략:
-        1. 요청한 언어의 수동 자막
-        2. 요청한 언어의 자동 생성 자막
-        3. 모든 언어의 수동 자막
-        4. 모든 언어의 자동 생성 자막
-        5. 없음 → no_captions: true
-        
-        Args:
-            cookies: YouTube cookies 파일 경로 (선택, 429 에러 방지)
-            proxies: 프록시 딕셔너리 (선택, IP 차단 회피)
-        """
-        try:
-            # Cookies 및 Proxies 설정
-            kwargs = {}
-            if cookies:
-                logger.info(f"Cookies 파일 사용: {cookies}")
-                kwargs['cookies'] = cookies
-            if proxies:
-                logger.info(f"Proxy 사용: {proxies}")
-                kwargs['proxies'] = proxies
-            
-            # 디버깅: 설정 확인
-            logger.info(f"youtube-transcript-api 호출 [{video_id}] - kwargs: {list(kwargs.keys())}")
-            
-            transcript_list = YouTubeTranscriptApi.list_transcripts(
-                video_id,
-                **kwargs
-            )
-            
-            # 1. 수동 자막 우선 (요청 언어)
-            try:
-                transcript = transcript_list.find_manually_created_transcript(languages)
-                cues = transcript.fetch()
-                logger.info(f"수동 자막 발견 [{video_id}]: {transcript.language_code}")
-                return SubtitleService._format_library_result(
-                    video_id,
-                    cues,
-                    transcript.language_code,
-                    transcript.language,
-                    is_auto=False
-                )
-            except NoTranscriptFound:
-                logger.debug(f"요청 언어의 수동 자막 없음 [{video_id}]")
-            
-            # 2. 자동 생성 자막 (요청 언어)
-            try:
-                transcript = transcript_list.find_generated_transcript(languages)
-                cues = transcript.fetch()
-                logger.info(f"자동 생성 자막 발견 [{video_id}]: {transcript.language_code}")
-                return SubtitleService._format_library_result(
-                    video_id,
-                    cues,
-                    transcript.language_code,
-                    transcript.language,
-                    is_auto=True
-                )
-            except NoTranscriptFound:
-                logger.debug(f"요청 언어의 자동 자막 없음 [{video_id}]")
-            
-            # 3. 모든 수동 자막
-            for transcript in transcript_list:
-                if not transcript.is_generated:
-                    cues = transcript.fetch()
-                    logger.info(f"다른 언어 수동 자막 발견 [{video_id}]: {transcript.language_code}")
-                    return SubtitleService._format_library_result(
-                        video_id,
-                        cues,
-                        transcript.language_code,
-                        transcript.language,
-                        is_auto=False
-                    )
-            
-            # 4. 모든 자동 생성 자막
-            for transcript in transcript_list:
-                if transcript.is_generated:
-                    cues = transcript.fetch()
-                    logger.info(f"다른 언어 자동 자막 발견 [{video_id}]: {transcript.language_code}")
-                    return SubtitleService._format_library_result(
-                        video_id,
-                        cues,
-                        transcript.language_code,
-                        transcript.language,
-                        is_auto=True
-                    )
-            
-            # 5. 정말 자막 없음
-            logger.warning(f"자막이 전혀 없음 [{video_id}]")
-            return {
-                "video_id": video_id,
-                "status": "no_subtitle",
-                "source": "library",
-                "tracks": [],
-                "no_captions": True,
-                "error": None
-            }
-                
-        except TranscriptsDisabled:
-            logger.warning(f"자막 비활성화 [{video_id}]")
-            return {
-                "video_id": video_id,
-                "status": "no_subtitle",
-                "source": "library",
-                "tracks": [],
-                "no_captions": True,
-                "error": "자막이 비활성화되어 있습니다"
-            }
-        except VideoUnavailable:
-            logger.error(f"비디오 없음 [{video_id}]")
-            return {
-                "video_id": video_id,
-                "status": "failed",
-                "source": "library",
-                "tracks": [],
-                "no_captions": True,
-                "error": "비디오를 찾을 수 없습니다"
-            }
-        except Exception as e:
-            logger.error(f"라이브러리 자막 조회 실패 [{video_id}]: {e}")
-            return {
-                "video_id": video_id,
-                "status": "failed",
-                "source": "library",
-                "tracks": [],
-                "no_captions": True,
-                "error": str(e)
-            }
-    
-    @staticmethod
-    def _format_library_result(
-        video_id: str,
-        cues: list,
-        language_code: str,
-        language_name: str,
-        is_auto: bool
-    ) -> dict:
-        """
-        youtube-transcript-api 결과를 통일된 포맷으로 변환.
-        
-        라이브러리 포맷: [{"text": "...", "start": 0.0, "duration": 2.5}]
-        우리 포맷: [{"text": "...", "start": 0.0, "end": 2.5}]
-        """
-        formatted_cues = []
-        for cue in cues:
-            formatted_cues.append({
-                "start": cue["start"],
-                "end": cue["start"] + cue["duration"],
-                "text": cue["text"]
-            })
-        
-        logger.info(f"자막 변환 완료 [{video_id}]: {len(formatted_cues)}개 세그먼트")
-        
-        return {
-            "video_id": video_id,
-            "status": "success",
-            "source": "library",
-            "tracks": [{
-                "language_code": language_code,
-                "language_name": language_name,
-                "is_auto_generated": is_auto,
-                "cues": formatted_cues
-            }],
-            "no_captions": False,
-            "error": None
-        }
-    
-    @staticmethod
-    def _get_proxy_config() -> Optional[dict]:
-        """
-        환경 변수에서 Proxy 설정 가져오기.
-        
-        Returns:
-            {"http": "...", "https": "..."} 또는 None
-        """
-        if not settings.youtube_proxy_url:
-            return None
-        
-        return {
-            "http": settings.youtube_proxy_url,
-            "https": settings.youtube_proxy_url
-        }

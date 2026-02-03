@@ -3,10 +3,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.schemas.competitor import (
+    BatchAnalyzeRequest,
+    BatchAnalyzeResponse,
     CompetitorSaveRequest,
     CompetitorSaveResponse,
     FetchCommentsRequest,
     FetchCommentsResponse,
+    VideoAnalyzeRequest,
+    VideoAnalyzeResponse,
     VideoCommentSampleOut,
 )
 from app.services.competitor_service import CompetitorService
@@ -68,3 +72,45 @@ async def fetch_video_comments(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"댓글 가져오기 실패: {str(e)}")
+
+
+@router.post("/analyze", response_model=VideoAnalyzeResponse)
+async def analyze_video_content(
+    request: VideoAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    경쟁 영상의 자막을 기반으로 핵심 내용, 장점, 부족한 점을 LLM으로 분석.
+    youtube_video_id로 요청. 캐시가 있으면 즉시 반환.
+    """
+    try:
+        analysis = await CompetitorService.analyze_video_content(
+            db, request.youtube_video_id
+        )
+        return VideoAnalyzeResponse(
+            summary=analysis.summary,
+            strengths=analysis.strengths,
+            weaknesses=analysis.weaknesses,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"영상 분석 실패: {str(e)}")
+
+
+@router.post("/analyze/batch", response_model=BatchAnalyzeResponse)
+async def batch_analyze_videos(
+    request: BatchAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    여러 영상의 자막을 가져와 LLM 분석 후 저장.
+    이미 자막·분석이 존재하는 영상은 스킵.
+    """
+    try:
+        result = await CompetitorService.batch_analyze_videos(
+            db, request.youtube_video_ids
+        )
+        return BatchAnalyzeResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"배치 분석 실패: {str(e)}")

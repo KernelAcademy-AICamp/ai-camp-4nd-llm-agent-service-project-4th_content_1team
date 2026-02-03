@@ -52,6 +52,12 @@ class CompetitorVideo(Base):
         back_populates="video",
         cascade="all, delete-orphan",
     )
+    content_analysis = relationship(
+        "VideoContentAnalysis",
+        back_populates="video",
+        uselist=False,
+        cascade="all, delete-orphan",
+    )
 
 
 class VideoCommentSample(Base):
