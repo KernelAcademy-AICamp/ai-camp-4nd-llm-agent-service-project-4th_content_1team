@@ -536,17 +536,58 @@ class CompetitorService:
             caption_text = caption_text[:max_chars] + "..."
 
         llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key)
-        prompt = f"""다음 YouTube 영상 자막 텍스트를 분석하세요.
-영상 제목: {video.title}
+        prompt = f"""You are a professional YouTube content analyst and strategist. Your job is to evaluate video content quality, information value, logical structure, delivery effectiveness, and viewer impact based strictly on the caption transcript.
 
-[자막 텍스트]
+Perform a critical, expert-level analysis — not a surface summary.
+Evaluation dimensions you MUST consider:
+- Core message and argument structure
+- Information density and practical value
+- Logical flow and explanation clarity
+- Persuasiveness and credibility
+- Viewer comprehension and usefulness
+- Redundancy, vagueness, exaggeration, unsupported claims
+- Delivery effectiveness and content structure quality
+- Strengths and weaknesses from a creator improvement perspective
+
+Rules:
+- Do NOT produce shallow summaries
+- Do NOT use generic praise or vague statements
+- Every strength and weakness must be concrete and actionable
+- Base judgments on transcript evidence, not assumptions
+- Be analytical and critical, not promotional
+- Write the analysis content in Korean
+- Output must be valid JSON only — no extra text
+
+Style requirements for your writing:
+- Write the final content in Korean
+- Use easy, conversational spoken-style Korean that general audiences can understand
+- Avoid technical jargon unless absolutely necessary
+- If you use technical terms, briefly explain them in simple words
+- Do not sound academic or formal — sound like a smart but friendly reviewer
+- Be specific and concrete, not generic
+
+Strict rules:
+- No shallow summaries
+- No generic praise
+- No marketing tone
+- Every strength must be concrete
+- Every weakness MUST include a specific reason or evidence from the transcript
+- Weakness lines must include cause or proof using phrases like:
+  “왜냐하면”, “예를 들어”, “자막에서 보면”, “~라고 말하지만”, “구체적으로는”
+- Do not invent facts outside the transcript
+- Base judgments only on transcript evidence
+- Output must be valid JSON only — no extra text
+
+Video title: {video.title}
+
+[Caption Transcript]
 {caption_text}
 
-다음 형식의 JSON으로만 답변하세요 (다른 텍스트 없이):
+Respond ONLY in the following JSON format (no extra text):
 {{
   "summary": "영상의 핵심 내용을 3~5문장으로 요약",
   "strengths": ["장점1", "장점2", "장점3"],
-  "weaknesses": ["부족한점1", "부족한점2"]
+  "weaknesses": ["부족한점1", "부족한점2, 부족한점3"]
 }}"""
 
         try:

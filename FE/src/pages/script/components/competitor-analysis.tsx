@@ -15,7 +15,10 @@ import {
   ChevronDown,
   ChevronUp,
   Loader2,
-  RefreshCw
+  RefreshCw,
+  CheckCircle2,
+  ArrowUpRight,
+  AlertTriangle
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
@@ -319,30 +322,50 @@ function ExpandedVideoDetails({
       )}
       {analysis && (
         <>
-          <div>
-            <div className="text-sm font-medium mb-1">핵심 내용</div>
-            <p className="text-xs text-muted-foreground">{analysis.summary}</p>
+          {/* 핵심 내용 */}
+          <div className="space-y-2">
+            <p className="text-sm text-muted-foreground leading-relaxed">
+              {analysis.summary}
+            </p>
           </div>
-          {analysis.strengths.length > 0 && (
-            <div>
-              <div className="text-sm font-medium mb-1">장점</div>
-              <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
-                {analysis.strengths.map((s, i) => (
-                  <li key={i}>{s}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {analysis.weaknesses.length > 0 && (
-            <div>
-              <div className="text-sm font-medium mb-1">부족한 점</div>
-              <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
-                {analysis.weaknesses.map((w, i) => (
-                  <li key={i}>{w}</li>
-                ))}
-              </ul>
-            </div>
-          )}
+
+          {/* 성공 포인트 / 개선 포인트 2열 레이아웃 */}
+          <div className="grid grid-cols-2 gap-4">
+            {/* 성공 포인트 */}
+            {analysis.strengths.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-500 flex-shrink-0" />
+                  <span className="text-sm font-medium text-emerald-500">성공 포인트</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {analysis.strengths.map((s, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                      <ArrowUpRight className="w-3.5 h-3.5 text-emerald-500 flex-shrink-0 mt-0.5" />
+                      <span>{s}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {/* 개선 포인트 */}
+            {analysis.weaknesses.length > 0 && (
+              <div>
+                <div className="flex items-center gap-2 mb-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-500 flex-shrink-0" />
+                  <span className="text-sm font-medium text-amber-500">개선 포인트</span>
+                </div>
+                <ul className="space-y-1.5">
+                  {analysis.weaknesses.map((w, i) => (
+                    <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                      <AlertTriangle className="w-3.5 h-3.5 text-amber-500 flex-shrink-0 mt-0.5" />
+                      <span>{w}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </>
       )}
       <div>
