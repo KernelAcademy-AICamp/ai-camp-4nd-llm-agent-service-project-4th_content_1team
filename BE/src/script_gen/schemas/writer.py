@@ -10,12 +10,13 @@ class OnScreenCue(BaseModel):
     type: Literal["text", "image", "table", "chart", "broll", "screenshot"]
     ref: Optional[str] = Field(None, description="참조할 리소스 ID (fact_id, article_id 등)")
     caption: str = Field(description="화면에 표시할 텍스트/설명")
+    timing: Optional[str] = Field(None, description="Timing instruction (e.g., '0:05')")
     timing_sec: Optional[List[int]] = Field(None, description="[시작초, 종료초] - Phase 2에서 추가")
 
 class Beat(BaseModel):
     """챕터 내의 개별 문단/비트"""
     beat_id: str
-    purpose: Literal["setup", "evidence", "contrast", "insight", "example", "cta"]
+    purpose: str = Field(description="Purpose (setup, evidence, narrative, etc.)")
     line: str = Field(description="실제 나레이션 텍스트")
     fact_references: List[str] = Field(default=[], description="이 비트에서 인용한 Fact ID 리스트 (예: ['fact-abc123', 'fact-def456'])")
     claims: List[str] = Field(default=[], description="이 비트에서 사용된 Claim ID 리스트")
@@ -26,7 +27,7 @@ class Chapter(BaseModel):
     """대본의 챕터 (Insight Blueprint의 chapter 구조를 따름)"""
     chapter_id: str
     title: str
-    narration: str = Field(description="챕터 전체 나레이션 (beats의 line을 합친 것)")
+    narration: Optional[str] = Field(default=None, description="챕터 전체 나레이션 (beats의 line을 합친 것)")
     beats: List[Beat] = Field(description="챕터를 구성하는 비트들")
 
 class Hook(BaseModel):
