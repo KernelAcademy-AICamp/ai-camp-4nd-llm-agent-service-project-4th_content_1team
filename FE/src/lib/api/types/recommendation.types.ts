@@ -1,7 +1,9 @@
-// 검색 키워드
+// 검색 키워드 (스크립트 작성용)
 export interface SearchKeywords {
-    youtube: string[];
-    google: string[];
+    youtube_main: string[];        // 메인 영상 검색용
+    youtube_reference: string[];   // 참고 영상 검색용
+    google_news: string[];         // 최신 뉴스/기사 검색용
+    google_research: string[];     // 심층 자료 검색용
 }
 
 // 개별 추천 항목

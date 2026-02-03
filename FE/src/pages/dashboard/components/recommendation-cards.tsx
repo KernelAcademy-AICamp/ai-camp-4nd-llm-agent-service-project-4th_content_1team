@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useState, useRef } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
@@ -45,6 +45,9 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
   const [error, setError] = useState<string | null>(null)
   const [selectedWeeks, setSelectedWeeks] = useState<Record<number, string>>({})
   const [addedItems, setAddedItems] = useState<Set<number>>(new Set())
+
+  // StrictMode 중복 호출 방지
+  const hasCalledRef = useRef(false)
 
   const loadRecommendations = async () => {
     try {
@@ -117,6 +120,8 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
   }
 
   useEffect(() => {
+    if (hasCalledRef.current) return
+    hasCalledRef.current = true
     loadRecommendations()
   }, [])
 

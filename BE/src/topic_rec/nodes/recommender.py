@@ -121,28 +121,47 @@ class LLMRecommender:
         return "\n\n".join(lines)
 
     def _build_prompt(self, cluster_summary: str, persona: dict, top_n: int) -> str:
-        return f"""You are a YouTube content strategist. Recommend video topics.
+        # 채널 스타일 결정
+        channel_style = persona.get('content_style', '')
+        preferred_cats = persona.get('preferred_categories', [])
 
-## Channel
-{persona.get('channel_name', 'Unknown')} - {persona.get('topic', 'General')}
-Target: {persona.get('target_audience', 'General audience')}
+        # 카테고리 기반 스타일 가이드
+        style_guide = "정보 전달 중심의 명확한 제목"  # 기본값
+        if any(cat in ['entertainment', 'gaming', 'Entertainment', 'Gaming'] for cat in preferred_cats):
+            style_guide = "호기심을 유발하는 재미있는 제목"
+        elif any(cat in ['education', 'Education', 'technology', 'Technology'] for cat in preferred_cats):
+            style_guide = "정보 전달 중심의 명확하고 신뢰감 있는 제목"
+        elif any(cat in ['business', 'Business', 'finance', 'Finance'] for cat in preferred_cats):
+            style_guide = "전문성이 느껴지는 구체적인 제목"
+
+        return f"""You are a YouTube content strategist for Korean creators. Recommend video topics.
+
+## Channel Info
+- Name: {persona.get('channel_name', 'Unknown')}
+- Category: {', '.join(preferred_cats) if preferred_cats else 'General'}
+- Target: {persona.get('target_audience', 'General audience')}
+- Style: {channel_style if channel_style else 'Not specified'}
 
 ## This Week's Trends
 {cluster_summary}
 
 ## Request
-Recommend {top_n} topics. For each:
-- title (Korean, click-inducing)
-- based_on_topic
-- trend_basis (why hot)
-- recommendation_reason (why fits this channel)
-- search_keywords (youtube: 3, google: 3)
-- content_angles (2-3 approaches)
-- thumbnail_idea
-- urgency (urgent/normal/evergreen)
+Recommend {top_n} topics. For each provide:
+- title: 한국어, {style_guide}
+- based_on_topic: 어떤 트렌드 기반인지
+- trend_basis: 왜 지금 핫한지 (구체적 데이터 포함)
+- recommendation_reason: 왜 이 채널에 적합한지
+- search_keywords: 스크립트 작성을 위한 검색 키워드
+  - youtube_main: 메인 영상 검색용 한국어 키워드 3개
+  - youtube_reference: 참고 영상 검색용 키워드 3개
+  - google_news: 최신 뉴스/기사 검색용 키워드 3개
+  - google_research: 심층 자료/논문 검색용 키워드 3개
+- content_angles: 2-3개의 구체적인 콘텐츠 접근 방식
+- thumbnail_idea: 썸네일 구성 아이디어
+- urgency: urgent(즉시)/normal(1주내)/evergreen(상시)
 
-## Respond in JSON only
-[{{"title":"..","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","search_keywords":{{"youtube":["a","b","c"],"google":["a","b","c"]}},"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"urgent"}}]"""
+## Respond in JSON only (Korean)
+[{{"title":"..","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","search_keywords":{{"youtube_main":["a","b","c"],"youtube_reference":["a","b","c"],"google_news":["a","b","c"],"google_research":["a","b","c"]}},"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"urgent"}}]"""
 
     def _call_ollama(self, prompt: str) -> str:
         url = "http://localhost:11434/api/generate"
@@ -178,12 +197,21 @@ Recommend {top_n} topics. For each:
                     valid = []
                     for item in result:
                         if isinstance(item, dict) and "title" in item:
+                            # search_keywords 파싱 (새 형식 + 구 형식 호환)
+                            raw_keywords = item.get("search_keywords", {})
+                            search_keywords = {
+                                "youtube_main": raw_keywords.get("youtube_main", raw_keywords.get("youtube", [])),
+                                "youtube_reference": raw_keywords.get("youtube_reference", []),
+                                "google_news": raw_keywords.get("google_news", []),
+                                "google_research": raw_keywords.get("google_research", raw_keywords.get("google", [])),
+                            }
+
                             valid.append({
                                 "title": item.get("title", "N/A"),
                                 "based_on_topic": item.get("based_on_topic", "N/A"),
                                 "trend_basis": item.get("trend_basis", "N/A"),
                                 "recommendation_reason": item.get("recommendation_reason", "N/A"),
-                                "search_keywords": item.get("search_keywords", {"youtube": [], "google": []}),
+                                "search_keywords": search_keywords,
                                 "content_angles": item.get("content_angles", []),
                                 "thumbnail_idea": item.get("thumbnail_idea", "N/A"),
                                 "urgency": item.get("urgency", "normal"),
@@ -201,13 +229,18 @@ Recommend {top_n} topics. For each:
             if c.name == "Other":
                 continue
             results.append({
-                "title": f"[Auto] {c.name} Trend Analysis",
+                "title": f"[Auto] {c.name} 트렌드 분석",
                 "based_on_topic": c.name,
-                "trend_basis": f"{c.item_count} items, score {c.cluster_score:.3f}",
-                "recommendation_reason": "Auto-generated (LLM failed)",
-                "search_keywords": {"youtube": c.keywords[:3], "google": c.keywords[:3]},
-                "content_angles": ["Trend summary", "Deep analysis", "Future outlook"],
-                "thumbnail_idea": f"{c.name} related image",
+                "trend_basis": f"{c.item_count}개 항목, 점수 {c.cluster_score:.3f}",
+                "recommendation_reason": "자동 생성 (LLM 실패)",
+                "search_keywords": {
+                    "youtube_main": c.keywords[:3],
+                    "youtube_reference": c.keywords[:3],
+                    "google_news": c.keywords[:3],
+                    "google_research": c.keywords[:3],
+                },
+                "content_angles": ["트렌드 요약", "심층 분석", "향후 전망"],
+                "thumbnail_idea": f"{c.name} 관련 이미지",
                 "urgency": "normal",
             })
         return results[:top_n]

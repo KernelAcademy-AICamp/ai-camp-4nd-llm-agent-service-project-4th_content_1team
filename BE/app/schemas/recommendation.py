@@ -7,9 +7,11 @@ from pydantic import BaseModel
 
 
 class SearchKeywords(BaseModel):
-    """검색 키워드."""
-    youtube: List[str] = []
-    google: List[str] = []
+    """검색 키워드 (스크립트 작성용)."""
+    youtube_main: List[str] = []        # 메인 영상 검색용
+    youtube_reference: List[str] = []   # 참고 영상 검색용
+    google_news: List[str] = []         # 최신 뉴스/기사 검색용
+    google_research: List[str] = []     # 심층 자료 검색용
 
 
 class RecommendationItem(BaseModel):
