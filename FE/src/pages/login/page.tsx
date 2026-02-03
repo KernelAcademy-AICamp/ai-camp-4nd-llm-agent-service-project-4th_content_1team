@@ -2,7 +2,7 @@
 
 import React from "react"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "../../components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card"
@@ -28,11 +28,15 @@ export default function LoginPage() {
   const [signupPassword, setSignupPassword] = useState("")
   const [signupName, setSignupName] = useState("")
 
+  // StrictMode 중복 호출 방지
+  const hasCalledRef = useRef(false)
+
   // Google OAuth 콜백 처리
   useEffect(() => {
     const handleGoogleCallback = async () => {
       const code = getGoogleAuthCode()
-      if (code) {
+      if (code && !hasCalledRef.current) {
+        hasCalledRef.current = true
         setIsLoading(true)
         setError(null)
 

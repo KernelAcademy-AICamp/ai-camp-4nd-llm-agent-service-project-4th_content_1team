@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "../../components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card"
@@ -43,8 +43,14 @@ export default function OnboardingPage() {
 
   const totalSteps = 1  // 현재는 1단계만 사용
 
+  // StrictMode 중복 호출 방지
+  const hasCalledRef = useRef(false)
+
   // 페이지 진입 시 페르소나 생성
   useEffect(() => {
+    if (hasCalledRef.current) return  // 이미 호출했으면 스킵
+    hasCalledRef.current = true
+
     const analyzeChannel = async () => {
       try {
         setIsAnalyzing(true)
