@@ -50,7 +50,7 @@ class Settings(BaseSettings):
     
     # Google API (검색 등) / NANO_BANANA 등
     google_api_key: str = None
-    nano_banana_api_key: str = None
+  
     
     # Tavily API (뉴스 검색 등)
     tavily_api_key: str = None
