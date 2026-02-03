@@ -19,10 +19,9 @@ import {
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { useQuery } from "@tanstack/react-query"
-import { searchYouTubeVideos, saveCompetitorVideos, fetchSubtitles, type VideoItem } from "../../../lib/api/index"
+import { searchYouTubeVideos, saveCompetitorVideos, analyzeVideoContent, type VideoItem } from "../../../lib/api/index"
 
 // TODO: 지워야함 샘플 데이터 (하드코딩)
-const SAMPLE_TITLE = "바이브 코딩으로 3시간 만에 웹서비스 만들기"
 const SAMPLE_KEYWORDS = [
   "AI 웹서비스 만들기",
   "ChatGPT 웹앱 만들기",
@@ -278,59 +277,7 @@ export function CompetitorAnalysis() {
 
                   {/* Expanded Details */}
                   {expandedId === video.id && (
-                    <div className="p-4 border-t border-border/50 bg-muted/30 space-y-3">
-                      <div>
-                        <div className="text-sm font-medium mb-1">영상 설명</div>
-                        <p className="text-xs text-muted-foreground line-clamp-4">
-                          {video.description || '설명이 없습니다.'}
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border/50">
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">일일 조회수</div>
-                          <div className="text-sm font-medium">
-                            {formatNumber(Math.floor(video.popularity_score / (1 + Math.max(0, (30 - video.days_since_upload) / 30))))}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">트렌드 점수</div>
-                          <div className="text-sm font-medium text-primary">
-                            {video.popularity_score.toFixed(2)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">신선도</div>
-                          <div className="text-sm font-medium">
-                            {video.days_since_upload <= 30
-                              ? `${(1 + (30 - video.days_since_upload) / 30).toFixed(2)}x`
-                              : '1.0x'}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="text-xs text-muted-foreground mb-1">참여도</div>
-                          <div className="text-sm font-medium">
-                            {formatNumber(video.popularity_score - Math.floor(video.popularity_score / (1 + Math.max(0, (30 - video.days_since_upload) / 30))))}
-                          </div>
-                        </div>
-                      </div>
-
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full mt-2"
-                        asChild
-                      >
-                        <a
-                          href={video.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                        >
-                          <ExternalLink className="w-3 h-3 mr-1" />
-                          YouTube에서 보기
-                        </a>
-                      </Button>
-                    </div>
+                    <ExpandedVideoDetails video={video} videoId={video.id} />
                   )}
                 </div>
               ))}
@@ -340,5 +287,104 @@ export function CompetitorAnalysis() {
         )}
       </CardContent>
     </Card>
+  )
+}
+
+function ExpandedVideoDetails({
+  video,
+  videoId,
+}: {
+  video: { url: string; description?: string; popularity_score: number; days_since_upload: number }
+  videoId: string
+}) {
+  const { data: analysis, isLoading, isError, error } = useQuery({
+    queryKey: ['video-analysis', videoId],
+    queryFn: () => analyzeVideoContent(videoId),
+    enabled: !!videoId,
+  })
+
+  return (
+    <div className="p-4 border-t border-border/50 bg-muted/30 space-y-3">
+      {isLoading && (
+        <div className="flex items-center gap-2 py-4">
+          <Loader2 className="w-4 h-4 animate-spin text-primary" />
+          <span className="text-sm text-muted-foreground">영상 내용 분석 중...</span>
+        </div>
+      )}
+      {isError && (
+        <div className="text-sm text-destructive py-2">
+          {(error as { response?: { data?: { detail?: string } } })?.response?.data?.detail ??
+            '자막을 사용할 수 없어 분석할 수 없습니다.'}
+        </div>
+      )}
+      {analysis && (
+        <>
+          <div>
+            <div className="text-sm font-medium mb-1">핵심 내용</div>
+            <p className="text-xs text-muted-foreground">{analysis.summary}</p>
+          </div>
+          {analysis.strengths.length > 0 && (
+            <div>
+              <div className="text-sm font-medium mb-1">장점</div>
+              <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                {analysis.strengths.map((s, i) => (
+                  <li key={i}>{s}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {analysis.weaknesses.length > 0 && (
+            <div>
+              <div className="text-sm font-medium mb-1">부족한 점</div>
+              <ul className="text-xs text-muted-foreground space-y-0.5 list-disc list-inside">
+                {analysis.weaknesses.map((w, i) => (
+                  <li key={i}>{w}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </>
+      )}
+      <div>
+        <div className="text-sm font-medium mb-1">영상 설명</div>
+        <p className="text-xs text-muted-foreground line-clamp-4">
+          {video.description || '설명이 없습니다.'}
+        </p>
+      </div>
+      <div className="grid grid-cols-2 gap-4 pt-2 border-t border-border/50">
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">일일 조회수</div>
+          <div className="text-sm font-medium">
+            {formatNumber(Math.floor(video.popularity_score / (1 + Math.max(0, (30 - video.days_since_upload) / 30))))}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">트렌드 점수</div>
+          <div className="text-sm font-medium text-primary">
+            {video.popularity_score.toFixed(2)}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">신선도</div>
+          <div className="text-sm font-medium">
+            {video.days_since_upload <= 30
+              ? `${(1 + (30 - video.days_since_upload) / 30).toFixed(2)}x`
+              : '1.0x'}
+          </div>
+        </div>
+        <div>
+          <div className="text-xs text-muted-foreground mb-1">참여도</div>
+          <div className="text-sm font-medium">
+            {formatNumber(video.popularity_score - Math.floor(video.popularity_score / (1 + Math.max(0, (30 - video.days_since_upload) / 30))))}
+          </div>
+        </div>
+      </div>
+      <Button variant="outline" size="sm" className="w-full mt-2" asChild>
+        <a href={video.url} target="_blank" rel="noopener noreferrer">
+          <ExternalLink className="w-3 h-3 mr-1" />
+          YouTube에서 보기
+        </a>
+      </Button>
+    </div>
   )
 }

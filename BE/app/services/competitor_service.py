@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -5,12 +6,17 @@ from uuid import UUID
 
 import httpx
 from fastapi import HTTPException
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
+from app.models.caption import VideoCaption
+from app.models.video_content_analysis import VideoContentAnalysis
 from app.schemas.competitor import CompetitorSaveRequest
+from app.services.subtitle_service import SubtitleService
 
 logger = logging.getLogger(__name__)
 
@@ -410,3 +416,167 @@ class CompetitorService:
                 x.get("published_at") or datetime.min,  # 최신순
             ),
         )
+
+    # ── 영상 자막 기반 LLM 분석 ─────────────────────────────
+
+    @staticmethod
+    def _extract_text_from_segments(seg: dict) -> Optional[str]:
+        """segments_json에서 자막 텍스트 추출."""
+        if seg.get("no_captions"):
+            return None
+        tracks = seg.get("tracks", [])
+        texts = []
+        for track in tracks:
+            for cue in track.get("cues", []):
+                t = (cue.get("text") or "").strip() if isinstance(cue.get("text"), str) else ""
+                if t:
+                    texts.append(t)
+        return " ".join(texts) if texts else None
+
+    @staticmethod
+    async def get_or_fetch_caption_text(
+        db: AsyncSession,
+        competitor_video: CompetitorVideo,
+    ) -> Optional[str]:
+        """
+        CompetitorVideo의 자막 텍스트를 반환.
+        동일 youtube_video_id의 어떤 CompetitorVideo에 연결된 자막이든 사용.
+        DB에 없으면 SubtitleService로 조회 후 저장.
+        """
+        # 1. VideoCaption 조회 - youtube_video_id로 검색 (어떤 CompetitorVideo든 상관없음)
+        result = await db.execute(
+            select(VideoCaption)
+            .join(CompetitorVideo, VideoCaption.competitor_video_id == CompetitorVideo.id)
+            .where(CompetitorVideo.youtube_video_id == competitor_video.youtube_video_id)
+            .limit(1)
+        )
+        caption = result.scalar_one_or_none()
+
+        if caption and caption.segments_json:
+            text = CompetitorService._extract_text_from_segments(caption.segments_json)
+            if text:
+                return text
+
+        # 2. 자막 없으면 fetch (한국어 우선, 없으면 영어, 첫 성공 시 즉시 종료)
+        results = await SubtitleService.fetch_subtitles(
+            video_ids=[competitor_video.youtube_video_id],
+            languages=["ko", "en"],  # 최소화: 429 방지
+            db=db,
+        )
+        if not results:
+            return None
+        r = results[0]
+        if r.get("no_captions") or r.get("status") in ("no_subtitle", "failed"):
+            logger.info(
+                f"자막 조회 실패 [{competitor_video.youtube_video_id}]: "
+                f"status={r.get('status')}, no_captions={r.get('no_captions')}, error={r.get('error')}"
+            )
+            return None
+        tracks = r.get("tracks", [])
+        texts = []
+        for track in tracks:
+            for cue in track.get("cues", []):
+                t = cue.get("text", "").strip() if isinstance(cue.get("text"), str) else ""
+                if t:
+                    texts.append(t)
+        return " ".join(texts) if texts else None
+
+    @staticmethod
+    async def analyze_video_content(
+        db: AsyncSession,
+        youtube_video_id: str,
+    ) -> VideoContentAnalysis:
+        """
+        youtube_video_id로 경쟁 영상을 찾아 자막 기반 LLM 분석 수행.
+        캐시가 있으면 반환, 없으면 분석 후 저장.
+        """
+        # 1. CompetitorVideo 조회 (동일 영상이 여러 컬렉션에 있을 수 있으므로 first 사용)
+        result = await db.execute(
+            select(CompetitorVideo)
+            .where(CompetitorVideo.youtube_video_id == youtube_video_id)
+            .order_by(CompetitorVideo.id.desc())
+            .limit(1)
+        )
+        video = result.scalar_one_or_none()
+        if not video:
+            raise HTTPException(
+                status_code=404,
+                detail="저장된 경쟁 영상을 찾을 수 없습니다. 먼저 경쟁 영상 검색을 수행해 주세요.",
+            )
+
+        # 2. 캐시 조회
+        result = await db.execute(
+            select(VideoContentAnalysis).where(
+                VideoContentAnalysis.competitor_video_id == video.id
+            )
+        )
+        cached = result.scalar_one_or_none()
+        if cached:
+            return cached
+
+        # 3. 자막 텍스트 획득
+        caption_text = await CompetitorService.get_or_fetch_caption_text(db, video)
+        if not caption_text or len(caption_text.strip()) < 50:
+            raise HTTPException(
+                status_code=400,
+                detail="이 영상은 자막을 사용할 수 없어 분석할 수 없습니다.",
+            )
+
+        # 4. LLM 분석
+        api_key = settings.openai_api_key
+        if not api_key:
+            raise HTTPException(
+                status_code=500,
+                detail="OpenAI API 키가 설정되지 않았습니다.",
+            )
+
+        # 자막이 너무 길면 앞부분만 사용 (토큰 제한)
+        max_chars = 12000
+        if len(caption_text) > max_chars:
+            caption_text = caption_text[:max_chars] + "..."
+
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key)
+        prompt = f"""다음 YouTube 영상 자막 텍스트를 분석하세요.
+영상 제목: {video.title}
+
+[자막 텍스트]
+{caption_text}
+
+다음 형식의 JSON으로만 답변하세요 (다른 텍스트 없이):
+{{
+  "summary": "영상의 핵심 내용을 3~5문장으로 요약",
+  "strengths": ["장점1", "장점2", "장점3"],
+  "weaknesses": ["부족한점1", "부족한점2"]
+}}"""
+
+        try:
+            res = llm.invoke([HumanMessage(content=prompt)])
+            content = res.content.strip()
+            content = content.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"LLM 분석 파싱 실패: {e}")
+            raise HTTPException(
+                status_code=500,
+                detail="영상 분석 중 오류가 발생했습니다.",
+            )
+
+        summary = parsed.get("summary", "")
+        strengths = parsed.get("strengths", [])
+        weaknesses = parsed.get("weaknesses", [])
+        if not isinstance(strengths, list):
+            strengths = [str(s) for s in strengths] if strengths else []
+        if not isinstance(weaknesses, list):
+            weaknesses = [str(w) for w in weaknesses] if weaknesses else []
+
+        # 5. DB 저장
+        analysis = VideoContentAnalysis(
+            competitor_video_id=video.id,
+            summary=summary,
+            strengths=strengths,
+            weaknesses=weaknesses,
+        )
+        db.add(analysis)
+        await db.commit()
+        await db.refresh(analysis)
+        return analysis

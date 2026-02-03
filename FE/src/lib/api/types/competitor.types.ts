@@ -20,3 +20,9 @@ export interface CompetitorSaveResponse {
     generated_at: string;
     video_count: number;
 }
+
+export interface VideoAnalyzeResponse {
+    summary: string;
+    strengths: string[];
+    weaknesses: string[];
+}

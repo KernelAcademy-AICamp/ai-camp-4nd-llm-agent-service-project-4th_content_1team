@@ -42,6 +42,23 @@ class Settings(BaseSettings):
     # YouTube Data API
     youtube_api_key: str
     
+    # OpenAI API (for LLM - script_gen, persona 등)
+    openai_api_key: str = None
+    
+    # Gemini API
+    gemini_api_key: str = None
+    
+    # Google API (검색 등) / NANO_BANANA 등
+    google_api_key: str = None
+    nano_banana_api_key: str = None
+    
+    # Tavily API (뉴스 검색 등)
+    tavily_api_key: str = None
+    
+    # Naver API (뉴스 검색)
+    naver_client_id: str = None
+    naver_client_secret: str = None
+    
     # YouTube Subtitle (자막 다운로드 설정)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
     youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
