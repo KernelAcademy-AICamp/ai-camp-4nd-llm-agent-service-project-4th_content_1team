@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 from datetime import datetime
@@ -12,6 +13,7 @@ from sqlalchemy import select, delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
+from app.core.db import AsyncSessionLocal
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
 from app.models.caption import VideoCaption
 from app.models.video_content_analysis import VideoContentAnalysis
@@ -621,3 +623,71 @@ Respond ONLY in the following JSON format (no extra text):
         await db.commit()
         await db.refresh(analysis)
         return analysis
+
+    @staticmethod
+    async def _analyze_one_video(vid: str) -> str:
+        """
+        영상 1개 분석. 자체 DB 세션 사용.
+        Returns: "processed" | "skipped" | "failed"
+        """
+        async with AsyncSessionLocal() as db:
+            try:
+                result = await db.execute(
+                    select(CompetitorVideo)
+                    .where(CompetitorVideo.youtube_video_id == vid)
+                    .order_by(CompetitorVideo.id.desc())
+                    .limit(1)
+                )
+                video = result.scalar_one_or_none()
+                if not video:
+                    logger.warning(f"배치 분석 스킵: 경쟁 영상 없음 [{vid}]")
+                    return "failed"
+
+                cache_result = await db.execute(
+                    select(VideoContentAnalysis).where(
+                        VideoContentAnalysis.competitor_video_id == video.id
+                    )
+                )
+                if cache_result.scalar_one_or_none():
+                    return "skipped"
+
+                await CompetitorService.analyze_video_content(db, vid)
+                logger.info(f"배치 분석 완료 [{vid}]")
+                return "processed"
+            except HTTPException as e:
+                logger.warning(f"배치 분석 실패 [{vid}]: {e.detail}")
+                return "failed"
+            except Exception as e:
+                logger.exception(f"배치 분석 예외 [{vid}]: {e}")
+                return "failed"
+
+    @staticmethod
+    async def batch_analyze_videos(
+        db: AsyncSession,
+        youtube_video_ids: List[str],
+    ) -> dict:
+        """
+        여러 영상의 자막을 가져와 LLM 분석 후 저장. 병렬 처리.
+        이미 분석이 존재하는 영상은 스킵.
+        """
+        tasks = [CompetitorService._analyze_one_video(vid) for vid in youtube_video_ids]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        processed = skipped = failed = 0
+        for r in results:
+            if isinstance(r, Exception):
+                failed += 1
+                logger.exception("배치 분석 예외", exc_info=r)
+            elif r == "processed":
+                processed += 1
+            elif r == "skipped":
+                skipped += 1
+            else:
+                failed += 1
+
+        return {
+            "total": len(youtube_video_ids),
+            "processed": processed,
+            "skipped": skipped,
+            "failed": failed,
+        }

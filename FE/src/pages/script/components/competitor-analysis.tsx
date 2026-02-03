@@ -21,8 +21,14 @@ import {
   AlertTriangle
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
-import { useQuery } from "@tanstack/react-query"
-import { searchYouTubeVideos, saveCompetitorVideos, analyzeVideoContent, type VideoItem } from "../../../lib/api/index"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  searchYouTubeVideos,
+  saveCompetitorVideos,
+  analyzeVideoContent,
+  batchAnalyzeVideos,
+  type VideoItem,
+} from "../../../lib/api/index"
 
 // TODO: 지워야함 샘플 데이터 (하드코딩)
 const SAMPLE_KEYWORDS = [
@@ -55,11 +61,19 @@ export function CompetitorAnalysis() {
     staleTime: 1000 * 60 * 10, // 10분간 캐시
   })
 
-  // 검색 결과 10개를 DB에 자동 저장
+  const queryClient = useQueryClient()
+  const batchAnalyzeMutation = useMutation({
+    mutationFn: (videoIds: string[]) => batchAnalyzeVideos(videoIds),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["video-analysis"] })
+    },
+  })
+
+  // 검색 결과 10개를 DB에 자동 저장 후 배치 자막/분석 실행
   const savedRef = useRef<string | null>(null)
   useEffect(() => {
     if (!data?.videos.length) return
-    const key = data.videos.map(v => v.video_id).join(',')
+    const key = data.videos.map((v: VideoItem) => v.video_id).join(",")
     if (savedRef.current === key) return
     savedRef.current = key
 
@@ -84,10 +98,8 @@ export function CompetitorAnalysis() {
       })),
     })
       .then(() => {
-        // TODO: 나중에 테스트하기 위해 자막 가져오기 비활성화
-        // 경쟁 영상 저장 성공 후 자막 자동 조회 및 저장
-        // const videoIds = data.videos.map((v: VideoItem) => v.video_id)
-        // return fetchSubtitles({ video_ids: videoIds, languages: ["ko", "en"] })
+        const videoIds = data.videos.map((v: VideoItem) => v.video_id)
+        batchAnalyzeMutation.mutate(videoIds)
       })
       .catch(console.error)
   }, [data])
@@ -121,6 +133,12 @@ export function CompetitorAnalysis() {
             )}
           </div>
           <div className="flex items-center gap-2">
+            {batchAnalyzeMutation.isPending && (
+              <Badge variant="secondary" className="text-xs">
+                <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                자막·분석 중...
+              </Badge>
+            )}
             <Badge variant="outline" className="text-xs">
               트렌드 점수 기준
             </Badge>

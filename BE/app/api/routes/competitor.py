@@ -3,6 +3,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.db import get_db
 from app.schemas.competitor import (
+    BatchAnalyzeRequest,
+    BatchAnalyzeResponse,
     CompetitorSaveRequest,
     CompetitorSaveResponse,
     FetchCommentsRequest,
@@ -94,3 +96,21 @@ async def analyze_video_content(
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"영상 분석 실패: {str(e)}")
+
+
+@router.post("/analyze/batch", response_model=BatchAnalyzeResponse)
+async def batch_analyze_videos(
+    request: BatchAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    여러 영상의 자막을 가져와 LLM 분석 후 저장.
+    이미 자막·분석이 존재하는 영상은 스킵.
+    """
+    try:
+        result = await CompetitorService.batch_analyze_videos(
+            db, request.youtube_video_ids
+        )
+        return BatchAnalyzeResponse(**result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"배치 분석 실패: {str(e)}")

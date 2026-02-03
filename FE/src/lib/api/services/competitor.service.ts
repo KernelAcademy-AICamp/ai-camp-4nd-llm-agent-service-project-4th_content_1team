@@ -20,3 +20,19 @@ export const analyzeVideoContent = async (
     });
     return response.data;
 };
+
+export interface BatchAnalyzeResponse {
+    total: number;
+    processed: number;
+    skipped: number;
+    failed: number;
+}
+
+export const batchAnalyzeVideos = async (
+    youtubeVideoIds: string[]
+): Promise<BatchAnalyzeResponse> => {
+    const response = await api.post('/api/v1/competitor/analyze/batch', {
+        youtube_video_ids: youtubeVideoIds,
+    });
+    return response.data;
+};
