@@ -4,7 +4,7 @@ import { useState, useMemo } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Button } from "../../../components/ui/button"
 import { Badge } from "../../../components/ui/badge"
-import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, Flame, Zap, Check, X } from "lucide-react"
+import { ChevronLeft, ChevronRight, Sparkles, TrendingUp, Flame, Zap, Check, User } from "lucide-react"
 import {
   Popover,
   PopoverContent,
@@ -13,19 +13,21 @@ import {
 import { Link } from "react-router-dom"
 
 interface ContentTopic {
-  id: number
+  id: string
   title: string
   reason: string
   type: string
-  week: number
+  date: string  // "2024-02-15" 형식
+  week?: number
   confirmed?: boolean
-  // API 추천 데이터 추가 필드
   based_on_topic?: string
   trend_basis?: string
   recommendation_reason?: string
   content_angles?: string[]
   thumbnail_idea?: string
   urgency?: string
+  search_keywords?: string[]
+  topic_type?: 'channel' | 'trend'
 }
 
 interface ContentCalendarProps {
@@ -41,6 +43,7 @@ const typeIcons = {
   evergreen: { icon: Sparkles, color: "text-chart-2", bg: "bg-chart-2/20", bgSolid: "bg-chart-2" },
   event: { icon: Zap, color: "text-chart-4", bg: "bg-chart-4/20", bgSolid: "bg-chart-4" },
   seasonal: { icon: Sparkles, color: "text-chart-5", bg: "bg-chart-5/20", bgSolid: "bg-chart-5" },
+  channel: { icon: User, color: "text-purple-500", bg: "bg-purple-500/20", bgSolid: "bg-purple-500" },
 }
 
 const weekDays = ["일", "월", "화", "수", "목", "금", "토"]
@@ -51,23 +54,10 @@ export function ContentCalendar({
   confirmedTopics = [],
   externalTopics = []
 }: ContentCalendarProps) {
-  const [currentMonth, setCurrentMonth] = useState(new Date(2026, 0))
-  const [openPopoverId, setOpenPopoverId] = useState<number | null>(null)
+  const [currentMonth, setCurrentMonth] = useState(new Date())
+  const [openPopoverId, setOpenPopoverId] = useState<string | null>(null)
 
-  // 외부에서 받은 주제들을 사용
   const contentTopics = externalTopics
-
-  const filteredTopics = useMemo(() => {
-    const topicsPerWeek = weeklyUploads
-    const result: ContentTopic[] = []
-
-    for (let week = 1; week <= 4; week++) {
-      const weekTopics = contentTopics.filter(t => t.week === week).slice(0, topicsPerWeek)
-      result.push(...weekTopics)
-    }
-
-    return result
-  }, [weeklyUploads, contentTopics])
 
   const calendarDays = useMemo(() => {
     const year = currentMonth.getFullYear()
@@ -88,29 +78,13 @@ export function ContentCalendar({
     return days
   }, [currentMonth])
 
-  const getWeekNumber = (day: number) => {
-    return Math.ceil(day / 7)
-  }
-
+  // date 기반으로 해당 날짜의 주제 찾기
   const getTopicsForDay = (day: number) => {
-    const week = getWeekNumber(day)
-    const weekTopics = filteredTopics.filter(t => t.week === week)
-    const dayOfWeek = new Date(currentMonth.getFullYear(), currentMonth.getMonth(), day).getDay()
+    const year = currentMonth.getFullYear()
+    const month = currentMonth.getMonth()
+    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`
 
-    // 주말(토, 일)에 주제 배치
-    if (dayOfWeek === 0 || dayOfWeek === 6) {
-      const index = dayOfWeek === 6 ? 0 : 1
-      if (weekTopics[index]) {
-        return [weekTopics[index]]
-      }
-    }
-
-    // 수요일에 세 번째 주제 배치 (주 3회 이상일 때)
-    if (dayOfWeek === 3 && weekTopics.length > 2) {
-      return [weekTopics[2]]
-    }
-
-    return []
+    return contentTopics.filter(t => t.date === dateStr)
   }
 
   const handleConfirmTopic = (topic: ContentTopic) => {
@@ -127,7 +101,7 @@ export function ContentCalendar({
     setCurrentMonth(new Date(currentMonth.getFullYear(), currentMonth.getMonth() + 1))
   }
 
-  const isTopicConfirmed = (topicId: number) => {
+  const isTopicConfirmed = (topicId: string) => {
     return confirmedTopics.some(t => t.id === topicId)
   }
 
@@ -177,7 +151,9 @@ export function ContentCalendar({
                     </span>
                     <div className="mt-1 space-y-1">
                       {topics.map((topic) => {
-                        const typeInfo = typeIcons[topic.type as keyof typeof typeIcons] || typeIcons.trend
+                        // topic_type이 있으면 그걸로, 없으면 type으로
+                        const iconKey = topic.topic_type === 'channel' ? 'channel' : (topic.type as keyof typeof typeIcons)
+                        const typeInfo = typeIcons[iconKey] || typeIcons.trend
                         const Icon = typeInfo.icon
                         const confirmed = isTopicConfirmed(topic.id)
 
@@ -208,8 +184,8 @@ export function ContentCalendar({
                                     </div>
                                     <div className="flex-1">
                                       <h4 className="font-semibold text-sm">{topic.title}</h4>
-                                      <p className="text-xs text-muted-foreground capitalize">
-                                        {topic.based_on_topic || topic.type} 콘텐츠
+                                      <p className="text-xs text-muted-foreground">
+                                        {topic.topic_type === 'channel' ? '채널 맞춤' : '트렌드'} · {topic.based_on_topic || topic.type}
                                       </p>
                                     </div>
                                     {confirmed && (
@@ -250,6 +226,20 @@ export function ContentCalendar({
                                   </div>
                                 )}
 
+                                {/* 검색 키워드 */}
+                                {topic.search_keywords && topic.search_keywords.length > 0 && (
+                                  <div>
+                                    <p className="text-xs font-medium text-muted-foreground mb-2">검색 키워드</p>
+                                    <div className="flex flex-wrap gap-1">
+                                      {topic.search_keywords.map((keyword, i) => (
+                                        <Badge key={i} variant="secondary" className="text-xs">
+                                          {keyword}
+                                        </Badge>
+                                      ))}
+                                    </div>
+                                  </div>
+                                )}
+
                                 {/* 썸네일 아이디어 */}
                                 {topic.thumbnail_idea && (
                                   <div className="bg-muted/30 rounded-lg p-3">
@@ -278,7 +268,7 @@ export function ContentCalendar({
                                   </Button>
                                 ) : (
                                   <div className="flex gap-2">
-                                    <Link to={`/script?topic=${encodeURIComponent(topic.title)}`} className="flex-1">
+                                    <Link to={`/script?topic=${encodeURIComponent(topic.title)}&topicId=${topic.id}&topicType=${topic.topic_type || 'trend'}`} className="flex-1">
                                       <Button size="sm" className="w-full bg-primary hover:bg-primary/90">
                                         스크립트 작성하기
                                       </Button>
@@ -300,24 +290,24 @@ export function ContentCalendar({
 
         {/* Legend */}
         <div className="flex flex-wrap gap-4 mt-4 pt-4 border-t border-border/50">
-          {Object.entries(typeIcons).map(([key, value]) => {
-            const Icon = value.icon
-            const labels: Record<string, string> = {
-              trend: "트렌드",
-              hot: "인기/긴급",
-              evergreen: "에버그린",
-              event: "이벤트",
-              seasonal: "시즌"
-            }
-            return (
-              <div key={key} className="flex items-center gap-2 text-sm">
-                <div className={`w-6 h-6 rounded flex items-center justify-center ${value.bg}`}>
-                  <Icon className={`w-3 h-3 ${value.color}`} />
-                </div>
-                <span className="text-muted-foreground">{labels[key]}</span>
-              </div>
-            )
-          })}
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-6 h-6 rounded flex items-center justify-center bg-purple-500/20">
+              <User className="w-3 h-3 text-purple-500" />
+            </div>
+            <span className="text-muted-foreground">채널 맞춤</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-6 h-6 rounded flex items-center justify-center bg-chart-3/20">
+              <Flame className="w-3 h-3 text-chart-3" />
+            </div>
+            <span className="text-muted-foreground">트렌드 (긴급)</span>
+          </div>
+          <div className="flex items-center gap-2 text-sm">
+            <div className="w-6 h-6 rounded flex items-center justify-center bg-chart-1/20">
+              <TrendingUp className="w-3 h-3 text-chart-1" />
+            </div>
+            <span className="text-muted-foreground">트렌드 (일반)</span>
+          </div>
           <div className="flex items-center gap-2 text-sm ml-auto">
             <div className="w-6 h-6 rounded flex items-center justify-center bg-accent">
               <Check className="w-3 h-3 text-white" />
