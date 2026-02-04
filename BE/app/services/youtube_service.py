@@ -1,5 +1,6 @@
 import logging
 import math
+import re
 from datetime import datetime, date, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
@@ -438,15 +439,28 @@ class YouTubeService:
         
         logger.info(f"Retrieved details for {len(video_details)} videos")
         
-        # 4. 트렌드 점수 계산
+        # 4. Shorts 제외 (60초 이하)
+        filtered_videos = []
         for video in video_details:
+            duration_sec = YouTubeService._parse_duration(
+                video.get("contentDetails", {}).get("duration")
+            )
+            if duration_sec is None or duration_sec > 60:
+                filtered_videos.append(video)
+            else:
+                logger.debug(f"Shorts 제외: {video.get('id')} (duration: {duration_sec}s)")
+        
+        logger.info(f"Shorts 제외 후: {len(filtered_videos)}개 영상")
+        
+        # 5. 트렌드 점수 계산
+        for video in filtered_videos:
             score, days = YouTubeService._calculate_popularity_score(video)
             video["popularity_score"] = score
             video["days_since_upload"] = days
         
-        # 5. 정렬 및 상위 N개 반환
+        # 6. 정렬 및 상위 N개 반환
         sorted_videos = sorted(
-            video_details,
+            filtered_videos,
             key=lambda x: x.get("popularity_score", 0),
             reverse=True
         )
@@ -455,6 +469,36 @@ class YouTubeService:
         logger.info(f"Returning top {len(result)} videos")
         
         return result
+
+    @staticmethod
+    def _parse_duration(duration_str: Optional[str]) -> Optional[int]:
+        """
+        ISO 8601 duration을 초 단위로 변환
+        
+        예: PT1M30S → 90초
+            PT15M → 900초
+            PT1H2M10S → 3730초
+        """
+        if not duration_str:
+            return None
+        
+        try:
+            # PT1H2M10S 형식 파싱
+            pattern = r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?'
+            match = re.match(pattern, duration_str)
+            
+            if not match:
+                return None
+            
+            hours = int(match.group(1) or 0)
+            minutes = int(match.group(2) or 0)
+            seconds = int(match.group(3) or 0)
+            
+            total_seconds = hours * 3600 + minutes * 60 + seconds
+            return total_seconds
+        except Exception as e:
+            logger.warning(f"Duration 파싱 실패: {duration_str} - {e}")
+            return None
 
     @staticmethod
     def _calculate_popularity_score(
