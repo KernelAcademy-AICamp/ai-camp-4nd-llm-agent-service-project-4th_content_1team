@@ -74,7 +74,7 @@ class LLMRecommender:
         if self.gemini_key and HAS_GENAI:
             self.provider = "gemini"
             genai.configure(api_key=self.gemini_key)
-            self.model = genai.GenerativeModel('gemini-flash-latest')
+            self.model = genai.GenerativeModel('gemini-2.0-flash')
             print("[Recommender] Using Google Gemini")
         else:
             self.provider = "ollama"

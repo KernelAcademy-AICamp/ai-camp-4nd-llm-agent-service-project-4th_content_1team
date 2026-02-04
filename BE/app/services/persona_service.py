@@ -275,6 +275,7 @@ async def _synthesize_persona(
     """
     import httpx
     import json
+    import re
 
     api_key = settings.gemini_api_key
 
@@ -286,80 +287,103 @@ async def _synthesize_persona(
     )
 
     # LLM으로 종합 페르소나 생성
-    prompt = f"""다음은 유튜브 채널 분석 결과입니다. 이를 종합하여 채널 페르소나를 생성해주세요.
+    prompt = f"""다음은 유튜브 채널 분석 결과입니다. 이를 종합하여 채널 페르소나를 JSON으로 생성해주세요.
 
-## 채널명
-{channel.title or "알 수 없음"}
+채널명: {channel.title or "알 수 없음"}
 
-## 분석 결과
+분석 결과:
 {context}
 
-## 요청
-다음 JSON 형식으로 채널 페르소나를 생성해주세요:
-
-```json
+다음 JSON 형식으로 응답해주세요. 반드시 유효한 JSON만 출력하세요:
 {{
     "persona_summary": "이 채널에 대한 자연스러운 3~5문장 요약",
-    "one_liner": "한 줄 정의 (예: 노션 전문 생산성 유튜버)",
+    "one_liner": "한 줄 정의",
     "main_topics": ["주요 주제1", "주요 주제2", "주요 주제3"],
-    "content_style": "콘텐츠 스타일 (예: 깔끔한 화면 녹화 + 차분한 설명)",
-    "differentiator": "이 채널만의 차별화 포인트",
-    "target_audience": "타겟 시청자 (예: 20대 중반~30대 초반 직장인)",
+    "content_style": "콘텐츠 스타일",
+    "differentiator": "차별화 포인트",
+    "target_audience": "타겟 시청자",
     "audience_needs": "시청자가 원하는 것",
     "hit_topics": ["잘 되는 주제1", "잘 되는 주제2"],
-    "title_patterns": ["자주 쓰는 제목 패턴1", "패턴2"],
-    "optimal_duration": "적정 영상 길이 (예: 10~15분)",
+    "title_patterns": ["제목 패턴1", "패턴2"],
+    "optimal_duration": "적정 영상 길이",
     "growth_opportunities": ["성장 기회1", "성장 기회2"],
     "topic_keywords": ["키워드1", "키워드2", "키워드3"],
     "style_keywords": ["스타일키워드1", "스타일키워드2"],
-    "analyzed_categories": ["채널 카테고리1", "카테고리2 (예: 교육, 기술, 프로그래밍)"],
-    "analyzed_subcategories": ["세부 카테고리1", "세부 카테고리2 (예: 웹개발, JavaScript, AI)"]
-}}
-```
+    "analyzed_categories": ["카테고리1", "카테고리2"],
+    "analyzed_subcategories": ["세부카테고리1", "세부카테고리2"]
+}}"""
 
-분석 결과를 바탕으로 사실에 기반하여 작성해주세요.
-데이터가 부족한 부분은 "분석 필요" 또는 합리적인 추정을 해주세요.
-"""
+    if not api_key:
+        print("[Persona Synthesis] No Gemini API key, using default persona")
+        return _build_default_persona(
+            channel, rule_interpretations, llm_interpretations
+        )
 
-    if api_key:
+    MAX_RETRIES = 2
+    last_error = None
+
+    for attempt in range(MAX_RETRIES):
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 resp = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key={api_key}",
+                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
                     json={
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {
                             "temperature": 0.7,
-                            "maxOutputTokens": 2048,
+                            "maxOutputTokens": 8192,
+                            "responseMimeType": "application/json",
                         },
                     },
                 )
 
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text = data["candidates"][0]["content"]["parts"][0]["text"]
+                if resp.status_code != 200:
+                    last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
+                    print(f"[Persona Synthesis] Attempt {attempt+1} failed: {last_error}")
+                    continue
 
-                    # JSON 파싱
-                    text = text.strip()
-                    if text.startswith("```json"):
-                        text = text[7:]
-                    elif text.startswith("```"):
-                        text = text[3:]
-                    if text.endswith("```"):
-                        text = text[:-3]
+                data = resp.json()
+                candidates = data.get("candidates", [])
+                if not candidates:
+                    last_error = f"No candidates in response: {data}"
+                    print(f"[Persona Synthesis] Attempt {attempt+1}: {last_error}")
+                    continue
 
-                    persona_data = json.loads(text.strip())
+                text = candidates[0]["content"]["parts"][0]["text"]
 
-                    # evidence 추가
-                    persona_data["evidence"] = _build_evidence(
-                        rule_interpretations, llm_interpretations
-                    )
+                # JSON 추출 (responseMimeType 사용 시 보통 깨끗한 JSON이 옴)
+                text = text.strip()
 
-                    return persona_data
+                # 혹시 마크다운 코드블록으로 감싸져 있으면 제거
+                text = re.sub(r'^```json\s*', '', text)
+                text = re.sub(r'^```\s*', '', text)
+                text = re.sub(r'\s*```$', '', text)
+
+                # trailing comma 제거
+                text = re.sub(r',\s*}', '}', text)
+                text = re.sub(r',\s*]', ']', text)
+
+                persona_data = json.loads(text.strip())
+
+                # evidence 추가
+                persona_data["evidence"] = _build_evidence(
+                    rule_interpretations, llm_interpretations
+                )
+
+                print(f"[Persona Synthesis] Success on attempt {attempt+1}")
+                return persona_data
+
+        except json.JSONDecodeError as e:
+            last_error = f"JSON parse error: {e}"
+            print(f"[Persona Synthesis] Attempt {attempt+1} JSON parse failed: {e}")
+            # 다음 시도에서 재시도
         except Exception as e:
-            print(f"Gemini API error in synthesis: {e}")
+            last_error = f"Unexpected error: {e}"
+            print(f"[Persona Synthesis] Attempt {attempt+1} error: {e}")
 
-    # API 실패 시 기본값 반환
+    # 모든 시도 실패
+    print(f"[Persona Synthesis] All {MAX_RETRIES} attempts failed. Last error: {last_error}")
+    print("[Persona Synthesis] Falling back to default persona")
     return _build_default_persona(
         channel, rule_interpretations, llm_interpretations
     )

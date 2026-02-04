@@ -18,7 +18,7 @@ from app.core.config import settings
 
 
 # Gemini API 설정
-GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent"
+GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
 
 
 @dataclass
@@ -56,7 +56,7 @@ async def _call_gemini(prompt: str, api_key: str) -> Optional[str]:
                 "contents": [{"parts": [{"text": prompt}]}],
                 "generationConfig": {
                     "temperature": 0.7,
-                    "maxOutputTokens": 2048,
+                    "maxOutputTokens": 4096,
                 },
             },
         )
