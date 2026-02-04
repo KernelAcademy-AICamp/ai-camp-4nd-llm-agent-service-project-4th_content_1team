@@ -5,6 +5,13 @@ import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
 import { ScrollArea } from "../../../components/ui/scroll-area"
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../../../components/ui/select"
+import {
   Play,
   Eye,
   ThumbsUp,
@@ -22,21 +29,15 @@ import {
 } from "lucide-react"
 import { useState, useEffect, useRef } from "react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import { useSearchParams } from "react-router-dom"
 import {
   searchYouTubeVideos,
   saveCompetitorVideos,
   analyzeVideoContent,
   batchAnalyzeVideos,
+  getTopics,
   type VideoItem,
 } from "../../../lib/api/index"
-
-// TODO: 지워야함 샘플 데이터 (하드코딩)
-const SAMPLE_KEYWORDS = [
-  "AI 웹서비스 만들기",
-  "ChatGPT 웹앱 만들기",
-  "바이브 코딩"
-
-]
 
 // YouTube API 응답을 UI 형식으로 변환
 function formatNumber(num: number): string {
@@ -48,16 +49,84 @@ function formatNumber(num: number): string {
 
 export function CompetitorAnalysis() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  const [searchParams] = useSearchParams()
+  const [selectedTopicId, setSelectedTopicId] = useState<string>('')
+  
+  // URL에서 topicId 가져오기
+  const topicIdFromUrl = searchParams.get('topicId')
 
-  // YouTube 검색 API 호출
+  // 사용자 토픽 조회
+  const { data: topicsData, isLoading: isLoadingTopics } = useQuery({
+    queryKey: ['topics'],
+    queryFn: getTopics,
+    staleTime: 1000 * 60 * 5, // 5분간 캐시
+  })
+
+  // 전체 토픽 리스트
+  const allTopics = topicsData 
+    ? [...topicsData.channel_topics, ...topicsData.trend_topics].filter(t => t.display_status === 'shown')
+    : []
+
+  // 초기 선택: URL에서 지정 or 첫 번째 shown 토픽
+  useEffect(() => {
+    if (!topicsData || selectedTopicId) return
+    
+    const initialTopicId = topicIdFromUrl || allTopics[0]?.id
+    if (initialTopicId) {
+      setSelectedTopicId(initialTopicId)
+    }
+  }, [topicsData, topicIdFromUrl, selectedTopicId, allTopics])
+
+  // 선택된 토픽 객체
+  const selectedTopic = allTopics.find(t => t.id === selectedTopicId) || null
+
+  // YouTube 검색 API 호출 - 키워드별 개별 검색
   const { data, isLoading, isError, error, refetch } = useQuery({
-    queryKey: ['youtube-search', SAMPLE_KEYWORDS.join(' ')],
+    queryKey: ['youtube-search', selectedTopicId],
     queryFn: async () => {
-      return await searchYouTubeVideos({
-        keywords: SAMPLE_KEYWORDS.join(' '),
-        max_results: 10
-      })
+      if (!selectedTopic?.search_keywords?.length) {
+        return { total_results: 0, query: '', videos: [] }
+      }
+
+      const keywords = selectedTopic.search_keywords.slice(0, 5) // 최대 5개 키워드
+      const videosPerKeyword = 2
+      
+      // 각 키워드별로 병렬 검색
+      const searchPromises = keywords.map(keyword =>
+        searchYouTubeVideos({
+          keywords: keyword,
+          max_results: videosPerKeyword
+        }).catch(err => {
+          console.error(`검색 실패 (${keyword}):`, err)
+          return { total_results: 0, query: keyword, videos: [] }
+        })
+      )
+      
+      const results = await Promise.all(searchPromises)
+      
+      // 결과 합치기 (중복 제거)
+      const allVideos: VideoItem[] = []
+      const seenIds = new Set<string>()
+      
+      for (const result of results) {
+        for (const video of result.videos) {
+          if (!seenIds.has(video.video_id)) {
+            seenIds.add(video.video_id)
+            allVideos.push(video)
+          }
+        }
+      }
+      
+      // 인기도 순으로 정렬 (이미 정렬되어 있지만 재정렬)
+      allVideos.sort((a, b) => b.popularity_score - a.popularity_score)
+      
+      return {
+        total_results: allVideos.length,
+        query: keywords.join(', '),
+        videos: allVideos.slice(0, 10) // 최대 10개
+      }
     },
+    enabled: !!selectedTopic && !!selectedTopicId, // 토픽이 선택되었을 때만 검색
     staleTime: 1000 * 60 * 10, // 10분간 캐시
   })
 
@@ -72,13 +141,18 @@ export function CompetitorAnalysis() {
   // 검색 결과 10개를 DB에 자동 저장 후 배치 자막/분석 실행
   const savedRef = useRef<string | null>(null)
   useEffect(() => {
-    if (!data?.videos.length) return
+    if (!data?.videos.length || !selectedTopic) return
     const key = data.videos.map((v: VideoItem) => v.video_id).join(",")
     if (savedRef.current === key) return
     savedRef.current = key
 
     saveCompetitorVideos({
-      policy_json: { query: data.query, keywords: SAMPLE_KEYWORDS },
+      policy_json: { 
+        query: data.query, 
+        topic_id: selectedTopic.id,
+        topic_title: selectedTopic.title,
+        search_keywords: selectedTopic.search_keywords 
+      },
       videos: data.videos.map((v: VideoItem) => ({
         youtube_video_id: v.video_id,
         url: `https://www.youtube.com/watch?v=${v.video_id}`,
@@ -102,7 +176,7 @@ export function CompetitorAnalysis() {
         batchAnalyzeMutation.mutate(videoIds)
       })
       .catch(console.error)
-  }, [data])
+  }, [data, selectedTopic])
 
   // VideoItem을 UI 형식으로 변환
   const competitorVideos = data?.videos.map((video: VideoItem) => ({
@@ -146,22 +220,85 @@ export function CompetitorAnalysis() {
               variant="ghost"
               size="sm"
               onClick={() => refetch()}
-              disabled={isLoading}
+              disabled={isLoading || !selectedTopic}
               className="h-7 w-7 p-0"
             >
               <RefreshCw className={`w-3 h-3 ${isLoading ? 'animate-spin' : ''}`} />
             </Button>
           </div>
         </div>
-        {data && (
-          <div className="mt-2 text-xs text-muted-foreground">
-            검색어: <span className="font-medium">{data.query}</span>
+
+        {/* 토픽 선택 */}
+        {allTopics.length > 0 && (
+          <div className="mt-3 space-y-2">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">분석할 주제:</span>
+              <Select value={selectedTopicId} onValueChange={setSelectedTopicId}>
+                <SelectTrigger className="h-8 w-auto min-w-[200px]">
+                  <SelectValue placeholder="주제 선택" />
+                </SelectTrigger>
+                <SelectContent>
+                  {allTopics.map((topic) => (
+                    <SelectItem key={topic.id} value={topic.id}>
+                      <div className="flex items-center gap-2">
+                        <Badge 
+                          variant={topic.topic_type === 'channel' ? 'default' : 'secondary'} 
+                          className="text-xs"
+                        >
+                          {topic.topic_type === 'channel' ? '맞춤' : '트렌드'}
+                        </Badge>
+                        <span className="truncate max-w-[300px]">{topic.title}</span>
+                      </div>
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            {selectedTopic && (
+              <div className="text-xs text-muted-foreground">
+                검색 중: 
+                {selectedTopic.search_keywords.slice(0, 5).map((kw, i) => (
+                  <Badge key={i} variant="outline" className="ml-1 text-xs">
+                    {kw}
+                  </Badge>
+                ))}
+                <span className="ml-1">(각 2개씩)</span>
+              </div>
+            )}
           </div>
         )}
       </CardHeader>
       <CardContent>
+        {/* 토픽 로딩 상태 */}
+        {isLoadingTopics && (
+          <div className="flex items-center justify-center h-[400px]">
+            <div className="text-center space-y-3">
+              <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
+              <p className="text-sm text-muted-foreground">
+                추천 주제를 불러오는 중...
+              </p>
+            </div>
+          </div>
+        )}
+
+        {/* 토픽 없음 */}
+        {!isLoadingTopics && !selectedTopic && (
+          <div className="flex items-center justify-center h-[400px]">
+            <div className="text-center space-y-3">
+              <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
+              <p className="text-sm text-muted-foreground">
+                선택된 주제가 없습니다.
+              </p>
+              <p className="text-xs text-muted-foreground">
+                AI 주제 추천에서 주제를 생성해 주세요.
+              </p>
+            </div>
+          </div>
+        )}
+
         {/* 로딩 상태 */}
-        {isLoading && (
+        {!isLoadingTopics && selectedTopic && isLoading && (
           <div className="flex items-center justify-center h-[400px]">
             <div className="text-center space-y-3">
               <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto" />
@@ -173,7 +310,7 @@ export function CompetitorAnalysis() {
         )}
 
         {/* 에러 상태 */}
-        {isError && (
+        {!isLoadingTopics && selectedTopic && isError && (
           <div className="flex items-center justify-center h-[400px]">
             <div className="text-center space-y-3">
               <AlertCircle className="w-8 h-8 text-destructive mx-auto" />
@@ -197,7 +334,7 @@ export function CompetitorAnalysis() {
         )}
 
         {/* 데이터 표시 */}
-        {!isLoading && !isError && competitorVideos.length === 0 && (
+        {!isLoadingTopics && selectedTopic && !isLoading && !isError && competitorVideos.length === 0 && (
           <div className="flex items-center justify-center h-[400px]">
             <div className="text-center space-y-2">
               <AlertCircle className="w-8 h-8 text-muted-foreground mx-auto" />
@@ -208,7 +345,7 @@ export function CompetitorAnalysis() {
           </div>
         )}
 
-        {!isLoading && !isError && competitorVideos.length > 0 && (
+        {!isLoadingTopics && selectedTopic && !isLoading && !isError && competitorVideos.length > 0 && (
           <ScrollArea className="h-[400px] pr-4">
             <div className="space-y-4">
               {competitorVideos.map((video, index) => (
