@@ -21,9 +21,6 @@ httpx==0.26.0
 pydantic==2.5.3
 pydantic-settings==2.1.0
 
-# CORS
-python-cors==1.0.0
-
 # Testing
 pytest==7.4.4
 pytest-asyncio==0.23.6
@@ -34,6 +31,8 @@ langchain-core
 langchain-openai
 langchain-google-genai
 langchain-community
+langgraph
+google-generativeai  # Gemini API
 
 # Tools & Crawling
 tavily-python
@@ -43,5 +42,5 @@ beautifulsoup4  # HTML 파싱
 requests        # HTTP 요청
 lxml            # 파싱 가속
 playwright      # 브라우저 자동화 (이미지/표 추출)
-youtube-transcript-api==0.6.3  # YouTube 자막 다운로드
+yt-dlp          # YouTube 자막 다운로드 (현재 사용 중)
 
