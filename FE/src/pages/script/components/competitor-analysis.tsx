@@ -47,25 +47,11 @@ function formatNumber(num: number): string {
   return num.toLocaleString()
 }
 
-interface CompetitorAnalysisProps {
-  topic?: string  // URL에서 가져온 주제
-  apiVideos?: Array<{
-    video_id: string
-    title: string
-    channel: string
-    url: string
-    thumbnail?: string
-    hook_analysis?: string
-    weak_points?: string[]
-    strong_points?: string[]
-  }>
-}
-
-export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps = {}) {
+export function CompetitorAnalysis() {
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [searchParams] = useSearchParams()
   const [selectedTopicId, setSelectedTopicId] = useState<string>('')
-
+  
   // URL에서 topicId 가져오기
   const topicIdFromUrl = searchParams.get('topicId')
 
@@ -77,14 +63,14 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
   })
 
   // 전체 토픽 리스트
-  const allTopics = topicsData
+  const allTopics = topicsData 
     ? [...topicsData.channel_topics, ...topicsData.trend_topics].filter(t => t.display_status === 'shown')
     : []
 
   // 초기 선택: URL에서 지정 or 첫 번째 shown 토픽
   useEffect(() => {
     if (!topicsData || selectedTopicId) return
-
+    
     const initialTopicId = topicIdFromUrl || allTopics[0]?.id
     if (initialTopicId) {
       setSelectedTopicId(initialTopicId)
@@ -104,7 +90,7 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
 
       const keywords = selectedTopic.search_keywords.slice(0, 5) // 최대 5개 키워드
       const videosPerKeyword = 2
-
+      
       // 각 키워드별로 병렬 검색
       const searchPromises = keywords.map(keyword =>
         searchYouTubeVideos({
@@ -115,13 +101,13 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
           return { total_results: 0, query: keyword, videos: [] }
         })
       )
-
+      
       const results = await Promise.all(searchPromises)
-
+      
       // 결과 합치기 (중복 제거)
       const allVideos: VideoItem[] = []
       const seenIds = new Set<string>()
-
+      
       for (const result of results) {
         for (const video of result.videos) {
           if (!seenIds.has(video.video_id)) {
@@ -130,10 +116,10 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
           }
         }
       }
-
+      
       // 인기도 순으로 정렬 (이미 정렬되어 있지만 재정렬)
       allVideos.sort((a, b) => b.popularity_score - a.popularity_score)
-
+      
       return {
         total_results: allVideos.length,
         query: keywords.join(', '),
@@ -161,11 +147,11 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
     savedRef.current = key
 
     saveCompetitorVideos({
-      policy_json: {
-        query: data.query,
+      policy_json: { 
+        query: data.query, 
         topic_id: selectedTopic.id,
         topic_title: selectedTopic.title,
-        search_keywords: selectedTopic.search_keywords
+        search_keywords: selectedTopic.search_keywords 
       },
       videos: data.videos.map((v: VideoItem) => ({
         youtube_video_id: v.video_id,
@@ -192,8 +178,8 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
       .catch(console.error)
   }, [data, selectedTopic])
 
-  // VideoItem을 UI 형식으로 변환 (YouTube API 데이터)
-  const youtubeVideos = data?.videos.map((video: VideoItem) => ({
+  // VideoItem을 UI 형식으로 변환
+  const competitorVideos = data?.videos.map((video: VideoItem) => ({
     id: video.video_id,
     channel: video.channel_title,
     title: video.title,
@@ -208,40 +194,15 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
     published_at: new Date(video.published_at).toLocaleDateString('ko-KR')
   })) || []
 
-  // API Videos를 UI 형식으로 변환 (백엔드 파이프라인 데이터)
-  const backendVideos = apiVideos?.map((video) => ({
-    id: video.video_id,
-    channel: video.channel,
-    title: video.title,
-    thumbnail: video.thumbnail || '',
-    url: video.url,
-    views: '-',  // 백엔드 데이터에는 없음
-    likes: '-',
-    comments: '-',
-    popularity_score: 0,
-    days_since_upload: 0,
-    description: video.hook_analysis || '',
-    published_at: '-',
-    hook_analysis: video.hook_analysis,
-    weak_points: video.weak_points,
-    strong_points: video.strong_points
-  })) || []
-
-  // 우선순위: 백엔드 데이터 > YouTube API 데이터
-  const competitorVideos = backendVideos.length > 0 ? backendVideos : youtubeVideos
-
-  // 표시할 영상 개수 계산
-  const videoCount = competitorVideos.length || data?.total_results || 0
-
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur">
       <CardHeader className="pb-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2">
             <CardTitle className="text-lg">경쟁 영상 분석</CardTitle>
-            {videoCount > 0 && (
+            {data && (
               <Badge variant="secondary" className="text-xs">
-                {videoCount}개
+                {data.total_results}개
               </Badge>
             )}
           </div>
@@ -280,8 +241,8 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
                   {allTopics.map((topic) => (
                     <SelectItem key={topic.id} value={topic.id}>
                       <div className="flex items-center gap-2">
-                        <Badge
-                          variant={topic.topic_type === 'channel' ? 'default' : 'secondary'}
+                        <Badge 
+                          variant={topic.topic_type === 'channel' ? 'default' : 'secondary'} 
                           className="text-xs"
                         >
                           {topic.topic_type === 'channel' ? '맞춤' : '트렌드'}
@@ -296,7 +257,7 @@ export function CompetitorAnalysis({ topic, apiVideos }: CompetitorAnalysisProps
 
             {selectedTopic && (
               <div className="text-xs text-muted-foreground">
-                검색 중:
+                검색 중: 
                 {selectedTopic.search_keywords.slice(0, 5).map((kw, i) => (
                   <Badge key={i} variant="outline" className="ml-1 text-xs">
                     {kw}

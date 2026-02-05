@@ -3,3 +3,7 @@ prompt
 
 # Personal assets folder (개인용 자료, push 제외)
 md/assets/.DS_Store
+
+
+# 뉴스 이미지 캐시
+BE/public/images/news/
