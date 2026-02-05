@@ -20,12 +20,14 @@ import {
 import { Link } from "react-router-dom"
 
 interface ContentTopic {
-  id: number
+  id: string  // UUID
   title: string
   reason: string
   type: string
-  week: number
+  week?: number
   confirmed?: boolean
+  search_keywords?: string[]
+  topic_type?: 'channel' | 'trend'
 }
 
 interface NewsUpdate {
@@ -273,7 +275,7 @@ export function ConfirmedTopicsPanel({ confirmedTopics }: ConfirmedTopicsPanelPr
             </div>
 
             {/* Quick Action */}
-            <Link to={`/script?topic=${encodeURIComponent(selectedTopic.title)}`}>
+            <Link to={`/script?topicId=${selectedTopic.id}&topic=${encodeURIComponent(selectedTopic.title)}`}>
               <Button className="w-full mt-2 bg-transparent" variant="outline">
                 <span>스크립트 작성하기</span>
                 <ChevronRight className="w-4 h-4 ml-1" />

@@ -229,7 +229,9 @@ def download_image_to_local(image_url: str, referrer_url: str = None) -> Optiona
     실패 시 None 반환.
     """
     try:
-        save_dir = "public/images/news"
+        # BE 폴더 기준 절대 경로 생성 (현재 파일 위치 기준)
+        be_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        save_dir = os.path.join(be_root, "public", "images", "news")
         os.makedirs(save_dir, exist_ok=True)
 
         session = requests.Session()
@@ -643,10 +645,6 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                     item["source"] = "Unknown"
                     item["summary_short"] = item.get("desc", "")
                     item["analysis"] = {"facts": [], "opinions": []}
-
-                except Exception as e:
-                    logger.warning(f"핵심 문단 추출 실패: {e}")
-                    item["summary"] = text[:1000] # 실패 시 fallback
 
                 item["content"] = text
                 item["images"] = final_images

@@ -177,7 +177,9 @@ def _generate_intro(context_str: str) -> Hook:
 
 **TASK**: Write the HOOK (Intro) for this YouTube video.
 **GOAL**: Grab attention immediately. Use the "Hook Strategy" defined in the Blueprint.
-**LENGTH**: Approx 150-200 words (Korean).
+**LENGTH**: Approx 150-200 words.
+**LANGUAGE**: You MUST write in Korean (한국어). Do NOT use English.
+**IMPORTANT**: Even if the Blueprint/Context is in English, you MUST write the script in Korean.
 **REQUIREMENTS**:
 - Start with a strong hook line.
 - Introduce the topic and why it matters NOW.
@@ -187,7 +189,7 @@ def _generate_intro(context_str: str) -> Hook:
 Generate the Hook object.
 """
     return structured_llm.invoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter."),
+        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language."),
         HumanMessage(content=prompt)
     ])
 
@@ -204,6 +206,9 @@ def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index: int) 
 
 **TASK**: Write **CHAPTER {chapter_index}: {chapter_plan.get('title')}**.
 
+**LANGUAGE**: You MUST write in Korean (한국어). Do NOT use English.
+**IMPORTANT**: Even if the Blueprint/Context is in English, you MUST write the script in Korean.
+
 **CRITICAL LENGTH REQUIREMENT**:
 - This is a deep-dive section.
 - Write at least **400-500 WORDS** (approx 1,000+ characters).
@@ -219,7 +224,7 @@ def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index: int) 
 **OUTPUT**: A single Chapter object with multiple Beats.
 """
     return structured_llm.invoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter. Write DETAILED content."),
+        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language. Write DETAILED content."),
         HumanMessage(content=prompt)
     ])
 
@@ -232,16 +237,18 @@ def _generate_outro(context_str: str) -> Closing:
 {context_str}
 
 **TASK**: Write the OUTRO (Closing).
+**LANGUAGE**: You MUST write in Korean (한국어). Do NOT use English.
+**IMPORTANT**: Even if the Blueprint/Context is in English, you MUST write the script in Korean.
 **LENGTH**: Approx 100-150 words.
 **REQUIREMENTS**:
 - Summarize the key takeaway.
-- Strong Call To Action (Subscripe, Like).
+- Strong Call To Action (Subscribe, Like).
 - End on a high note.
 
 Generate the Closing object.
 """
     return structured_llm.invoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter."),
+        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language."),
         HumanMessage(content=prompt)
     ])
 

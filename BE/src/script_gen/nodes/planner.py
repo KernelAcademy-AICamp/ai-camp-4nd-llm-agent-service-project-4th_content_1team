@@ -40,16 +40,12 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     
     # --- 1. 입력 데이터 추출 ---
-    # state에서 topic과 channel_profile, trend_analysis를 가져옴
+    # state에서 topic과 channel_profile을 가져옴
     topic = state.get("topic")
     channel_profile = state.get("channel_profile", {})
-    trend_analysis = state.get("trend_analysis") # Trend Scout 결과 가져오기
     
     if not topic:
         raise ValueError("Topic is required in state")
-    
-    if trend_analysis:
-        logger.info(f"Trend Analysis detected: {len(trend_analysis.get('top_comments', []))} comments found")
     
     
     # --- 1.5. News RAG: 최신 뉴스 검색 ---
@@ -74,8 +70,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 channel_profile, 
                 attempt, 
                 last_error,
-                recent_news,  # News RAG 결과 전달
-                trend_analysis # Trend Scout 결과 전달 (New!)
+                recent_news  # News RAG 결과 전달
             )
             
             
@@ -189,22 +184,26 @@ def _build_planner_prompt(
     channel_profile: Dict, 
     attempt: int = 0,
     last_error: Optional[str] = None,
-    recent_news: Optional[List[Dict[str, str]]] = None,
-    trend_analysis: Optional[Dict] = None
+    recent_news: Optional[List[Dict[str, str]]] = None
 ) -> str:
     """
     Planner용 프롬프트를 생성하는 헬퍼 함수
-    레이아웃: 기본 정보 -> 뉴스 RAG -> 트렌드 분석(New!) -> 개인화
+    레이아웃: 기본 정보 -> 뉴스 RAG -> 주제 컨텍스트(AI 추천) -> 개인화
     """
     
     # --- 기본 프롬프트 (영어로 작성) ---
     category = channel_profile.get("category", "general")
     target_audience = channel_profile.get("target_audience", "general viewers")
+    channel_name = channel_profile.get("name", "Unknown Channel")
     
     # 확장 프로필
     average_duration = channel_profile.get("average_duration")
     content_style = channel_profile.get("content_style")
-    recent_feedback = channel_profile.get("recent_feedback", [])
+    one_liner = channel_profile.get("one_liner")
+    persona_summary = channel_profile.get("persona_summary")
+    main_topics = channel_profile.get("main_topics", [])
+    hit_topics = channel_profile.get("hit_topics", [])
+    audience_needs = channel_profile.get("audience_needs")
     
     # [News RAG] 최신 뉴스 컨텍스트
     news_context = ""
@@ -213,35 +212,59 @@ def _build_planner_prompt(
         for i, news in enumerate(recent_news, 1):
             news_context += f"{i}. {news['title']}\n   {news['snippet']}\n"
 
-    # [Trend Scout] 커뮤니티 반응 컨텍스트 (New!)
-    trend_context = ""
-    if trend_analysis:
-        trend_context = "\n\n**COMMUNITY REACTIONS (Trend Scout)**:\n"
-        # 트렌드 키워드나 댓글 요약 등이 있다면 여기에 포함
-        # 현재 trend_analysis 구조에 따라 유동적으로 처리
-        # 예: {"keywords": [...], "top_comments": [...]} 가정
-        if "keywords" in trend_analysis:
-            trend_context += f"- Hot Keywords: {', '.join(trend_analysis['keywords'])}\n"
+    # [Topic Context] AI 추천 주제 컨텍스트 (NEW!)
+    topic_context = ""
+    topic_context_data = channel_profile.get("topic_context")  # API에서 전달
+    if topic_context_data:
+        topic_context = "\n\n**AI RECOMMENDATION CONTEXT** (Why this topic was recommended):\n"
+        topic_context += f"- Trend Basis: {topic_context_data.get('trend_basis', '')}\n"
+        topic_context += f"- Urgency: {topic_context_data.get('urgency', 'normal').upper()}\n"
         
-        # 댓글이나 여론 정보가 있다면 추가 (Trend Scout V2 결과)
-        # (구현에 따라 state에서 가져오는 방식이 다를 수 있음)
-        if "sentiment_summary" in trend_analysis:
-            trend_context += f"- Overall Sentiment: {trend_analysis['sentiment_summary']}\n"
-        if "top_comments" in trend_analysis and len(trend_analysis["top_comments"]) > 0:
-            trend_context += "- Key Comments/Reactions:\n"
-            for i, comment in enumerate(trend_analysis["top_comments"][:3], 1):
-                trend_context += f"  {i}. {comment}\n"
+        if topic_context_data.get('content_angles'):
+            topic_context += "- Suggested Angles:\n"
+            for angle in topic_context_data.get('content_angles', []):
+                topic_context += f"  • {angle}\n"
+        
+        if topic_context_data.get('recommendation_reason'):
+            topic_context += f"- Why This Fits Your Channel: {topic_context_data.get('recommendation_reason')}\n"
     
-    # [Personalization] 채널 맞춤
-    personalization_context = ""
-    if average_duration or content_style or recent_feedback:
-        personalization_context = "\n\n**Channel Personalization**:\n"
-        if average_duration:
-            personalization_context += f"- Average Video Length: {average_duration} mins\n"
-        if content_style:
-            personalization_context += f"- Style: {content_style}\n"
-        if recent_feedback:
-            personalization_context += f"- Recent Feedback: {', '.join(recent_feedback[:3])}\n"
+    # [Trend Scout] 커뮤니티 반응 컨텍스트 (주석처리됨, 향후 사용 가능)
+    # trend_context = ""
+    # if trend_analysis:
+    #     trend_context = "\n\n**COMMUNITY REACTIONS (Trend Scout)**:\n"
+    #     if "keywords" in trend_analysis:
+    #         trend_context += f"- Hot Keywords: {', '.join(trend_analysis['keywords'])}\n"
+    #     if "sentiment_summary" in trend_analysis:
+    #         trend_context += f"- Overall Sentiment: {trend_analysis['sentiment_summary']}\n"
+    #     if "top_comments" in trend_analysis and len(trend_analysis["top_comments"]) > 0:
+    #         trend_context += "- Key Comments/Reactions:\n"
+    #         for i, comment in enumerate(trend_analysis["top_comments"][:3], 1):
+    #             trend_context += f"  {i}. {comment}\n"
+    
+    # [Personalization] 채널 맞춤 (확장됨!)
+    personalization_context = "\n\n**Channel Personalization**:\n"
+    personalization_context += f"- Channel Name: {channel_name}\n"
+    
+    if one_liner:
+        personalization_context += f"- Channel Identity: {one_liner}\n"
+    
+    if persona_summary:
+        personalization_context += f"- Persona Summary: {persona_summary}\n"
+    
+    if main_topics:
+        personalization_context += f"- Main Topics: {', '.join(main_topics)}\n"
+    
+    if hit_topics:
+        personalization_context += f"- Past Hit Topics: {', '.join(hit_topics)}\n"
+    
+    if average_duration:
+        personalization_context += f"- Average Video Length: {average_duration} mins\n"
+    
+    if content_style:
+        personalization_context += f"- Content Style: {content_style}\n"
+    
+    if audience_needs:
+        personalization_context += f"- Audience Needs: {audience_needs}\n"
     
     base_prompt = f"""You are an expert YouTube content planner specializing in high-engagement videos.
 
@@ -250,15 +273,22 @@ def _build_planner_prompt(
 **Target Audience**: {target_audience}
 **Language**: Korean (ALL output must be in Korean)
 
-{news_context}{trend_context}{personalization_context}
+{news_context}{topic_context}{personalization_context}
 
-**STRATEGIC INSTRUCTION (Critial for High Views)**:
-1. **Analyze Community Intent**: Look at the 'COMMUNITY REACTIONS (Trend Scout)' (if provided).
-   - If people are **Angry** -> Structure the narrative around "Why they are mad" and "Who is responsible".
-   - If people are **Confused** -> Structure it as a "Myth-busting" or "Clear Explanation" guide.
-   - If people are **Excited** -> Focus on "What you need to prepare" or "Hidden features".
-   - 대중의 반응(특히 부정적 감정이나 뜨거운 이슈)을 챕터 구성의 핵심 테마로 삼을 것.
-2. **Fact + Opinion Structure**:
+**STRATEGIC INSTRUCTION (Critical for High Views)**:
+1. **Leverage AI Recommendation Context**: If 'AI RECOMMENDATION CONTEXT' is provided above:
+   - Use the Trend Basis to understand WHY this topic is hot right now
+   - Respect the Urgency level (URGENT = focus on timeliness, NORMAL = evergreen approach)
+   - Consider the Suggested Angles as starting points for your narrative structure
+   - Align with the channel's unique positioning mentioned in "Why This Fits Your Channel"
+
+2. **Channel-Specific Customization**:
+   - Review the Channel Personalization section carefully
+   - If Past Hit Topics are provided, identify patterns and replicate successful formats
+   - Match the Content Style in your title candidates and chapter goals
+   - Address the Audience Needs directly in your core questions
+
+3. **Fact + Opinion Structure**:
    - Don't just list facts. Use facts to back up a strong opinion or counter-intuitive insight.
    - Example: Instead of "Apple released Vision Pro", use "Why Vision Pro might FAIL (despite the specs)".
 

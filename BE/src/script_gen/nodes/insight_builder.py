@@ -26,12 +26,13 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 # 모델 설정 (Pass 1은 창의성, Pass 2는 논리성)
-MODEL_NAME = "gpt-4o-mini"
+MODEL_NAME = "gpt-4o"
 
 def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("Insight Builder Node (2-Pass) 시작")
     
     # --- 1. 입력 데이터 파싱 및 안전한 변환 ---
+    topic = state.get("topic", "Unknown Topic")  # [FIX] 주제 추가
     channel_profile = state.get("channel_profile", {})
     
     # Fact Pack (List[Dict])
@@ -42,18 +43,37 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
     raw_comp_data = state.get("competitor_data", {})
     competitor_result = _parse_competitor_data(raw_comp_data)
     
-    # Context 조립
-    context_str = _build_context_string(channel_profile, facts, competitor_result)
+    # Context 조립 - topic 전달
+    context_str = _build_context_string(topic, channel_profile, facts, competitor_result)
     
     
-    # --- 2. Pass 1: Draft Generation (Creative) ---
+    # --- 2. Pass 1: Draft Generation (Creative) with Retry ---
     logger.info("Pass 1: Creating Strategy Draft...")
-    draft_pack = _generate_draft(context_str)
+    draft_pack = None
+    max_retries = 3
+    
+    for attempt in range(max_retries):
+        try:
+            draft_pack = _generate_draft(context_str)
+            break  # 성공하면 루프 탈출
+        except Exception as e:
+            logger.warning(f"Draft 생성 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                raise  # 마지막 시도도 실패하면 에러 발생
     
     
-    # --- 3. Pass 2: Critic & Repair (Strict) ---
+    # --- 3. Pass 2: Critic & Repair (Strict) with Retry ---
     logger.info("Pass 2: Critiquing and Refining...")
-    final_pack = _critique_and_refine(context_str, draft_pack)
+    final_pack = None
+    
+    for attempt in range(max_retries):
+        try:
+            final_pack = _critique_and_refine(context_str, draft_pack)
+            break
+        except Exception as e:
+            logger.warning(f"Refine 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+            if attempt == max_retries - 1:
+                raise
     
     
     # --- 4. Finalize ---
@@ -80,6 +100,10 @@ def _generate_draft(context_str: str) -> InsightPack:
     system_prompt = """You are a visionary 'Content Strategist' for YouTube.
 Your goal is to find a 'Blue Ocean' strategy in a crowded market.
 
+**LANGUAGE RULE**:
+- All output fields (Thesis, Positioning, Chapter Titles, Goals, Key Points, Hook Plan) MUST be written in Korean.
+- Even if the research data contains English, the output must be natural Korean.
+
 **CORE PHILOSOPHY**:
 - **Differentiation is Key**: If the competitors said it, we usually shouldn't repeat it unless we add a new twist.
 - **Hook First**: Design a hook that stops the scroll immediately.
@@ -94,6 +118,7 @@ Focus on finding a unique 'Thesis' that contradicts or expands on the competitor
 1. **Hook Plan**: 
    - hook_scripts MUST include 'uses_fact_ids' with at least 1 Fact ID
    - Choose the most compelling/shocking facts for the hook
+   - **MANDATORY: thumbnail_angle** - MUST include concept, copy_candidates (list), avoid (list)
    
 2. **Story Structure - Chapters**:
    - Each chapter should have 'required_facts' with 1-3 specific Fact IDs (when available)
@@ -105,6 +130,10 @@ Focus on finding a unique 'Thesis' that contradicts or expands on the competitor
    - Prioritize Statistic and Key Event type facts
    - Ensure facts are distributed across chapters (don't use all facts in one chapter)
    - Leave some facts unused if they don't fit the narrative
+
+4. **MANDATORY FIELDS - DO NOT SKIP**:
+   - hook_plan.thumbnail_angle: MUST include {concept, copy_candidates, avoid}
+   - writer_instructions: MUST include {tone, reading_level, must_include, must_avoid, claim_policy}
 """
     user_prompt = f"""
 [RESEARCH DATA]
@@ -113,7 +142,9 @@ Focus on finding a unique 'Thesis' that contradicts or expands on the competitor
 **INSTRUCTION**:
 Generate the Draft Insight Pack. Risk-taking is encouraged regarding the angle/hook.
 
-**REMINDER**: Assign 'required_facts' (1-3 Fact IDs per chapter) based on what's available. Quality over quantity!
+**REMINDER**: 
+- Assign 'required_facts' (1-3 Fact IDs per chapter) based on what's available. Quality over quantity!
+- DO NOT forget thumbnail_angle and writer_instructions - these are REQUIRED!
 """
     return structured_llm.invoke([
         SystemMessage(content=system_prompt),
@@ -131,6 +162,10 @@ def _critique_and_refine(context_str: str, draft: InsightPack) -> InsightPack:
     
     system_prompt = """You are a strict 'Content Editor'.
 Your job is to review the Strategist's Draft and fix any logical flaws, clichés, or hallucinations.
+
+**LANGUAGE RULE**:
+- Ensure all final fields are in Korean.
+- If the Draft contains English titles or descriptions, translate them into natural, compelling Korean.
 
 **CHECKLIST**:
 1. **Cliché Check**: Check the 'Common Gaps' in the research. Does the Draft's thesis actually address them? If it repeats competitors, REWRITE it.
@@ -201,8 +236,15 @@ def _parse_competitor_data(raw_data: Dict) -> Optional[CompetitorAnalysisResult]
         return None
 
 
-def _build_context_string(channel: Dict, facts: List[Dict], competitor: Optional[CompetitorAnalysisResult]) -> str:
+def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competitor: Optional[CompetitorAnalysisResult]) -> str:
     """LLM 입력용 컨텍스트 조립 (Context 길이 제한 적용)"""
+    
+    # 0. Topic (가장 중요!)
+    t_str = f"""
+## TOPIC (Main Subject)
+**Video Topic**: {topic}
+**IMPORTANT**: All strategy and content MUST be specifically about this topic.
+"""
     
     # 1. Channel
     c_str = f"""
@@ -254,4 +296,4 @@ def _build_context_string(channel: Dict, facts: List[Dict], competitor: Optional
     else:
         comp_str += "(Competitor analysis not available or schema mismatch)\n"
         
-    return c_str + f_str + comp_str
+    return t_str + c_str + f_str + comp_str

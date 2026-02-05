@@ -227,9 +227,8 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
                     <div
                       key={topic.id}
                       onClick={() => setExpandedId(isExpanded ? null : topic.id)}
-                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${
-                        isAdded ? 'opacity-50' : 'hover:shadow-lg'
-                      } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
+                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${isAdded ? 'opacity-50' : 'hover:shadow-lg'
+                        } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
                     >
                       {/* 헤더 */}
                       <div className="flex items-start justify-between mb-3">
@@ -286,9 +285,13 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
 
                       {/* 날짜 선택 + 추가 버튼 */}
                       {!isAdded && (
-                        <div className="flex gap-2 mt-auto" onClick={(e) => e.stopPropagation()}>
+                        <div
+                          className="flex gap-2 mt-auto relative z-10"
+                          onClick={(e) => e.stopPropagation()}
+                          onMouseDown={(e) => e.stopPropagation()}
+                        >
                           <div className="relative flex-1">
-                            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none" />
+                            <Calendar className="absolute left-2 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground pointer-events-none z-0" />
                             <input
                               type="date"
                               min={today}
@@ -296,13 +299,16 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
                               onChange={(e) =>
                                 setSelectedDates(prev => ({ ...prev, [topic.id]: e.target.value }))
                               }
-                              className="w-full h-9 pl-8 pr-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                              onMouseDown={(e) => e.stopPropagation()}
+                              onFocus={(e) => e.stopPropagation()}
+                              className="w-full h-9 pl-8 pr-2 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-ring relative z-10 cursor-pointer"
                             />
                           </div>
                           <Button
                             size="sm"
                             disabled={!selectedDates[topic.id]}
                             onClick={() => handleAddToCalendar(topic)}
+                            onMouseDown={(e) => e.stopPropagation()}
                           >
                             <Plus className="w-4 h-4 mr-1" />
                             추가

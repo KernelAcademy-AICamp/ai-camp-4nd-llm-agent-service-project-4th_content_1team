@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
@@ -43,96 +43,6 @@ interface SourceData {
   images: ImageData[]
 }
 
-// --- Mock Data (Updated Structure) ---
-
-const sources: SourceData[] = [
-  {
-    id: "kotra",
-    name: "KOTRA",
-    icon: "global",
-    articles: [
-      {
-        id: 1,
-        title: "2026년 불가리아에서 달라지는 것들",
-        date: "2026.02.02",
-        summary_short: "2026년 불가리아는 유로화를 공식 도입하고 최저임금을 인상하여 경제 시스템의 격변을 예고하고 있다.",
-        url: "#",
-        analysis: {
-          facts: [
-            "2026년 1월 1일부터 불가리아는 유로화를 법정화폐로 도입하였다.",
-            "불가리아의 2026년 실질 GDP 성장률 전망치는 IMF에 따르면 3.1%, OECD에 따르면 2.6%이다.",
-            "2026년 불가리아의 최저임금은 1,213 BGN으로, 이는 전년 대비 약 12.6% 인상된 수치이다.",
-            "불가리아의 실업률은 역대 최저 수준인 3.5%이다."
-          ],
-          opinions: [
-            "[전문가] IMF는 유로화 도입이 경제 전반에 긍정적 모멘텀을 제공할 것이라고 분석했다.",
-            "[업계] 불가리아의 유럽화는 인프라 및 인적 자본에 대한 투자를 확대할 것으로 예상된다.",
-            "[분석] OECD는 고물가 지속이 소비 위축을 초래할 것이라고 경고했다.",
-            "[전문가] 유로화 도입에 따른 신용등급 상향 조정이 외국인 투자 유치 증가로 이어질 것이라고 전망된다."
-          ]
-        }
-      }
-    ],
-    images: [] // 이미지 없음
-  },
-  {
-    id: "newspim",
-    name: "뉴스핌",
-    icon: "media",
-    articles: [
-      {
-        id: 2,
-        title: "마스턴투자운용, '한국 부동산 시장 2026년 전망' 사내 세미나 개최",
-        date: "2026.01.27",
-        summary_short: "마스턴투자운용이 2026년 한국 부동산 시장 전망을 발표했다.",
-        url: "#",
-        analysis: {
-          facts: [
-            "2026년 상업용 부동산 시장의 연간 거래규모는 최대 31.9조원으로 예상된다.",
-            "2026년 오피스 거래 규모는 최대 20.2조원으로 예상된다.",
-            "한국의 최근 5년간 연 환산 부동산 투자수익률은 8.5%로 가장 높은 성과를 기록했다."
-          ],
-          opinions: [
-            "[전문가] 불확실성은 준비되지 않은 투자자에게는 리스크이지만, 구조적 흐름을 읽는 투자자에게는 할인된 기회가 될 수 있다.",
-            "[해석] 2026년은 전통적인 입지 분석을 넘어 기술적 수용성과 운용 역량이 수익률을 결정짓는 시대가 본격적으로 시작되는 시점이다.",
-            "[전망] 2029년을 기점으로 대규모 신규 공급이 집중되면서 임차인 우위 시장으로 전환될 가능성이 있다.",
-            "[업계] 물류센터 임대시장의 펀더멘털 약화에도 불구하고 해외 투자자들을 중심으로 저평가 자산 매입 수요가 유입되고 있다."
-          ]
-        }
-      }
-    ],
-    images: []
-  },
-  {
-    id: "bizhankook",
-    name: "비즈한국",
-    icon: "media",
-    articles: [
-      {
-        id: 3,
-        title: "[부동산 인사이트] 강남·마용성 숨고를 때, 강서가 치고 올라온 이유",
-        date: "2026.02.02",
-        summary_short: "서울 강서구가 부동산 시장에서 주간 상승률 1위를 기록하며 주목받고 있다.",
-        url: "#",
-        analysis: {
-          facts: [
-            "2026년 2월, 서울 강서구가 주간 상승률 1위를 기록했다.",
-            "강서구의 주력 단지들은 9억 원에서 14억 원 사이에 포진해 있다.",
-            "서울의 신규 입주 물량은 향후 2~3년간 급감할 예정이다."
-          ],
-          opinions: [
-            "[전망] 강서구는 실수요자들의 피난처이자 정착지가 될 것이다.",
-            "[해석] 마곡은 이제 단순한 주거지가 아니다. 서울 서부권의 경제 심장이다.",
-            "[분석] 강서구의 상승세는 마포구와 성동구의 시세를 일정 수준 따라잡을 것으로 전망된다.",
-            "[전문가] 지금 시점에서의 추격매수는 냉철한 선별이 필요하다."
-          ]
-        }
-      }
-    ],
-    images: []
-  }
-]
-
 // --- Helper Components ---
 
 const getSourceIcon = (icon: string) => {
@@ -152,13 +62,80 @@ const getSourceIcon = (icon: string) => {
 
 // --- Main Component ---
 
-export function RelatedResources() {
+interface RelatedResourcesProps {
+  apiReferences?: Array<{
+    title: string;
+    summary: string;
+    source: string;
+    date?: string;  // optional - 백엔드에서 null일 수 있음
+    url: string;
+    analysis?: {
+      facts: string[];
+      opinions: string[];
+    };
+    images?: Array<{
+      url: string;
+      caption?: string;
+      is_chart?: boolean;
+    }>;
+  }>;
+}
+
+export function RelatedResources({ apiReferences }: RelatedResourcesProps = {}) {
   const [selectedSource, setSelectedSource] = useState<string>("all")
-  const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null) // Detail View State
+  const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
+  const [displaySources, setDisplaySources] = useState<SourceData[]>([])
+
+  // API 데이터가 있으면 변환해서 사용
+  useEffect(() => {
+    if (apiReferences && apiReferences.length > 0) {
+      const grouped: Record<string, { articles: ArticleData[], images: ImageData[] }> = {};
+
+      apiReferences.forEach((ref, idx) => {
+        const sourceName = ref.source || "기타";
+        if (!grouped[sourceName]) {
+          grouped[sourceName] = { articles: [], images: [] };
+        }
+
+        // Article 추가
+        grouped[sourceName].articles.push({
+          id: idx,
+          title: ref.title,
+          date: ref.date || new Date().toISOString().split('T')[0],
+          summary_short: ref.summary,
+          url: ref.url,
+          // 백엔드에서 온 analysis(facts, opinions)를 연동
+          analysis: ref.analysis || { facts: [], opinions: [] }
+        });
+
+        // Images 추가
+        if (ref.images && Array.isArray(ref.images)) {
+          ref.images.forEach((img, imgIdx) => {
+            grouped[sourceName].images.push({
+              id: idx * 100 + imgIdx, // 고유 ID 생성
+              title: img.caption || ref.title,
+              type: img.is_chart ? "Chart" : "Scene",
+              thumbnail: img.url, // 백엔드의 url을 UI의 thumbnail로 매핑
+            });
+          });
+        }
+      });
+
+      const converted: SourceData[] = Object.keys(grouped).map(name => ({
+        id: name.toLowerCase().replace(/\s+/g, '-'),
+        name: name,
+        icon: "media",
+        articles: grouped[name].articles,
+        images: grouped[name].images
+      }));
+
+      setDisplaySources(converted);
+    }
+  }, [apiReferences]);
 
   const filteredSources = selectedSource === "all"
-    ? sources
-    : sources.filter(s => s.id === selectedSource)
+    ? displaySources
+    : displaySources.filter(s => s.id === selectedSource)
 
   const allArticles = filteredSources.flatMap(s =>
     s.articles.map(a => ({ ...a, sourceName: s.name, sourceIcon: s.icon }))
@@ -168,129 +145,148 @@ export function RelatedResources() {
   )
 
   return (
-    <div className="relative h-full"> {/* Container for relative positioning of overlay */}
+    <div className="relative h-full">
       <Card className="border-border/50 bg-card/50 backdrop-blur h-full flex flex-col">
         <CardHeader className="pb-4 flex-shrink-0">
           <CardTitle className="text-lg">참고 자료</CardTitle>
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
-          {/* Source Filter Tabs */}
-          <div className="mb-4 flex-shrink-0">
-            <p className="text-xs text-muted-foreground mb-2">출처 선택</p>
-            <div className="flex flex-wrap gap-2">
-              <button
-                onClick={() => setSelectedSource("all")}
-                className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${selectedSource === "all"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                  }`}
-              >
-                전체
-              </button>
-              {sources.map((source) => (
-                <button
-                  key={source.id}
-                  onClick={() => setSelectedSource(source.id)}
-                  className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5 ${selectedSource === source.id
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted/50 text-muted-foreground hover:bg-muted"
-                    }`}
-                >
-                  {source.name}
-                  <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                    {source.articles.length + source.images.length}
-                  </Badge>
-                </button>
-              ))}
+          {displaySources.length === 0 ? (
+            // Empty State
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center space-y-3 p-8">
+                <div className="text-4xl">📰</div>
+                <p className="text-muted-foreground text-sm">
+                  "스크립트 생성 시<br />관련 뉴스가 표시됩니다"
+                </p>
+              </div>
             </div>
-          </div>
+          ) : (
+            <>
+              {/* Source Filter Tabs */}
+              <div className="mb-4 flex-shrink-0">
+                <p className="text-xs text-muted-foreground mb-2">출처 선택</p>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => setSelectedSource("all")}
+                    className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${selectedSource === "all"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                      }`}
+                  >
+                    전체
+                  </button>
+                  {displaySources.map((source) => (
+                    <button
+                      key={source.id}
+                      onClick={() => setSelectedSource(source.id)}
+                      className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors flex items-center gap-1.5 ${selectedSource === source.id
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted/50 text-muted-foreground hover:bg-muted"
+                        }`}
+                    >
+                      {source.name}
+                      <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                        {source.articles.length}
+                      </Badge>
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-          <Tabs defaultValue="articles" className="flex-1 flex flex-col min-h-0">
-            <TabsList className="grid w-full grid-cols-2 mb-4 flex-shrink-0">
-              <TabsTrigger value="articles" className="gap-1 text-xs">
-                <FileText className="w-3 h-3" />
-                기사 ({allArticles.length})
-              </TabsTrigger>
-              <TabsTrigger value="images" className="gap-1 text-xs">
-                <ImageIcon className="w-3 h-3" />
-                이미지 ({allImages.length})
-              </TabsTrigger>
-            </TabsList>
+              <Tabs defaultValue="articles" className="flex-1 flex flex-col min-h-0">
+                <TabsList className="grid w-full grid-cols-2 mb-4 flex-shrink-0">
+                  <TabsTrigger value="articles" className="gap-1 text-xs">
+                    <FileText className="w-3 h-3" />
+                    기사 ({allArticles.length})
+                  </TabsTrigger>
+                  <TabsTrigger value="images" className="gap-1 text-xs">
+                    <ImageIcon className="w-3 h-3" />
+                    이미지 ({allImages.length})
+                  </TabsTrigger>
+                </TabsList>
 
-            <TabsContent value="articles" className="flex-1 min-h-0 relative">
-              <ScrollArea className="h-full pr-4">
-                <div className="space-y-4 pb-4">
-                  {selectedSource === "all" ? (
-                    sources.map((source) => (
-                      <div key={source.id} className="space-y-2">
-                        <div className="flex items-center gap-2 sticky top-0 bg-card/90 backdrop-blur py-1 z-10">
-                          {getSourceIcon(source.icon)}
-                          <span className="text-sm font-medium text-foreground">{source.name}</span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {source.articles.length}개 기사
-                          </Badge>
-                        </div>
-                        <div className="space-y-2 pl-2 border-l-2 border-border/50 ml-3">
-                          {source.articles.map((article) => (
+                <TabsContent value="articles" className="flex-1 min-h-0 relative">
+                  <ScrollArea className="h-full pr-4">
+                    <div className="space-y-4 pb-4">
+                      {selectedSource === "all" ? (
+                        displaySources.map((source) => (
+                          <div key={source.id} className="space-y-2">
+                            <div className="flex items-center gap-2 sticky top-0 bg-card/90 backdrop-blur py-1 z-10">
+                              {getSourceIcon(source.icon)}
+                              <span className="text-sm font-medium text-foreground">{source.name}</span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {source.articles.length}개 기사
+                              </Badge>
+                            </div>
+                            <div className="space-y-2 pl-2 border-l-2 border-border/50 ml-3">
+                              {source.articles.map((article) => (
+                                <ArticleCard
+                                  key={article.id}
+                                  article={article}
+                                  onViewDetail={() => setSelectedArticle(article)}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="space-y-3">
+                          {allArticles.map((article) => (
                             <ArticleCard
                               key={article.id}
                               article={article}
+                              showSource
                               onViewDetail={() => setSelectedArticle(article)}
                             />
                           ))}
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="space-y-3">
-                      {allArticles.map((article) => (
-                        <ArticleCard
-                          key={article.id}
-                          article={article}
-                          showSource
-                          onViewDetail={() => setSelectedArticle(article)}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </ScrollArea>
-            </TabsContent>
-
-            <TabsContent value="images" className="flex-1 min-h-0 relative">
-              <ScrollArea className="h-full pr-4">
-                <div className="space-y-4 pb-4">
-                  {selectedSource === "all" ? (
-                    sources.filter(s => s.images.length > 0).map((source) => (
-                      <div key={source.id} className="space-y-2">
-                        <div className="flex items-center gap-2 sticky top-0 bg-card/90 backdrop-blur py-1 z-10">
-                          {getSourceIcon(source.icon)}
-                          <span className="text-sm font-medium text-foreground">{source.name}</span>
-                          <Badge variant="outline" className="text-[10px]">
-                            {source.images.length}개 이미지
-                          </Badge>
+                      )}
+                      {allArticles.length === 0 && (
+                        <div className="text-center text-muted-foreground text-sm py-10">
+                          참고 자료가 없습니다.
                         </div>
-                        <div className="grid grid-cols-3 gap-2 pl-2 border-l-2 border-border/50 ml-3">
-                          {source.images.map((image) => (
+                      )}
+                    </div>
+                  </ScrollArea>
+                </TabsContent>
+
+                <TabsContent value="images" className="flex-1 min-h-0 relative">
+                  <ScrollArea className="h-full pr-4">
+                    <div className="space-y-4 pb-4">
+                      {selectedSource === "all" ? (
+                        displaySources.filter((s) => s.images.length > 0).map((source) => (
+                          <div key={source.id} className="space-y-2">
+                            <div className="flex items-center gap-2 sticky top-0 bg-card/90 backdrop-blur py-1 z-10">
+                              {getSourceIcon(source.icon)}
+                              <span className="text-sm font-medium text-foreground">{source.name}</span>
+                              <Badge variant="outline" className="text-[10px]">
+                                {source.images.length}개 이미지
+                              </Badge>
+                            </div>
+                            <div className="grid grid-cols-3 gap-2 pl-2 border-l-2 border-border/50 ml-3">
+                              {source.images.map((image) => (
+                                <ImageCard key={image.id} image={image} />
+                              ))}
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="grid grid-cols-3 gap-3">
+                          {allImages.map((image) => (
                             <ImageCard key={image.id} image={image} />
                           ))}
                         </div>
-                      </div>
-                    ))
-                  ) : (
-                    <div className="grid grid-cols-3 gap-3">
-                      {allImages.map((image) => (
-                        <ImageCard key={image.id} image={image} />
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              </ScrollArea>
-              <p className="text-xs text-muted-foreground mt-3 text-center mb-2">
-                클릭하여 스크립트에 삽입
-              </p>
-            </TabsContent>
-          </Tabs>
+                  </ScrollArea>
+                  <p className="text-xs text-muted-foreground mt-3 text-center mb-2">
+                    클릭하여 스크립트에 삽입
+                  </p>
+                </TabsContent>
+              </Tabs>
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -457,14 +453,27 @@ function ImageCard({
 }: {
   image: ImageData
 }) {
+  const hasValidImage = image.thumbnail && (
+    image.thumbnail.startsWith('data:image') ||
+    image.thumbnail.startsWith('http')
+  )
+
   return (
-    <div className="aspect-square rounded-lg overflow-hidden cursor-pointer group relative">
-      <div className={`w-full h-full ${image.thumbnail} flex items-center justify-center transition-transform group-hover:scale-105`}>
-        <div className="text-center p-2">
-          <ImageIcon className="w-6 h-6 mx-auto text-muted-foreground mb-1" />
-          <p className="text-xs text-muted-foreground">{image.type}</p>
+    <div className="aspect-square rounded-lg overflow-hidden cursor-pointer group relative bg-muted/30">
+      {hasValidImage ? (
+        <img
+          src={image.thumbnail}
+          alt={image.title}
+          className="w-full h-full object-cover transition-transform group-hover:scale-105"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center">
+          <div className="text-center p-2">
+            <ImageIcon className="w-6 h-6 mx-auto text-muted-foreground mb-1" />
+            <p className="text-xs text-muted-foreground">{image.type}</p>
+          </div>
         </div>
-      </div>
+      )}
       <div className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
         <p className="text-xs text-foreground font-medium text-center px-2">{image.title}</p>
       </div>

@@ -7,8 +7,8 @@ import { ChevronRight, Home, Edit3 } from "lucide-react"
 import { Link } from "react-router-dom"
 
 export function ScriptHeader() {
-  const searchParams = useSearchParams()
-  const topic = "2026 게임 트렌드 예측"
+  const [searchParams] = useSearchParams()
+  const topic = searchParams.get("topic") || "제목 없음"
 
   return (
     <header className="border-b border-border p-4 flex items-center justify-between bg-card/30 backdrop-blur">
