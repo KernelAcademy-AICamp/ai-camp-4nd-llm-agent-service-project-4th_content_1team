@@ -70,7 +70,7 @@ function ScriptPageContent() {
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
               <RelatedResources apiReferences={references} />
-              <CompetitorAnalysis topic={topic} apiVideos={competitorVideos} />
+              <CompetitorAnalysis />
             </div>
           </div>
         </div>
