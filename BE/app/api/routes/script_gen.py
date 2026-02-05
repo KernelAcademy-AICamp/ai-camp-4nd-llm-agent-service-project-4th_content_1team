@@ -19,7 +19,8 @@ from app.schemas.script_gen import (
     PlannerInputResponse,
     ChannelProfileResponse,
     TopicContextResponse,
-    ScriptGenExecuteResponse, # 추가된 스키마 임포트
+    ScriptGenExecuteResponse, 
+    ScriptGenTaskResponse,
 )
 
 from src.script_gen.utils.input_builder import (
@@ -40,16 +41,7 @@ router = APIRouter(prefix="/script-gen", tags=["script-generation"])
 
 from celery.result import AsyncResult
 from app.worker import task_generate_script  # Celery Task 임포트
-from app.schemas.script_gen import (
-    ScriptGenStartRequest,
-    ScriptGenStartResponse,
-    ScriptGenPlannerResponse,
-    PlannerInputResponse,
-    ChannelProfileResponse,
-    TopicContextResponse,
-    ScriptGenExecuteResponse,
-    ScriptGenTaskResponse, # 추가된 스키마
-)
+
 
 # ... (기존 impor 생략)
 
