@@ -1,13 +1,52 @@
 "use client"
 
-import { Suspense } from "react"
+import { Suspense, useState } from "react"
+import { useSearchParams } from "react-router-dom"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
+import { executeScriptGen, pollScriptGenResult } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle } from "../../lib/api/services"
 
-export default function ScriptPage() {
+function ScriptPageContent() {
+  const [searchParams] = useSearchParams()
+  const topic = searchParams.get("topic") || "2026 게임 트렌드 예측"
+
+  const [isGenerating, setIsGenerating] = useState(false)
+  const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
+  const [references, setReferences] = useState<ReferenceArticle[]>([])
+  const [competitorVideos, setCompetitorVideos] = useState<any[]>([])
+
+  const handleGenerate = async () => {
+    setIsGenerating(true)
+    try {
+      console.log("[FE] 스크립트 생성 요청:", topic)
+      const { task_id } = await executeScriptGen(topic)
+      console.log("[FE] Task ID:", task_id)
+
+      const result = await pollScriptGenResult(task_id, (status) => {
+        console.log("[FE] 상태:", status)
+      })
+
+      if (result.success && result.script) {
+        console.log("[FE] 생성 완료!", result)
+        setScriptData(result.script)
+        setReferences(result.references || [])
+        setCompetitorVideos(result.competitor_videos || [])
+      } else {
+        console.error("[FE] 생성 실패:", result.error)
+        alert(`생성 실패: ${result.error}`)
+      }
+    } catch (error) {
+      console.error("[FE] API 오류:", error)
+      alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
+    } finally {
+      setIsGenerating(false)
+    }
+  }
+
   return (
     <div className="min-h-screen bg-background flex">
       <DashboardSidebar />
@@ -20,19 +59,31 @@ export default function ScriptPage() {
         <div className="flex-1 flex overflow-hidden">
           {/* Left Panel - Script Editor */}
           <div className="w-1/2 border-r border-border overflow-auto p-6">
-            <ScriptEditor />
+            <ScriptEditor
+              apiData={scriptData}
+              isGenerating={isGenerating}
+              onRegenerate={handleGenerate}
+            />
           </div>
 
           {/* Right Panel - Resources & Analysis */}
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
-              <RelatedResources />
+              <RelatedResources apiReferences={references} />
               <CompetitorAnalysis />
             </div>
           </div>
         </div>
       </main>
     </div>
+  )
+}
+
+export default function ScriptPage() {
+  return (
+    <Suspense fallback={<div className="flex items-center justify-center h-screen">Loading...</div>}>
+      <ScriptPageContent />
+    </Suspense>
   )
 }
 

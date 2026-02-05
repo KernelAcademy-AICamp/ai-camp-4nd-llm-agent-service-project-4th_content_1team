@@ -3,8 +3,7 @@ Script Generation Graph - LangGraph 워크플로우
 주제(Topic)를 입력받아 유튜브 대본(Script)을 생성하는 전체 파이프라인
 
 Workflow (Full Pipeline):
-    User Input (Topic)
-    → Trend Scout (트렌드 키워드 수집)
+    User Input (Topic + Channel Profile)
     → Planner (목차/질문 생성)
     ┌→ News Research (뉴스 수집 + Fact Extraction)
     └→ YT Fetcher (유튜브 영상 검색)
@@ -13,14 +12,14 @@ Workflow (Full Pipeline):
     → Writer (대본 작성)
     → Verifier (팩트 체크 & 출처 정리)
     → Output (Verified ScriptDraft)
+
+Note: Trend Scout는 topic_recommendations로 대체됨 (주석처리)
 """
 
 import logging
-from typing import TypedDict, Annotated
 from langgraph.graph import StateGraph, END
-from langgraph.graph.message import add_messages
 
-from src.script_gen.nodes.trend_scout import trend_scout_node
+from src.script_gen.state import ScriptGenState  # State 정의 import
 from src.script_gen.nodes.planner import planner_node
 from src.script_gen.nodes.news_research import news_research_node
 from src.script_gen.nodes.yt_fetcher import yt_fetcher_node
@@ -28,43 +27,9 @@ from src.script_gen.nodes.competitor_anal import competitor_anal_node
 from src.script_gen.nodes.insight_builder import insight_builder_node
 from src.script_gen.nodes.writer import writer_node
 from src.script_gen.nodes.verifier import verifier_node
+# from src.script_gen.nodes.trend_scout import trend_scout_node  # 주석처리: topic_recommendations로 대체
 
 logger = logging.getLogger(__name__)
-
-
-# =============================================================================
-# State Definition
-# =============================================================================
-
-class ScriptGenState(TypedDict):
-    """Script Generation 워크플로우의 전체 State"""
-    
-    # Input
-    topic: str  # 사용자 입력 주제
-    topic_request_id: str
-    channel_profile: dict  # 채널 정보 (name, tone, target_audience 등)
-    
-    # Trend Scout Output
-    trend_data: dict  # 트렌드 키워드, 레딧 포스트 등
-    
-    # Planner Output
-    content_brief: dict  # 목차, 질문, 검색어 등
-    
-    # News Research Output
-    news_data: dict  # articles, structured_facts, visual_plan 등
-    
-    # Insight Builder Output
-    insight_pack: dict  # positioning, differentiators, hook_plan, story_structure 등
-    
-    # Writer Output
-    script_draft: dict  # 최종 대본
-    
-    # Verifier Output
-    verifier_output: dict = None  # 검증 결과 + 출처 맵
-    
-    # Optional (Phase 2에서 추가)
-    competitor_data: dict = None
-    youtube_data: dict = None
 
 
 # =============================================================================
@@ -78,7 +43,7 @@ def create_script_gen_graph():
     workflow = StateGraph(ScriptGenState)
     
     # 2. 노드 추가
-    workflow.add_node("trend_scout", trend_scout_node)
+    # workflow.add_node("trend_scout", trend_scout_node)  # 주석처리: topic_recommendations로 대체
     workflow.add_node("planner", planner_node)
     workflow.add_node("news_research", news_research_node)
     workflow.add_node("yt_fetcher", yt_fetcher_node)
@@ -88,8 +53,8 @@ def create_script_gen_graph():
     workflow.add_node("verifier", verifier_node)
     
     # 3. 엣지 연결
-    workflow.set_entry_point("trend_scout")
-    workflow.add_edge("trend_scout", "planner")
+    workflow.set_entry_point("planner")  # Planner를 시작점으로 변경
+    # workflow.add_edge("trend_scout", "planner")  # 주석처리
     
     # Planner 후 병렬 실행: News Research와 YT Fetcher
     workflow.add_edge("planner", "news_research")
@@ -110,7 +75,7 @@ def create_script_gen_graph():
     # 4. 컴파일
     app = workflow.compile()
     
-    logger.info("Script Generation Graph 생성 완료 (Full Pipeline: 8 nodes)")
+    logger.info("Script Generation Graph 생성 완료 (Full Pipeline: 7 nodes)")
     return app
 
 
@@ -161,9 +126,11 @@ def generate_script(
         final_state = app.invoke(initial_state)
         logger.info("Script Generation 완료")
         
-        # ScriptDraft + VerifierOutput 반환
+        # ScriptDraft + VerifierOutput + NewsData + CompetitorData 반환
         result = final_state["script_draft"].copy()
         result["verifier_output"] = final_state.get("verifier_output")
+        result["news_data"] = final_state.get("news_data")
+        result["competitor_data"] = final_state.get("competitor_data")  # 경쟁 영상 분석 결과 추가
         
         return result
     

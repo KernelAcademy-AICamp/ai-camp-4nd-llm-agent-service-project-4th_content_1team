@@ -63,6 +63,9 @@ class Settings(BaseSettings):
     # YouTube Subtitle (자막 다운로드 설정)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
     youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
+
+    # Nano Banana API (for image generation)
+    nano_banana_api_key: str
     
     @property
     def cors_origins_list(self) -> list[str]:

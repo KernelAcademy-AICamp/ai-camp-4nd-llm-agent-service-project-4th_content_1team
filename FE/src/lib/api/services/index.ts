@@ -5,3 +5,4 @@ export * from './competitor.service';
 export * from './subtitle.service';
 export * from './persona.service';
 export * from './recommendation.service';
+export * from './script-gen.service';

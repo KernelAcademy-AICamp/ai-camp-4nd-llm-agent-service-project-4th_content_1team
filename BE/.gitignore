@@ -49,3 +49,6 @@ cookies/
 # OS
 .DS_Store
 Thumbs.db
+
+# 뉴스 이미지 캐시
+BE/public/images/news/
