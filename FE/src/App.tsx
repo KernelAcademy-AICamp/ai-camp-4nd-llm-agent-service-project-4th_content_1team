@@ -6,6 +6,7 @@ import RootLayout from './pages/layout'
 import OnboardingPage from './pages/onboarding/page'
 import ScriptPage from './pages/script/page'
 import ThumbnailPage from './pages/thumbnail/page'
+import AnalysisPage from './pages/analysis/page'
 function App() {
   return (
     <RootLayout>
@@ -13,6 +14,7 @@ function App() {
         <Route>
           <Route index element={<LoginPage />} />
           <Route path="onboarding" element={<OnboardingPage />} />
+          <Route path="analysis" element={<AnalysisPage />} />
           <Route path="script" element={<ScriptPage />} />
           <Route path="thumbnail" element={<ThumbnailPage />} />
           <Route path="upload" element={<UploadPage />} />
