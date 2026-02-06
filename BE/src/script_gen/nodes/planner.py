@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ValidationError(Exception):
     pass
 
 
-def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
+async def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     주제와 채널 정보를 바탕으로 콘텐츠 기획안을 생성하는 노드
     재시도 로직을 통해 정확히 5개의 챕터를 보장합니다.
@@ -51,7 +52,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # --- 1.5. News RAG: 최신 뉴스 검색 ---
     # Planner 호출 전에 최근 뉴스를 가져와서 프롬프트에 포함
     logger.info(f"Fetching recent news for topic: {topic}")
-    recent_news = _fetch_recent_news(topic)
+    recent_news = await _fetch_recent_news(topic)
     logger.info(f"Found {len(recent_news)} recent news articles")
     
     
@@ -80,7 +81,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 model=OPENAI_MODEL,
                 temperature=0.4,  # 낮은 값: 일관된 JSON 형식 유지 (0.7→0.4)
             )
-            response = llm.invoke(prompt)
+            response = await llm.ainvoke(prompt)
             
             
             # --- 2-3. 응답 파싱 ---
@@ -114,7 +115,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # Exponential backoff (1초, 2초, 4초)
             wait_time = 2 ** attempt
             logger.info(f"Retrying in {wait_time}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
             continue
         
         except json.JSONDecodeError as e:
@@ -131,7 +132,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # Exponential backoff
             wait_time = 2 ** attempt
             logger.info(f"Retrying in {wait_time}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
             continue
     
     # 여기까지 오면 안 됨 (위에서 return 또는 raise 했어야 함)
@@ -140,7 +141,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 # --- 헬퍼 함수들 ---
 
-def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]:
+async def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]:
     """
     주제와 관련된 최신 뉴스를 검색하는 함수 (News RAG)
     
@@ -161,7 +162,7 @@ def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]
         )
         
         # 검색 쿼리 실행
-        results = search.invoke(f"{topic} 최신 뉴스")
+        results = await search.ainvoke(f"{topic} 최신 뉴스")
         
         # 결과 포맷팅
         news_list = []

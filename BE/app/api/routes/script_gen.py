@@ -152,10 +152,9 @@ async def run_complete_pipeline(
             topic_recommendation_id=request.topic_recommendation_id,
         )
         
-        # 2. 동기 파이프라인 실행 (스레드풀 사용)
-        # generate_script는 동기 함수이므로 await run_in_threadpool 사용
-        result_dict = await run_in_threadpool(
-            generate_script,
+        # 2. 비동기 파이프라인 실행
+        # generate_script는 async 함수이므로 직접 await
+        result_dict = await generate_script(
             topic=planner_input["topic"],
             channel_profile=planner_input["channel_profile"],
             topic_request_id=None

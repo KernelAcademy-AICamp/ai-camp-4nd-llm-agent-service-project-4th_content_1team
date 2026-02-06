@@ -83,7 +83,7 @@ def create_script_gen_graph():
 # Execution Function
 # =============================================================================
 
-def generate_script(
+async def generate_script(
     topic: str,
     channel_profile: dict,
     topic_request_id: str = None
@@ -123,7 +123,7 @@ def generate_script(
     app = create_script_gen_graph()
     
     try:
-        final_state = app.invoke(initial_state)
+        final_state = await app.ainvoke(initial_state)
         logger.info("Script Generation 완료")
         
         # ScriptDraft + VerifierOutput + NewsData + CompetitorData 반환
@@ -153,8 +153,9 @@ if __name__ == "__main__":
         "category": "Technology"
     }
     
+    import asyncio
     print(f"🚀 테스트 시작: {test_topic}")
-    result = generate_script(test_topic, test_channel)
+    result = asyncio.run(generate_script(test_topic, test_channel))
     
     print("\n✅ 대본 생성 완료!")
     print(f"- Script ID: {result.get('script_draft_id')}")

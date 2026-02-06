@@ -1,6 +1,7 @@
 from app.core.celery_app import celery_app
 from src.script_gen.graph import generate_script
 import logging
+import asyncio
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -18,12 +19,18 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
     try:
         logger.info(f"[Task {self.request.id}] 스크립트 생성 시작: {topic}")
         
-        # generate_script는 동기 함수로 호출 가능 (LangGraph invoke 사용)
-        result = generate_script(
-            topic=topic,
-            channel_profile=channel_profile,
-            topic_request_id=topic_request_id
-        )
+        # generate_script는 async 함수이므로 새 이벤트 루프에서 실행
+        # (Celery worker에서 기존 이벤트 루프 충돌 방지)
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        try:
+            result = loop.run_until_complete(generate_script(
+                topic=topic,
+                channel_profile=channel_profile,
+                topic_request_id=topic_request_id
+            ))
+        finally:
+            loop.close()
         
         logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
         

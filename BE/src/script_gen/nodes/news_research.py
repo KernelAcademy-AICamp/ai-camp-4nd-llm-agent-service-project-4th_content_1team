@@ -522,23 +522,20 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                 # [DEBUG] 중복 제거 후 로깅
                 logger.info(f"[DEBUG] 중복 제거 후: {len(candidates)}개")
                 
-                # --- AI 분석 단계 (Context check) ---
+                # --- AI 분석 단계 (Context check) - 병렬 처리! ---
                 final_images = []
                 charts = []
                 
                 # 기사 요약 (앞부분 500자) - AI에게 문맥 제공용
                 summary = text[:500]
                 
-                # 최대 5개 이미지에 대해 AI 검수 (비용 조절) [Change] 8 -> 5
-                logger.info(f"[DEBUG] AI 분석 시작: {len(candidates[:5])}개 이미지")
-                for img in candidates[:5]:
-                    # Referer로 기사 URL 전달하여 Hotlink Protection 우회
+                # 최대 5개 이미지에 대해 AI 검수 (비용 조절)
+                target_images = candidates[:5]
+                logger.info(f"[DEBUG] AI 분석 시작: {len(target_images)}개 이미지 (병렬)")
+                
+                # 병렬 처리 함수
+                def analyze_single_image(img):
                     analysis = _check_image_context(img["url"], item["title"], summary, referrer_url=item["url"])
-                    
-                    # [DEBUG] AI 분석 결과 로깅
-                    if not analysis.get("relevant"):
-                        logger.debug(f"[AI] 거부됨: {img['url'][:80]} - {analysis}")
-                    
                     if analysis.get("relevant"):
                         img_data = {
                             "url": img["url"],
@@ -547,17 +544,22 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                             "type": analysis.get("type", "other"),
                             "desc": analysis.get("description", "")
                         }
-                        
                         # [Local Save] 이미지 로컬 저장
                         local_path = download_image_to_local(img["url"], item["url"])
                         if local_path:
                             img_data["url"] = local_path
-                        else:
-                            # 저장 실패하면 원본 유지 (혹은 제외 정책에 따라 continue 가능)
-                            pass
-                        
-                        # [분리 로직] 차트/표는 charts에만, 나머지는 images에만 넣기
-                        if analysis.get("type") in ["chart", "table"]:
+                        return (analysis.get("type"), img_data)
+                    return None
+                
+                # ThreadPoolExecutor로 병렬 실행 (최대 5개 동시)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as img_executor:
+                    results = list(img_executor.map(analyze_single_image, target_images))
+                
+                # 결과 분류
+                for result in results:
+                    if result:
+                        img_type, img_data = result
+                        if img_type in ["chart", "table"]:
                             charts.append(img_data)
                         else:
                             final_images.append(img_data)
