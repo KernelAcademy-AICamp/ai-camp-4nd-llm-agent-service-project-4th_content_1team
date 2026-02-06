@@ -10,12 +10,19 @@ import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
 import { BarChart3, Users, Search, FileText, Loader2, Plus } from "lucide-react"
-import { useQuery } from "@tanstack/react-query"
-import { searchChannels, type ChannelSearchResult } from "../../lib/api/index"
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
+import {
+  searchChannels,
+  addCompetitorChannel,
+  getCompetitorChannels,
+  type ChannelSearchResult,
+  type CompetitorChannelResponse,
+} from "../../lib/api/index"
 
 export default function AnalysisPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [shouldSearch, setShouldSearch] = useState(false)
+  const queryClient = useQueryClient()
 
   // 채널 검색 쿼리
   const { data: searchResults, isLoading, isError, error } = useQuery({
@@ -25,6 +32,34 @@ export default function AnalysisPage() {
     staleTime: 1000 * 60 * 5,
   })
 
+  // 등록된 경쟁 채널 목록
+  const { data: competitorList } = useQuery({
+    queryKey: ['competitor-channels'],
+    queryFn: getCompetitorChannels,
+    staleTime: 1000 * 60 * 5,
+  })
+
+  // 경쟁 채널 추가 mutation
+  const addMutation = useMutation({
+    mutationFn: (channel: ChannelSearchResult) => 
+      addCompetitorChannel({
+        channel_id: channel.channel_id,
+        title: channel.title,
+        description: channel.description,
+        custom_url: channel.custom_url,
+        thumbnail_url: channel.thumbnail_url,
+        subscriber_count: channel.subscriber_count,
+        view_count: channel.view_count,
+        video_count: channel.video_count,
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['competitor-channels'] })
+      // 검색 결과 초기화
+      setSearchQuery("")
+      setShouldSearch(false)
+    },
+  })
+
   const handleSearch = () => {
     if (searchQuery.trim()) {
       setShouldSearch(true)
@@ -32,8 +67,7 @@ export default function AnalysisPage() {
   }
 
   const handleAddCompetitor = (channel: ChannelSearchResult) => {
-    console.log("경쟁 채널 추가:", channel)
-    // TODO: DB에 저장 API 호출
+    addMutation.mutate(channel)
   }
 
   // 검색 초기화
@@ -210,21 +244,95 @@ export default function AnalysisPage() {
                 </CardContent>
               </Card>
 
-              {/* 등록된 경쟁 유튜버 목록 (빈 상태) */}
+              {/* 등록된 경쟁 유튜버 목록 */}
               <Card className="border-border/50 bg-card/50 backdrop-blur">
                 <CardHeader>
-                  <CardTitle className="text-lg">등록된 경쟁 유튜버</CardTitle>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="text-lg">등록된 경쟁 유튜버</CardTitle>
+                    {competitorList && competitorList.total > 0 && (
+                      <Badge variant="secondary">{competitorList.total}</Badge>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardContent>
-                  <div className="flex flex-col items-center justify-center py-12 text-center">
-                    <Users className="w-12 h-12 text-muted-foreground mb-4" />
-                    <h3 className="font-medium text-foreground mb-2">
-                      아직 등록된 경쟁 유튜버가 없습니다
-                    </h3>
-                    <p className="text-sm text-muted-foreground max-w-[300px]">
-                      위 검색창을 통해 경쟁 유튜버를 추가하고 채널을 비교 분석하세요
-                    </p>
-                  </div>
+                  {!competitorList || competitorList.total === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center">
+                      <Users className="w-12 h-12 text-muted-foreground mb-4" />
+                      <h3 className="font-medium text-foreground mb-2">
+                        아직 등록된 경쟁 유튜버가 없습니다
+                      </h3>
+                      <p className="text-sm text-muted-foreground max-w-[300px]">
+                        위 검색창을 통해 경쟁 유튜버를 추가하고 채널을 비교 분석하세요
+                      </p>
+                    </div>
+                  ) : (
+                    <ScrollArea className="max-h-[600px]">
+                      <div className="space-y-4 pr-4">
+                        {competitorList.channels.map((channel: CompetitorChannelResponse) => (
+                          <div
+                            key={channel.id}
+                            className="border border-border/50 rounded-lg p-4 space-y-4 bg-muted/20"
+                          >
+                            {/* 채널 기본 정보 */}
+                            <div className="flex items-center gap-4">
+                              <Avatar className="w-16 h-16">
+                                <AvatarImage src={channel.thumbnail_url} alt={channel.title} />
+                                <AvatarFallback>{channel.title.slice(0, 2)}</AvatarFallback>
+                              </Avatar>
+                              <div className="flex-1">
+                                <h3 className="font-semibold text-foreground">{channel.title}</h3>
+                                {channel.custom_url && (
+                                  <p className="text-sm text-muted-foreground">@{channel.custom_url}</p>
+                                )}
+                                <p className="text-sm text-muted-foreground mt-1">
+                                  구독자 {formatNumber(channel.subscriber_count)}
+                                </p>
+                              </div>
+                            </div>
+
+                            {/* 분석 카드 3개 */}
+                            <div className="grid grid-cols-3 gap-3">
+                              {/* 강점 */}
+                              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
+                                <h4 className="text-xs font-semibold text-emerald-500 mb-2">강점</h4>
+                                {channel.strengths && channel.strengths.length > 0 ? (
+                                  <ul className="text-xs text-muted-foreground space-y-1">
+                                    {channel.strengths.slice(0, 3).map((str, i) => (
+                                      <li key={i} className="line-clamp-2">• {str}</li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <p className="text-xs text-muted-foreground">
+                                    실시간 스트리밍 병행으로 시청자 충성도 높음<br/>
+                                    밈/유머 활용에 능숙<br/>
+                                    업로드 주기가 매우 일정함 (주 3회)
+                                  </p>
+                                )}
+                              </div>
+
+                              {/* 채널 성격 */}
+                              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
+                                <h4 className="text-xs font-semibold text-blue-500 mb-2">채널 성격</h4>
+                                <p className="text-xs text-muted-foreground">
+                                  {channel.channel_personality || 
+                                    "유머와 리액션 중심의 엔터테인먼트형 게임 채널. 과장된 리액션과 편집으로 재미 중시."}
+                                </p>
+                              </div>
+
+                              {/* 시청자 타겟 */}
+                              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
+                                <h4 className="text-xs font-semibold text-amber-500 mb-2">시청자 타겟</h4>
+                                <p className="text-xs text-muted-foreground">
+                                  {channel.target_audience || 
+                                    "15~24세 남성이 주력, 캐주얼 게이머 및 스트리밍 시청을 즐기는 Z세대가 핵심 시청자."}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </ScrollArea>
+                  )}
                 </CardContent>
               </Card>
             </TabsContent>

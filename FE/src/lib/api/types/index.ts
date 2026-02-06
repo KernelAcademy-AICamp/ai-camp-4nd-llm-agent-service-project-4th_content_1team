@@ -7,3 +7,4 @@ export * from './persona.types';
 export * from './recommendation.types';
 export * from './news.types';
 export * from './channel.types';
+export * from './competitor-channel.types';
