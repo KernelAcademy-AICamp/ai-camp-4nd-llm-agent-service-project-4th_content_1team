@@ -16,7 +16,7 @@ from app.models.caption import VideoCaption
 from app.models.video_content_analysis import VideoContentAnalysis
 from app.models.content_topic import ChannelTopic, TrendTopic
 from app.models.competitor_channel import CompetitorChannel
-from app.models.competitor_channel_video import CompetitorRecentVideo
+from app.models.competitor_channel_video import CompetitorRecentVideo, RecentVideoComment
 
 __all__ = [
     "User",
@@ -39,4 +39,5 @@ __all__ = [
     "TrendTopic",
     "CompetitorChannel",
     "CompetitorRecentVideo",
+    "RecentVideoComment",
 ]

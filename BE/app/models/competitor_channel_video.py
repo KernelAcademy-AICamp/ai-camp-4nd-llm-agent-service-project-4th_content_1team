@@ -46,6 +46,38 @@ class CompetitorRecentVideo(Base):
     
     # 관계
     competitor_channel = relationship("CompetitorChannel", back_populates="recent_videos")
+    comments = relationship("RecentVideoComment", back_populates="video", cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CompetitorRecentVideo(id={self.id}, video_id={self.video_id}, title={self.title})>"
+
+
+class RecentVideoComment(Base):
+    """경쟁 유튜버 최신 영상의 댓글 샘플"""
+
+    __tablename__ = "recent_video_comments"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recent_video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("competitor_recent_videos.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    # 댓글 정보
+    comment_id = Column(String)  # YouTube 댓글 ID
+    text = Column(Text, nullable=False)
+    author_name = Column(String)
+    author_thumbnail = Column(Text)
+    likes = Column(Integer, default=0)
+    published_at = Column(DateTime(timezone=True))
+
+    # 메타
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # 관계
+    video = relationship("CompetitorRecentVideo", back_populates="comments")
+
+    def __repr__(self):
+        return f"<RecentVideoComment(id={self.id}, likes={self.likes})>"

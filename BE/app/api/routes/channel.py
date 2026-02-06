@@ -152,7 +152,7 @@ async def get_competitor_channels(
         # 수동 변환
         response_channels = []
         for ch in channels:
-            # recent_videos relationship에서 영상 데이터 변환
+            # recent_videos relationship에서 영상 데이터 변환 (최대 3개)
             videos_data = None
             if hasattr(ch, 'recent_videos') and ch.recent_videos:
                 videos_data = [
@@ -173,7 +173,7 @@ async def get_competitor_channels(
                         audience_reaction=v.audience_reaction,
                         analyzed_at=v.analyzed_at,
                     )
-                    for v in ch.recent_videos
+                    for v in ch.recent_videos[:3]  # 최대 3개만
                 ]
 
             response_channels.append(

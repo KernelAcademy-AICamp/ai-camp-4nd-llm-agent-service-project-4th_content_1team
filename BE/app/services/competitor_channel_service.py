@@ -7,8 +7,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
+import httpx
+
+from app.core.config import settings
 from app.models.competitor_channel import CompetitorChannel
-from app.models.competitor_channel_video import CompetitorRecentVideo
+from app.models.competitor_channel_video import CompetitorRecentVideo, RecentVideoComment
 from app.schemas.competitor_channel import CompetitorChannelCreate
 from app.services.channel_service import ChannelService
 from sqlalchemy import delete as sql_delete
@@ -117,21 +120,28 @@ class CompetitorChannelService:
         competitor_channel_id: UUID,
         youtube_channel_id: str
     ):
-        """최신 영상 3개 저장"""
+        """최신 영상 3개 저장 및 각 영상의 댓글 저장"""
         try:
-            # 기존 영상 삭제
+            # 기존 영상 삭제 (cascade로 댓글도 삭제됨)
             await db.execute(
                 sql_delete(CompetitorRecentVideo).where(
                     CompetitorRecentVideo.competitor_channel_id == competitor_channel_id
                 )
             )
-            
-            # 최신 영상 조회
+            await db.flush()  # 삭제 즉시 반영
+
+            # 최신 영상 조회 (최대 3개)
             recent_videos = await ChannelService.get_channel_recent_videos(
                 channel_id=youtube_channel_id,
                 max_results=3
             )
-            
+
+            # 안전장치: 3개 초과 시 잘라내기
+            recent_videos = recent_videos[:3]
+            logger.info(f"YouTube API에서 {len(recent_videos)}개 영상 조회")
+
+            saved_videos = []
+
             # DB에 저장
             for video_data in recent_videos:
                 # published_at 문자열을 datetime으로 변환
@@ -155,12 +165,139 @@ class CompetitorChannelService:
                     comment_count=video_data.get("comment_count", 0),
                 )
                 db.add(video)
-            
+                saved_videos.append((video, video_data.get("video_id")))
+
             await db.flush()
             logger.info(f"최신 영상 {len(recent_videos)}개 저장 완료")
-            
+
+            # 각 영상의 댓글 저장 (좋아요 순 상위 10개)
+            for video, youtube_video_id in saved_videos:
+                try:
+                    logger.info(f"댓글 저장 시작: video_id={video.id}, youtube_id={youtube_video_id}")
+                    await CompetitorChannelService._save_video_comments(
+                        db, video.id, youtube_video_id, max_results=10
+                    )
+                except Exception as e:
+                    logger.error(f"영상 댓글 저장 실패 ({youtube_video_id}): {e}", exc_info=True)
+
+            await db.flush()
+            logger.info("댓글 저장 완료 (flush)")
+
         except Exception as e:
             logger.error(f"최신 영상 저장 실패: {e}", exc_info=True)
+            raise
+
+    @staticmethod
+    async def _save_video_comments(
+        db: AsyncSession,
+        recent_video_id: UUID,
+        youtube_video_id: str,
+        max_results: int = 10
+    ):
+        """영상 댓글 저장 (좋아요 순 상위 N개)"""
+        try:
+            # YouTube API로 댓글 가져오기
+            comments_data = await CompetitorChannelService._fetch_youtube_comments(
+                youtube_video_id, max_results=max_results * 2  # 필터링 위해 더 가져옴
+            )
+
+            if not comments_data:
+                logger.info(f"댓글 없음: {youtube_video_id}")
+                return
+
+            # 좋아요 순 정렬 후 상위 N개 선택
+            sorted_comments = sorted(
+                comments_data,
+                key=lambda x: -(x.get("likes", 0) or 0)
+            )[:max_results]
+
+            # DB에 저장
+            for comment_data in sorted_comments:
+                published_at = comment_data.get("published_at")
+                if published_at and isinstance(published_at, str):
+                    try:
+                        published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        published_at = None
+
+                comment = RecentVideoComment(
+                    recent_video_id=recent_video_id,
+                    comment_id=comment_data.get("comment_id"),
+                    text=comment_data.get("text", ""),
+                    author_name=comment_data.get("author_name"),
+                    author_thumbnail=comment_data.get("author_thumbnail"),
+                    likes=comment_data.get("likes", 0),
+                    published_at=published_at,
+                )
+                db.add(comment)
+
+            logger.info(f"댓글 {len(sorted_comments)}개 저장: {youtube_video_id}")
+
+        except Exception as e:
+            logger.error(f"댓글 저장 실패 ({youtube_video_id}): {e}")
+
+    @staticmethod
+    async def _fetch_youtube_comments(
+        video_id: str,
+        max_results: int = 20
+    ) -> List[dict]:
+        """YouTube API로 댓글 가져오기"""
+        BASE_URL = "https://www.googleapis.com/youtube/v3"
+        api_key = settings.youtube_api_key
+
+        params = {
+            "part": "snippet",
+            "videoId": video_id,
+            "maxResults": min(max_results, 100),
+            "order": "relevance",
+            "key": api_key,
+        }
+
+        try:
+            logger.info(f"YouTube 댓글 API 호출: {video_id}")
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.get(f"{BASE_URL}/commentThreads", params=params)
+                logger.info(f"YouTube 댓글 API 응답: status={resp.status_code}, video_id={video_id}")
+
+                if resp.status_code == 403:
+                    error_detail = resp.text[:200] if resp.text else "No detail"
+                    logger.warning(f"YouTube API 403 에러 ({video_id}): {error_detail}")
+                    return []
+
+                if resp.status_code == 404:
+                    logger.info(f"댓글 없음 또는 비활성화: {video_id}")
+                    return []
+
+                resp.raise_for_status()
+                data = resp.json()
+
+                items = data.get("items", [])
+                logger.info(f"YouTube API에서 {len(items)}개 댓글 항목 수신: {video_id}")
+
+                comments = []
+                for item in items:
+                    snippet = item.get("snippet", {})
+                    top_comment = snippet.get("topLevelComment", {})
+                    comment_snippet = top_comment.get("snippet", {})
+
+                    comments.append({
+                        "comment_id": top_comment.get("id"),
+                        "text": comment_snippet.get("textDisplay", ""),
+                        "author_name": comment_snippet.get("authorDisplayName"),
+                        "author_thumbnail": comment_snippet.get("authorProfileImageUrl"),
+                        "likes": comment_snippet.get("likeCount", 0),
+                        "published_at": comment_snippet.get("publishedAt"),
+                    })
+
+                logger.info(f"파싱된 댓글 {len(comments)}개: {video_id}")
+                return comments
+
+        except httpx.TimeoutException:
+            logger.error(f"YouTube 댓글 API timeout: {video_id}")
+            return []
+        except Exception as e:
+            logger.error(f"YouTube 댓글 API error ({video_id}): {e}")
+            return []
 
     @staticmethod
     async def get_all_competitor_channels(

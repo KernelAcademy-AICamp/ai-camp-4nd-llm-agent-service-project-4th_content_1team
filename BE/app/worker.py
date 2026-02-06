@@ -197,14 +197,11 @@ def task_update_all_competitor_videos(self):
 
 async def _update_all_competitor_videos_async():
     """경쟁 유튜버 최신 영상 업데이트 (비동기)"""
-    from datetime import datetime
     from sqlalchemy import select
-    from sqlalchemy import delete as sql_delete
 
     from app.core.db import AsyncSessionLocal
     from app.models.competitor_channel import CompetitorChannel
-    from app.models.competitor_channel_video import CompetitorRecentVideo
-    from app.services.channel_service import ChannelService
+    from app.services.competitor_channel_service import CompetitorChannelService
 
     updated_count = 0
     failed_count = 0
@@ -218,47 +215,13 @@ async def _update_all_competitor_videos_async():
 
         for channel in channels:
             try:
-                # 기존 영상 삭제
-                await db.execute(
-                    sql_delete(CompetitorRecentVideo).where(
-                        CompetitorRecentVideo.competitor_channel_id == channel.id
-                    )
+                # 서비스 메서드 사용 (영상 + 댓글 저장)
+                await CompetitorChannelService._save_recent_videos(
+                    db, channel.id, channel.channel_id
                 )
-
-                # 최신 영상 3개 가져오기
-                recent_videos = await ChannelService.get_channel_recent_videos(
-                    channel_id=channel.channel_id,
-                    max_results=3
-                )
-
-                # DB에 저장
-                for video_data in recent_videos:
-                    published_at = video_data.get("published_at")
-                    if published_at and isinstance(published_at, str):
-                        try:
-                            published_at = datetime.fromisoformat(
-                                published_at.replace("Z", "+00:00")
-                            )
-                        except ValueError:
-                            published_at = None
-
-                    video = CompetitorRecentVideo(
-                        competitor_channel_id=channel.id,
-                        video_id=video_data.get("video_id"),
-                        title=video_data.get("title"),
-                        description=video_data.get("description"),
-                        thumbnail_url=video_data.get("thumbnail_url"),
-                        published_at=published_at,
-                        duration=video_data.get("duration"),
-                        view_count=video_data.get("view_count", 0),
-                        like_count=video_data.get("like_count", 0),
-                        comment_count=video_data.get("comment_count", 0),
-                    )
-                    db.add(video)
-
                 await db.commit()
                 updated_count += 1
-                logger.info(f"채널 '{channel.title}' 업데이트 완료 ({len(recent_videos)}개 영상)")
+                logger.info(f"채널 '{channel.title}' 업데이트 완료")
 
             except Exception as e:
                 failed_count += 1
