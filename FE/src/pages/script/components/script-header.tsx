@@ -21,8 +21,6 @@ export function ScriptHeader() {
           <Link to="/dashboard" className="hover:text-primary transition-colors">
             스크립트 목록
           </Link>
-          <ChevronRight className="w-4 h-4" />
-          <span className="font-semibold text-foreground">{topic}</span>
         </div>
         <div>
           <h1 className="text-xl font-bold text-foreground">{topic}</h1>

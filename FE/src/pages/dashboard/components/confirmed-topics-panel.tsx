@@ -275,7 +275,7 @@ export function ConfirmedTopicsPanel({ confirmedTopics }: ConfirmedTopicsPanelPr
             </div>
 
             {/* Quick Action */}
-            <Link to={`/script?topicId=${selectedTopic.id}`}>
+            <Link to={`/script?topic=${encodeURIComponent(selectedTopic.title)}&topicId=${selectedTopic.id}`}>
               <Button className="w-full mt-2 bg-transparent" variant="outline">
                 <span>스크립트 작성하기</span>
                 <ChevronRight className="w-4 h-4 ml-1" />

@@ -7,3 +7,6 @@ md/assets/.DS_Store
 
 # 뉴스 이미지 캐시
 BE/public/images/news/
+
+# Local documentation
+md/RUN_GUIDE.md
