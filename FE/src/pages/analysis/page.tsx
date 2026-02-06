@@ -9,12 +9,13 @@ import { Button } from "../../components/ui/button"
 import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
-import { BarChart3, Users, Search, FileText, Loader2, Plus } from "lucide-react"
+import { BarChart3, Users, Search, FileText, Loader2, Plus, Sparkles } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   searchChannels,
   addCompetitorChannel,
   getCompetitorChannels,
+  fetchVideoSubtitles,
   type ChannelSearchResult,
   type CompetitorChannelResponse,
 } from "../../lib/api/index"
@@ -22,6 +23,7 @@ import {
 export default function AnalysisPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [shouldSearch, setShouldSearch] = useState(false)
+  const [analyzingVideoId, setAnalyzingVideoId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   // 채널 검색 쿼리
@@ -46,7 +48,7 @@ export default function AnalysisPage() {
 
   // 경쟁 채널 추가 mutation
   const addMutation = useMutation({
-    mutationFn: (channel: ChannelSearchResult) => 
+    mutationFn: (channel: ChannelSearchResult) =>
       addCompetitorChannel({
         channel_id: channel.channel_id,
         title: channel.title,
@@ -64,6 +66,35 @@ export default function AnalysisPage() {
       setShouldSearch(false)
     },
   })
+
+  // AI 영상 분석 (자막 가져오기) mutation
+  const analysisMutation = useMutation({
+    mutationFn: (videoId: string) => fetchVideoSubtitles(videoId),
+    onMutate: (videoId) => {
+      setAnalyzingVideoId(videoId)
+    },
+    onSuccess: (data) => {
+      console.log('자막 가져오기 결과:', data)
+      if (data.success) {
+        alert(data.message + '\n(콘솔에서 상세 내용 확인)')
+      } else {
+        alert(data.message || '자막을 가져올 수 없습니다')
+      }
+    },
+    onError: (error: any) => {
+      console.error('자막 가져오기 실패:', error)
+      alert('자막 가져오기 실패: ' + (error?.response?.data?.detail || '알 수 없는 오류'))
+    },
+    onSettled: () => {
+      setAnalyzingVideoId(null)
+    },
+  })
+
+  const handleAnalyzeVideo = (videoId: string, e: React.MouseEvent) => {
+    e.preventDefault()  // 링크 클릭 방지
+    e.stopPropagation() // 이벤트 버블링 방지
+    analysisMutation.mutate(videoId)
+  }
 
   const handleSearch = () => {
     if (searchQuery.trim()) {
@@ -309,22 +340,31 @@ export default function AnalysisPage() {
                               {channel.recent_videos && channel.recent_videos.length > 0 ? (
                                 <div className="grid grid-cols-3 gap-3">
                                   {channel.recent_videos.map((video) => (
-                                    <a
+                                    <div
                                       key={video.id}
-                                      href={`https://www.youtube.com/watch?v=${video.video_id}`}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
                                       className="border border-border/50 rounded-lg overflow-hidden bg-card hover:border-primary/50 transition-colors"
                                     >
-                                      <img
-                                        src={video.thumbnail_url}
-                                        alt={video.title}
-                                        className="w-full aspect-video object-cover"
-                                      />
+                                      <a
+                                        href={`https://www.youtube.com/watch?v=${video.video_id}`}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        <img
+                                          src={video.thumbnail_url}
+                                          alt={video.title}
+                                          className="w-full aspect-video object-cover"
+                                        />
+                                      </a>
                                       <div className="p-2">
-                                        <p className="text-xs font-medium line-clamp-2 mb-2">
-                                          {video.title}
-                                        </p>
+                                        <a
+                                          href={`https://www.youtube.com/watch?v=${video.video_id}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          <p className="text-xs font-medium line-clamp-2 mb-2 hover:text-primary">
+                                            {video.title}
+                                          </p>
+                                        </a>
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                           <span>조회수 {formatNumber(video.view_count)}</span>
                                           <span>•</span>
@@ -333,8 +373,22 @@ export default function AnalysisPage() {
                                         <div className="text-xs text-muted-foreground mt-1">
                                           댓글 {formatNumber(video.comment_count)}
                                         </div>
+                                        <Button
+                                          size="sm"
+                                          variant="outline"
+                                          className="w-full mt-2 gap-1 text-xs"
+                                          onClick={(e) => handleAnalyzeVideo(video.video_id, e)}
+                                          disabled={analyzingVideoId === video.video_id}
+                                        >
+                                          {analyzingVideoId === video.video_id ? (
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                          ) : (
+                                            <Sparkles className="w-3 h-3" />
+                                          )}
+                                          AI 영상 분석
+                                        </Button>
                                       </div>
-                                    </a>
+                                    </div>
                                   ))}
                                 </div>
                               ) : (

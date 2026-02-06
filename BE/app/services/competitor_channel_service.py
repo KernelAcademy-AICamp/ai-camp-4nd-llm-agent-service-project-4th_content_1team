@@ -11,9 +11,10 @@ import httpx
 
 from app.core.config import settings
 from app.models.competitor_channel import CompetitorChannel
-from app.models.competitor_channel_video import CompetitorRecentVideo, RecentVideoComment
+from app.models.competitor_channel_video import CompetitorRecentVideo, RecentVideoComment, RecentVideoCaption
 from app.schemas.competitor_channel import CompetitorChannelCreate
 from app.services.channel_service import ChannelService
+from app.services.subtitle_service import SubtitleService
 from sqlalchemy import delete as sql_delete
 
 logger = logging.getLogger(__name__)
@@ -343,3 +344,105 @@ class CompetitorChannelService:
         
         logger.info(f"경쟁 채널 삭제: {channel.title} ({channel.channel_id})")
         return True
+
+    @staticmethod
+    async def get_or_fetch_caption(
+        db: AsyncSession,
+        youtube_video_id: str
+    ) -> dict:
+        """
+        자막 가져오기 (캐시 우선, 없으면 YouTube에서 fetch)
+
+        1. RecentVideoCaption 테이블에서 캐시 확인
+        2. 캐시 없으면 SubtitleService로 YouTube에서 가져오기
+        3. 가져온 자막을 DB에 저장
+        """
+        # 1. CompetitorRecentVideo 조회
+        result = await db.execute(
+            select(CompetitorRecentVideo)
+            .where(CompetitorRecentVideo.video_id == youtube_video_id)
+            .limit(1)
+        )
+        recent_video = result.scalar_one_or_none()
+
+        if not recent_video:
+            logger.warning(f"CompetitorRecentVideo 없음: {youtube_video_id}")
+            return {
+                "video_id": youtube_video_id,
+                "status": "failed",
+                "error": "등록된 경쟁 유튜버의 최신 영상이 아닙니다",
+                "tracks": [],
+                "no_captions": True,
+                "from_cache": False,
+            }
+
+        # 2. RecentVideoCaption에서 캐시 확인
+        result = await db.execute(
+            select(RecentVideoCaption)
+            .where(RecentVideoCaption.recent_video_id == recent_video.id)
+        )
+        cached_caption = result.scalar_one_or_none()
+
+        if cached_caption and cached_caption.segments_json:
+            segments = cached_caption.segments_json
+            # 자막 데이터가 있는지 확인
+            tracks = segments.get("tracks", [])
+            cue_count = sum(len(t.get("cues", [])) for t in tracks)
+
+            if cue_count > 0:
+                logger.info(f"캐시된 자막 반환: {youtube_video_id}, cues={cue_count}")
+                return {
+                    "video_id": youtube_video_id,
+                    "status": "success",
+                    "source": segments.get("source", "cache"),
+                    "tracks": tracks,
+                    "no_captions": False,
+                    "from_cache": True,
+                }
+
+        # 3. 캐시 없음 → YouTube에서 가져오기
+        logger.info(f"캐시 없음, YouTube에서 자막 가져오기: {youtube_video_id}")
+
+        results = await SubtitleService.fetch_subtitles(
+            video_ids=[youtube_video_id],
+            languages=["ko", "en"],
+            db=None,  # 기존 VideoCaption 테이블에 저장하지 않음
+        )
+
+        if not results:
+            return {
+                "video_id": youtube_video_id,
+                "status": "failed",
+                "error": "자막을 가져올 수 없습니다",
+                "tracks": [],
+                "no_captions": True,
+                "from_cache": False,
+            }
+
+        fetch_result = results[0]
+        cue_count = sum(len(t.get("cues", [])) for t in fetch_result.get("tracks", []))
+
+        # 4. 성공하면 RecentVideoCaption에 저장
+        if fetch_result.get("status") == "success" and cue_count > 0:
+            segments_data = {
+                "source": fetch_result.get("source", "yt-dlp"),
+                "tracks": fetch_result.get("tracks", []),
+                "no_captions": False,
+            }
+
+            # 기존 캐시가 있으면 업데이트, 없으면 생성
+            if cached_caption:
+                cached_caption.segments_json = segments_data
+                logger.info(f"자막 캐시 업데이트: {youtube_video_id}")
+            else:
+                new_caption = RecentVideoCaption(
+                    recent_video_id=recent_video.id,
+                    segments_json=segments_data,
+                )
+                db.add(new_caption)
+                logger.info(f"자막 캐시 생성: {youtube_video_id}")
+
+            await db.commit()
+
+        fetch_result["from_cache"] = False
+        return fetch_result

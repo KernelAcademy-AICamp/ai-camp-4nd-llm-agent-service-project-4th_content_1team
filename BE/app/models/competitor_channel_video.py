@@ -47,6 +47,7 @@ class CompetitorRecentVideo(Base):
     # 관계
     competitor_channel = relationship("CompetitorChannel", back_populates="recent_videos")
     comments = relationship("RecentVideoComment", back_populates="video", cascade="all, delete-orphan")
+    caption = relationship("RecentVideoCaption", back_populates="video", uselist=False, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f"<CompetitorRecentVideo(id={self.id}, video_id={self.video_id}, title={self.title})>"
@@ -81,3 +82,30 @@ class RecentVideoComment(Base):
 
     def __repr__(self):
         return f"<RecentVideoComment(id={self.id}, likes={self.likes})>"
+
+
+class RecentVideoCaption(Base):
+    """경쟁 유튜버 최신 영상의 자막"""
+
+    __tablename__ = "recent_video_captions"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    recent_video_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("competitor_recent_videos.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+        index=True
+    )
+
+    # 자막 데이터 (JSON)
+    segments_json = Column(JSONB, nullable=False)
+
+    # 메타
+    created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
+
+    # 관계
+    video = relationship("CompetitorRecentVideo", back_populates="caption")
+
+    def __repr__(self):
+        return f"<RecentVideoCaption(id={self.id}, recent_video_id={self.recent_video_id})>"

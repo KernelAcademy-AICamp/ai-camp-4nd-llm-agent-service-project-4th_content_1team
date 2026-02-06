@@ -1,6 +1,7 @@
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 from uuid import UUID
+from pydantic import BaseModel
 
 from app.core.db import get_db
 from app.core.security import get_current_user
@@ -257,4 +258,51 @@ async def update_competitor_videos(
         raise HTTPException(
             status_code=500,
             detail=f"업데이트 시작 실패: {str(e)}"
+        )
+
+
+class FetchSubtitlesRequest(BaseModel):
+    video_id: str
+
+
+@router.post("/competitor/fetch-subtitles")
+async def fetch_video_subtitles(
+    request: FetchSubtitlesRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    영상 자막 가져오기 (AI 분석용)
+
+    캐시된 자막이 있으면 캐시 반환, 없으면 YouTube에서 가져와서 저장.
+    """
+    try:
+        # 캐시 우선 확인 후 없으면 fetch
+        result = await CompetitorChannelService.get_or_fetch_caption(
+            db=db,
+            youtube_video_id=request.video_id
+        )
+
+        cue_count = sum(len(t.get("cues", [])) for t in result.get("tracks", []))
+
+        if result.get("status") != "success" or cue_count == 0:
+            return {
+                "success": False,
+                "message": result.get("error") or "자막이 없거나 가져오기에 실패했습니다",
+                "data": result
+            }
+
+        from_cache = result.get("from_cache", False)
+        cache_msg = " (캐시)" if from_cache else ""
+
+        return {
+            "success": True,
+            "message": f"자막 {cue_count}개 세그먼트 가져오기 성공{cache_msg}",
+            "data": result
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"자막 가져오기 실패: {str(e)}"
         )
