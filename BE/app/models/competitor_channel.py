@@ -44,13 +44,16 @@ class CompetitorChannel(Base):
     raw_data = Column(JSONB)  # YouTube API 원본 응답
     
     # 메타
+    user_id = Column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     reference_channel_id = Column(String, ForeignKey("youtube_channels.channel_id"), nullable=True)
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)
     updated_at = Column(DateTime(timezone=True), default=datetime.utcnow, onupdate=datetime.utcnow)
     analyzed_at = Column(DateTime(timezone=True))  # AI 분석 시간
     
     # 관계
+    user = relationship("User")
     reference_channel = relationship("YouTubeChannel", foreign_keys=[reference_channel_id])
+    videos = relationship("CompetitorChannelVideo", back_populates="competitor_channel", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<CompetitorChannel(id={self.id}, title={self.title}, subscribers={self.subscriber_count})>"

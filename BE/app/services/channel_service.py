@@ -249,3 +249,101 @@ class ChannelService:
             "video_count": int(statistics.get("videoCount", 0)),
             "custom_url": snippet.get("customUrl"),
         }
+
+    @staticmethod
+    async def get_channel_recent_videos(
+        channel_id: str,
+        max_results: int = 3,
+        api_key: str = None
+    ) -> List[Dict[str, Any]]:
+        """
+        채널의 최신 영상 조회
+        
+        Args:
+            channel_id: YouTube 채널 ID
+            max_results: 가져올 영상 수 (기본 3개)
+            api_key: YouTube Data API 키
+            
+        Returns:
+            최신 영상 리스트
+        """
+        if not api_key:
+            api_key = settings.youtube_api_key
+        
+        # search.list로 채널의 최신 영상 검색
+        search_params = {
+            "part": "id",
+            "channelId": channel_id,
+            "type": "video",
+            "order": "date",  # 최신순
+            "maxResults": max_results,
+            "key": api_key
+        }
+        
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                # 1. 영상 ID 수집
+                search_resp = await client.get(
+                    f"{ChannelService.BASE_URL}/search",
+                    params=search_params
+                )
+                
+                if search_resp.status_code == 403:
+                    raise HTTPException(status_code=429, detail="YouTube API 할당량 초과")
+                
+                search_resp.raise_for_status()
+                search_data = search_resp.json()
+                
+                video_ids = [
+                    item["id"]["videoId"]
+                    for item in search_data.get("items", [])
+                    if item.get("id", {}).get("videoId")
+                ]
+                
+                if not video_ids:
+                    return []
+                
+                # 2. 영상 상세 정보 조회
+                videos_params = {
+                    "part": "snippet,statistics,contentDetails",
+                    "id": ",".join(video_ids),
+                    "key": api_key
+                }
+                
+                videos_resp = await client.get(
+                    f"{ChannelService.BASE_URL}/videos",
+                    params=videos_params
+                )
+                videos_resp.raise_for_status()
+                videos_data = videos_resp.json()
+                
+                # 3. 파싱
+                videos = []
+                for item in videos_data.get("items", []):
+                    snippet = item.get("snippet", {})
+                    stats = item.get("statistics", {})
+                    content_details = item.get("contentDetails", {})
+                    
+                    videos.append({
+                        "video_id": item.get("id"),
+                        "title": snippet.get("title", ""),
+                        "description": snippet.get("description", ""),
+                        "thumbnail_url": snippet.get("thumbnails", {}).get("medium", {}).get("url"),
+                        "published_at": snippet.get("publishedAt"),
+                        "view_count": int(stats.get("viewCount", 0)),
+                        "like_count": int(stats.get("likeCount", 0)),
+                        "comment_count": int(stats.get("commentCount", 0)),
+                        "duration": content_details.get("duration"),
+                    })
+                
+                return videos
+        
+        except httpx.TimeoutException:
+            logger.error(f"YouTube API timeout for channel: {channel_id}")
+            raise HTTPException(status_code=504, detail="YouTube API 타임아웃")
+        except httpx.HTTPStatusError as e:
+            logger.error(f"YouTube API error: {e}")
+            raise HTTPException(status_code=500, detail=f"영상 조회 실패: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error: {e}", exc_info=True)
+            return []

@@ -33,9 +33,14 @@ export default function AnalysisPage() {
   })
 
   // 등록된 경쟁 채널 목록
-  const { data: competitorList } = useQuery({
+  const { data: competitorList, isLoading: isLoadingList, error: listError } = useQuery({
     queryKey: ['competitor-channels'],
-    queryFn: getCompetitorChannels,
+    queryFn: async () => {
+      console.log('경쟁 채널 목록 조회 중...')
+      const result = await getCompetitorChannels()
+      console.log('조회 결과:', result)
+      return result
+    },
     staleTime: 1000 * 60 * 5,
   })
 
@@ -255,7 +260,15 @@ export default function AnalysisPage() {
                   </div>
                 </CardHeader>
                 <CardContent>
-                  {!competitorList || competitorList.total === 0 ? (
+                  {isLoadingList ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="w-8 h-8 animate-spin text-primary" />
+                    </div>
+                  ) : listError ? (
+                    <div className="text-sm text-destructive py-4">
+                      조회 실패: {(listError as any)?.response?.data?.detail || '알 수 없는 오류'}
+                    </div>
+                  ) : !competitorList || competitorList.total === 0 ? (
                     <div className="flex flex-col items-center justify-center py-12 text-center">
                       <Users className="w-12 h-12 text-muted-foreground mb-4" />
                       <h3 className="font-medium text-foreground mb-2">

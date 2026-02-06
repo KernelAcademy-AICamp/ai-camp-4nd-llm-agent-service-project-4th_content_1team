@@ -7,19 +7,23 @@ import OnboardingPage from './pages/onboarding/page'
 import ScriptPage from './pages/script/page'
 import ThumbnailPage from './pages/thumbnail/page'
 import AnalysisPage from './pages/analysis/page'
+import { ProtectedRoute } from './components/ProtectedRoute'
 function App() {
   return (
     <RootLayout>
       <Routes>
         <Route>
+          {/* Public Routes */}
           <Route index element={<LoginPage />} />
-          <Route path="onboarding" element={<OnboardingPage />} />
-          <Route path="analysis" element={<AnalysisPage />} />
-          <Route path="script" element={<ScriptPage />} />
-          <Route path="thumbnail" element={<ThumbnailPage />} />
-          <Route path="upload" element={<UploadPage />} />
-          <Route path="dashboard" element={<DashboardPage />} />
-          <Route path="dashboard/upload" element={<UploadPage />} />
+          
+          {/* Protected Routes */}
+          <Route path="onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
+          <Route path="dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
+          <Route path="analysis" element={<ProtectedRoute><AnalysisPage /></ProtectedRoute>} />
+          <Route path="script" element={<ProtectedRoute><ScriptPage /></ProtectedRoute>} />
+          <Route path="thumbnail" element={<ProtectedRoute><ThumbnailPage /></ProtectedRoute>} />
+          <Route path="upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
+          <Route path="dashboard/upload" element={<ProtectedRoute><UploadPage /></ProtectedRoute>} />
         </Route>
       </Routes>
     </RootLayout>

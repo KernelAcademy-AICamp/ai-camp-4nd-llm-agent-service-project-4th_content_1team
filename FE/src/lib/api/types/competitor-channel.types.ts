@@ -14,6 +14,26 @@ export interface CompetitorChannelCreate {
     raw_data?: Record<string, unknown>;
 }
 
+export interface CompetitorChannelVideo {
+    id: string;
+    video_id: string;
+    title: string;
+    description?: string;
+    thumbnail_url?: string;
+    published_at?: string;
+    duration?: string;
+    view_count: number;
+    like_count: number;
+    comment_count: number;
+    
+    // AI 분석
+    analysis_summary?: string;
+    analysis_strengths?: string[];
+    analysis_weaknesses?: string[];
+    audience_reaction?: string;
+    analyzed_at?: string;
+}
+
 export interface CompetitorChannelResponse {
     id: string;
     channel_id: string;
@@ -28,6 +48,7 @@ export interface CompetitorChannelResponse {
     channel_personality?: string;
     target_audience?: string;
     content_style?: string;
+    videos?: CompetitorChannelVideo[];  // relationship
     created_at: string;
     updated_at: string;
     analyzed_at?: string;
