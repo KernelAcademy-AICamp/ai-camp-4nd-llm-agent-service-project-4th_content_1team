@@ -1,4 +1,5 @@
 import logging
+from datetime import datetime
 from typing import List, Optional
 from uuid import UUID
 
@@ -7,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 
 from app.models.competitor_channel import CompetitorChannel
-from app.models.competitor_channel_video import CompetitorChannelVideo
+from app.models.competitor_channel_video import CompetitorRecentVideo
 from app.schemas.competitor_channel import CompetitorChannelCreate
 from app.services.channel_service import ChannelService
 from sqlalchemy import delete as sql_delete
@@ -52,10 +53,17 @@ class CompetitorChannelService:
             existing.country = channel_data.country
             existing.published_at = channel_data.published_at
             existing.raw_data = channel_data.raw_data
-            
+
             await db.commit()
-            await db.refresh(existing)
-            return existing
+
+            # relationship을 포함해서 다시 로드
+            from sqlalchemy.orm import selectinload
+            result = await db.execute(
+                select(CompetitorChannel)
+                .where(CompetitorChannel.id == existing.id)
+                .options(selectinload(CompetitorChannel.recent_videos))
+            )
+            return result.scalar_one()
         
         # 새로 추가
         new_channel = CompetitorChannel(
@@ -79,19 +87,27 @@ class CompetitorChannelService:
         db.add(new_channel)
         await db.commit()
         await db.refresh(new_channel)
-        
-        # 최신 영상 3개 가져와서 별도 테이블에 저장 (테이블 생성 후 활성화)
-        # TODO: alembic upgrade head 실행 후 fetch_videos=True로 변경
-        # if fetch_videos:
-        #     try:
-        #         await CompetitorChannelService._save_recent_videos(
-        #             db, new_channel.id, channel_data.channel_id
-        #         )
-        #         await db.commit()
-        #     except Exception as e:
-        #         logger.warning(f"최신 영상 저장 실패 (채널은 추가됨): {e}")
-        #         await db.rollback()
-        
+
+        # 최신 영상 3개 가져와서 별도 테이블에 저장
+        if fetch_videos:
+            try:
+                await CompetitorChannelService._save_recent_videos(
+                    db, new_channel.id, channel_data.channel_id
+                )
+                await db.commit()
+                logger.info(f"최신 영상 저장 완료")
+            except Exception as e:
+                logger.warning(f"최신 영상 저장 실패 (채널은 추가됨): {e}")
+
+        # relationship을 포함해서 다시 로드
+        from sqlalchemy.orm import selectinload
+        result = await db.execute(
+            select(CompetitorChannel)
+            .where(CompetitorChannel.id == new_channel.id)
+            .options(selectinload(CompetitorChannel.recent_videos))
+        )
+        new_channel = result.scalar_one()
+
         logger.info(f"경쟁 채널 추가: {new_channel.title} ({new_channel.channel_id})")
         return new_channel
 
@@ -105,8 +121,8 @@ class CompetitorChannelService:
         try:
             # 기존 영상 삭제
             await db.execute(
-                sql_delete(CompetitorChannelVideo).where(
-                    CompetitorChannelVideo.competitor_channel_id == competitor_channel_id
+                sql_delete(CompetitorRecentVideo).where(
+                    CompetitorRecentVideo.competitor_channel_id == competitor_channel_id
                 )
             )
             
@@ -118,13 +134,21 @@ class CompetitorChannelService:
             
             # DB에 저장
             for video_data in recent_videos:
-                video = CompetitorChannelVideo(
+                # published_at 문자열을 datetime으로 변환
+                published_at = video_data.get("published_at")
+                if published_at and isinstance(published_at, str):
+                    try:
+                        published_at = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    except ValueError:
+                        published_at = None
+
+                video = CompetitorRecentVideo(
                     competitor_channel_id=competitor_channel_id,
                     video_id=video_data.get("video_id"),
                     title=video_data.get("title"),
                     description=video_data.get("description"),
                     thumbnail_url=video_data.get("thumbnail_url"),
-                    published_at=video_data.get("published_at"),
+                    published_at=published_at,
                     duration=video_data.get("duration"),
                     view_count=video_data.get("view_count", 0),
                     like_count=video_data.get("like_count", 0),
@@ -154,7 +178,7 @@ class CompetitorChannelService:
         )
         
         if include_videos:
-            query = query.options(selectinload(CompetitorChannel.videos))
+            query = query.options(selectinload(CompetitorChannel.recent_videos))
         
         query = query.order_by(CompetitorChannel.created_at.desc())
         

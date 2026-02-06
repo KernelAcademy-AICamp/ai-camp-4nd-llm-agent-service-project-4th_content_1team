@@ -15,6 +15,7 @@ from app.schemas.competitor_channel import (
     CompetitorChannelCreate,
     CompetitorChannelResponse,
     CompetitorChannelListResponse,
+    CompetitorChannelVideoResponse,
 )
 from app.services.channel_service import ChannelService
 from app.services.competitor_channel_service import CompetitorChannelService
@@ -81,7 +82,31 @@ async def add_competitor_channel(
             reference_channel_id=reference_channel_id
         )
         
-        # 수동 변환 (UUID → str, videos 제외)
+        # 수동 변환 (UUID → str)
+        # recent_videos 변환
+        videos_data = None
+        if hasattr(channel, 'recent_videos') and channel.recent_videos:
+            videos_data = [
+                CompetitorChannelVideoResponse(
+                    id=str(v.id),
+                    video_id=v.video_id,
+                    title=v.title,
+                    description=v.description,
+                    thumbnail_url=v.thumbnail_url,
+                    published_at=v.published_at,
+                    duration=v.duration,
+                    view_count=v.view_count or 0,
+                    like_count=v.like_count or 0,
+                    comment_count=v.comment_count or 0,
+                    analysis_summary=v.analysis_summary,
+                    analysis_strengths=v.analysis_strengths,
+                    analysis_weaknesses=v.analysis_weaknesses,
+                    audience_reaction=v.audience_reaction,
+                    analyzed_at=v.analyzed_at,
+                )
+                for v in channel.recent_videos
+            ]
+
         return CompetitorChannelResponse(
             id=str(channel.id),
             channel_id=channel.channel_id,
@@ -96,7 +121,7 @@ async def add_competitor_channel(
             channel_personality=channel.channel_personality,
             target_audience=channel.target_audience,
             content_style=channel.content_style,
-            videos=None,  # 추가 시에는 videos 안 보냄
+            recent_videos=videos_data,
             created_at=channel.created_at,
             updated_at=channel.updated_at,
             analyzed_at=channel.analyzed_at,
@@ -121,12 +146,36 @@ async def get_competitor_channels(
     """
     try:
         channels = await CompetitorChannelService.get_all_competitor_channels(
-            db, user_id=current_user.id, include_videos=False  # 테이블 생성 전까지 비활성화
+            db, user_id=current_user.id, include_videos=True
         )
-        
-        # 수동 변환 (videos 접근하지 않음)
+
+        # 수동 변환
         response_channels = []
         for ch in channels:
+            # recent_videos relationship에서 영상 데이터 변환
+            videos_data = None
+            if hasattr(ch, 'recent_videos') and ch.recent_videos:
+                videos_data = [
+                    CompetitorChannelVideoResponse(
+                        id=str(v.id),
+                        video_id=v.video_id,
+                        title=v.title,
+                        description=v.description,
+                        thumbnail_url=v.thumbnail_url,
+                        published_at=v.published_at,
+                        duration=v.duration,
+                        view_count=v.view_count or 0,
+                        like_count=v.like_count or 0,
+                        comment_count=v.comment_count or 0,
+                        analysis_summary=v.analysis_summary,
+                        analysis_strengths=v.analysis_strengths,
+                        analysis_weaknesses=v.analysis_weaknesses,
+                        audience_reaction=v.audience_reaction,
+                        analyzed_at=v.analyzed_at,
+                    )
+                    for v in ch.recent_videos
+                ]
+
             response_channels.append(
                 CompetitorChannelResponse(
                     id=str(ch.id),
@@ -142,18 +191,18 @@ async def get_competitor_channels(
                     channel_personality=ch.channel_personality,
                     target_audience=ch.target_audience,
                     content_style=ch.content_style,
-                    videos=None,  # 테이블 생성 전까지 None
+                    recent_videos=videos_data,
                     created_at=ch.created_at,
                     updated_at=ch.updated_at,
                     analyzed_at=ch.analyzed_at,
                 )
             )
-        
+
         return CompetitorChannelListResponse(
             total=len(channels),
             channels=response_channels
         )
-    
+
     except Exception as e:
         raise HTTPException(
             status_code=500,
@@ -173,11 +222,39 @@ async def delete_competitor_channel(
     try:
         await CompetitorChannelService.delete_competitor_channel(db, competitor_id)
         return {"success": True, "message": "경쟁 채널이 삭제되었습니다"}
-    
+
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(
             status_code=500,
             detail=f"경쟁 채널 삭제 실패: {str(e)}"
+        )
+
+
+@router.post("/competitor/update-videos")
+async def update_competitor_videos(
+    current_user: User = Depends(get_current_user),
+):
+    """
+    경쟁 채널 최신 영상 업데이트 (수동 트리거)
+
+    Celery 태스크를 트리거하여 모든 경쟁 채널의 최신 영상을 업데이트합니다.
+    """
+    try:
+        from app.worker import task_update_all_competitor_videos
+
+        # Celery 태스크 비동기 실행
+        task = task_update_all_competitor_videos.delay()
+
+        return {
+            "success": True,
+            "message": "경쟁 채널 최신 영상 업데이트가 시작되었습니다",
+            "task_id": task.id
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"업데이트 시작 실패: {str(e)}"
         )

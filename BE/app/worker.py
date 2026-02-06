@@ -1,6 +1,7 @@
 from app.core.celery_app import celery_app
 from src.script_gen.graph import generate_script
 import logging
+import asyncio
 
 # 로깅 설정
 logger = logging.getLogger(__name__)
@@ -165,3 +166,108 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             "script": None,
             "references": None
         }
+
+
+@celery_app.task(bind=True)
+def task_update_all_competitor_videos(self):
+    """
+    [Celery Task] 모든 경쟁 유튜버의 최신 영상 업데이트
+
+    매일 스케줄로 실행되어 등록된 모든 경쟁 채널의 최신 영상 3개를 가져옴
+    """
+    try:
+        logger.info(f"[Task {self.request.id}] 경쟁 유튜버 최신 영상 업데이트 시작")
+
+        # 비동기 함수 실행
+        result = asyncio.get_event_loop().run_until_complete(
+            _update_all_competitor_videos_async()
+        )
+
+        logger.info(f"[Task {self.request.id}] 경쟁 유튜버 최신 영상 업데이트 완료: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[Task {self.request.id}] 실행 실패: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": str(e),
+            "updated_count": 0
+        }
+
+
+async def _update_all_competitor_videos_async():
+    """경쟁 유튜버 최신 영상 업데이트 (비동기)"""
+    from datetime import datetime
+    from sqlalchemy import select
+    from sqlalchemy import delete as sql_delete
+
+    from app.core.db import AsyncSessionLocal
+    from app.models.competitor_channel import CompetitorChannel
+    from app.models.competitor_channel_video import CompetitorRecentVideo
+    from app.services.channel_service import ChannelService
+
+    updated_count = 0
+    failed_count = 0
+
+    async with AsyncSessionLocal() as db:
+        # 모든 경쟁 채널 조회
+        result = await db.execute(select(CompetitorChannel))
+        channels = result.scalars().all()
+
+        logger.info(f"총 {len(channels)}개 경쟁 채널 업데이트 시작")
+
+        for channel in channels:
+            try:
+                # 기존 영상 삭제
+                await db.execute(
+                    sql_delete(CompetitorRecentVideo).where(
+                        CompetitorRecentVideo.competitor_channel_id == channel.id
+                    )
+                )
+
+                # 최신 영상 3개 가져오기
+                recent_videos = await ChannelService.get_channel_recent_videos(
+                    channel_id=channel.channel_id,
+                    max_results=3
+                )
+
+                # DB에 저장
+                for video_data in recent_videos:
+                    published_at = video_data.get("published_at")
+                    if published_at and isinstance(published_at, str):
+                        try:
+                            published_at = datetime.fromisoformat(
+                                published_at.replace("Z", "+00:00")
+                            )
+                        except ValueError:
+                            published_at = None
+
+                    video = CompetitorRecentVideo(
+                        competitor_channel_id=channel.id,
+                        video_id=video_data.get("video_id"),
+                        title=video_data.get("title"),
+                        description=video_data.get("description"),
+                        thumbnail_url=video_data.get("thumbnail_url"),
+                        published_at=published_at,
+                        duration=video_data.get("duration"),
+                        view_count=video_data.get("view_count", 0),
+                        like_count=video_data.get("like_count", 0),
+                        comment_count=video_data.get("comment_count", 0),
+                    )
+                    db.add(video)
+
+                await db.commit()
+                updated_count += 1
+                logger.info(f"채널 '{channel.title}' 업데이트 완료 ({len(recent_videos)}개 영상)")
+
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"채널 '{channel.title}' 업데이트 실패: {e}")
+                await db.rollback()
+
+    return {
+        "success": True,
+        "message": f"{updated_count}개 채널 업데이트 완료, {failed_count}개 실패",
+        "updated_count": updated_count,
+        "failed_count": failed_count
+    }

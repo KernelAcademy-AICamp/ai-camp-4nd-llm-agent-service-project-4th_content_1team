@@ -7,10 +7,10 @@ from sqlalchemy.orm import relationship
 from app.core.db import Base
 
 
-class CompetitorChannelVideo(Base):
+class CompetitorRecentVideo(Base):
     """경쟁 유튜버의 최신 영상"""
-    
-    __tablename__ = "competitor_channel_videos"
+
+    __tablename__ = "competitor_recent_videos"
     
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     competitor_channel_id = Column(
@@ -45,7 +45,7 @@ class CompetitorChannelVideo(Base):
     analyzed_at = Column(DateTime(timezone=True))  # 분석 시간
     
     # 관계
-    competitor_channel = relationship("CompetitorChannel", back_populates="videos")
-    
+    competitor_channel = relationship("CompetitorChannel", back_populates="recent_videos")
+
     def __repr__(self):
-        return f"<CompetitorChannelVideo(id={self.id}, video_id={self.video_id}, title={self.title})>"
+        return f"<CompetitorRecentVideo(id={self.id}, video_id={self.video_id}, title={self.title})>"

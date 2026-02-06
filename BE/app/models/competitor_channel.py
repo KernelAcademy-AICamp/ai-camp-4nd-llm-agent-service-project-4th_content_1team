@@ -53,7 +53,7 @@ class CompetitorChannel(Base):
     # 관계
     user = relationship("User")
     reference_channel = relationship("YouTubeChannel", foreign_keys=[reference_channel_id])
-    videos = relationship("CompetitorChannelVideo", back_populates="competitor_channel", cascade="all, delete-orphan")
+    recent_videos = relationship("CompetitorRecentVideo", back_populates="competitor_channel", cascade="all, delete-orphan")
     
     def __repr__(self):
         return f"<CompetitorChannel(id={self.id}, title={self.title}, subscribers={self.subscriber_count})>"

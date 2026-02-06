@@ -48,7 +48,7 @@ export interface CompetitorChannelResponse {
     channel_personality?: string;
     target_audience?: string;
     content_style?: string;
-    videos?: CompetitorChannelVideo[];  // relationship
+    recent_videos?: CompetitorChannelVideo[];  // relationship
     created_at: string;
     updated_at: string;
     analyzed_at?: string;

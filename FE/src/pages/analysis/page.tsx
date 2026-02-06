@@ -279,7 +279,7 @@ export default function AnalysisPage() {
                       </p>
                     </div>
                   ) : (
-                    <ScrollArea className="max-h-[600px]">
+                    <ScrollArea className="h-[600px]">
                       <div className="space-y-4 pr-4">
                         {competitorList.channels.map((channel: CompetitorChannelResponse) => (
                           <div
@@ -303,43 +303,45 @@ export default function AnalysisPage() {
                               </div>
                             </div>
 
-                            {/* 분석 카드 3개 */}
-                            <div className="grid grid-cols-3 gap-3">
-                              {/* 강점 */}
-                              <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg p-3">
-                                <h4 className="text-xs font-semibold text-emerald-500 mb-2">강점</h4>
-                                {channel.strengths && channel.strengths.length > 0 ? (
-                                  <ul className="text-xs text-muted-foreground space-y-1">
-                                    {channel.strengths.slice(0, 3).map((str, i) => (
-                                      <li key={i} className="line-clamp-2">• {str}</li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <p className="text-xs text-muted-foreground">
-                                    실시간 스트리밍 병행으로 시청자 충성도 높음<br/>
-                                    밈/유머 활용에 능숙<br/>
-                                    업로드 주기가 매우 일정함 (주 3회)
-                                  </p>
-                                )}
-                              </div>
-
-                              {/* 채널 성격 */}
-                              <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg p-3">
-                                <h4 className="text-xs font-semibold text-blue-500 mb-2">채널 성격</h4>
-                                <p className="text-xs text-muted-foreground">
-                                  {channel.channel_personality || 
-                                    "유머와 리액션 중심의 엔터테인먼트형 게임 채널. 과장된 리액션과 편집으로 재미 중시."}
+                            {/* 최신 영상 3개 */}
+                            <div className="space-y-2">
+                              <h4 className="text-sm font-semibold text-muted-foreground">최신 영상</h4>
+                              {channel.recent_videos && channel.recent_videos.length > 0 ? (
+                                <div className="grid grid-cols-3 gap-3">
+                                  {channel.recent_videos.map((video) => (
+                                    <a
+                                      key={video.id}
+                                      href={`https://www.youtube.com/watch?v=${video.video_id}`}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="border border-border/50 rounded-lg overflow-hidden bg-card hover:border-primary/50 transition-colors"
+                                    >
+                                      <img
+                                        src={video.thumbnail_url}
+                                        alt={video.title}
+                                        className="w-full aspect-video object-cover"
+                                      />
+                                      <div className="p-2">
+                                        <p className="text-xs font-medium line-clamp-2 mb-2">
+                                          {video.title}
+                                        </p>
+                                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                                          <span>조회수 {formatNumber(video.view_count)}</span>
+                                          <span>•</span>
+                                          <span>좋아요 {formatNumber(video.like_count)}</span>
+                                        </div>
+                                        <div className="text-xs text-muted-foreground mt-1">
+                                          댓글 {formatNumber(video.comment_count)}
+                                        </div>
+                                      </div>
+                                    </a>
+                                  ))}
+                                </div>
+                              ) : (
+                                <p className="text-xs text-muted-foreground py-4 text-center">
+                                  최신 영상 정보가 없습니다
                                 </p>
-                              </div>
-
-                              {/* 시청자 타겟 */}
-                              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg p-3">
-                                <h4 className="text-xs font-semibold text-amber-500 mb-2">시청자 타겟</h4>
-                                <p className="text-xs text-muted-foreground">
-                                  {channel.target_audience || 
-                                    "15~24세 남성이 주력, 캐주얼 게이머 및 스트리밍 시청을 즐기는 Z세대가 핵심 시청자."}
-                                </p>
-                              </div>
+                              )}
                             </div>
                           </div>
                         ))}

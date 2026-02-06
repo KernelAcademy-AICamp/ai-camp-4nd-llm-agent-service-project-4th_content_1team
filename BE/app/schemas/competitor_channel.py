@@ -63,7 +63,7 @@ class CompetitorChannelResponse(BaseModel):
     content_style: Optional[str] = None
     
     # 최신 영상 (relationship)
-    videos: Optional[List[CompetitorChannelVideoResponse]] = None
+    recent_videos: Optional[List[CompetitorChannelVideoResponse]] = None
     
     created_at: datetime
     updated_at: datetime
