@@ -94,6 +94,11 @@ async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     logger.info("Writer Node 시작")
     
+    # Fan-in Guard: insight_pack이 비어있으면 skip (Insight Builder가 skip한 경우)
+    if not state.get("insight_pack"):
+        logger.info("Writer: insight 데이터 없음, skip")
+        return {}
+    
     # 1. 입력 데이터 추출
     insight_pack = state.get("insight_pack", {})
     news_data = state.get("news_data", {})

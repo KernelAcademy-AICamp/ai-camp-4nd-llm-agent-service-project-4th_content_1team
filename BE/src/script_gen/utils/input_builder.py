@@ -187,6 +187,12 @@ def _build_channel_profile(
     if persona.audience_needs:
         profile["audience_needs"] = persona.audience_needs
     
+    if persona.differentiator:
+        profile["differentiator"] = persona.differentiator
+    
+    if persona.title_patterns:
+        profile["title_patterns"] = persona.title_patterns
+    
     return profile
 
 
@@ -236,6 +242,8 @@ async def _build_topic_context(
             "urgency": topic.urgency or "normal",
             "content_angles": topic.content_angles or [],
             "recommendation_reason": topic.recommendation_reason or "",
+            "search_keywords": topic.search_keywords or [],  # Recommender가 생성한 검색 키워드
+            "based_on_topic": topic.based_on_topic or "",  # 어떤 트렌드 기반인지
         }
         
         return context

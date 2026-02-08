@@ -50,6 +50,7 @@ class TopicContextResponse(BaseModel):
     urgency: str
     content_angles: List[str]
     recommendation_reason: str
+    search_keywords: List[str] = Field(default_factory=list)  # Recommender 검색 키워드
 
 
 class PlannerInputResponse(BaseModel):

@@ -16,6 +16,20 @@ from app.models.caption import VideoCaption
 from app.models.video_content_analysis import VideoContentAnalysis
 from app.models.content_topic import ChannelTopic, TrendTopic
 
+# 스크립트 생성 파이프라인 모델
+from app.models.topic_request import TopicRequest, AgentRun
+from app.models.script_pipeline import (
+    ContentBrief,
+    ArticleSet, Article, ArticleAsset,
+    FactSet, Fact, FactEvidence, FactDedupeCluster,
+    VisualPlan, InsightSentence,
+    InsightPack,
+)
+from app.models.script_output import (
+    ScriptDraft, ScriptClaim, ScriptSourceMap,
+    VerifiedScript,
+)
+
 __all__ = [
     "User",
     "OAuthAccount",
@@ -35,4 +49,25 @@ __all__ = [
     "VideoContentAnalysis",
     "ChannelTopic",
     "TrendTopic",
+    # 파이프라인 공통
+    "TopicRequest",
+    "AgentRun",
+    # Planner + News Research + Insight Builder
+    "ContentBrief",
+    "ArticleSet",
+    "Article",
+    "ArticleAsset",
+    "FactSet",
+    "Fact",
+    "FactEvidence",
+    "FactDedupeCluster",
+    "VisualPlan",
+    "InsightSentence",
+    "InsightPack",
+    # Writer + Verifier
+    "ScriptDraft",
+    "ScriptClaim",
+    "ScriptSourceMap",
+    "VerifiedScript",
 ]
+

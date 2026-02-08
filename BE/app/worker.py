@@ -8,9 +8,82 @@ logger = logging.getLogger(__name__)
 
 import os
 import base64
+import uuid
+
+
+async def _save_result_to_db(topic: str, topic_request_id: str, user_id: str, channel_id: str, result: dict, formatted: dict):
+    """파이프라인 결과를 DB에 저장"""
+    from app.core.db import AsyncSessionLocal
+    from app.models.topic_request import TopicRequest
+    from app.models.script_output import ScriptDraft, VerifiedScript
+
+    async with AsyncSessionLocal() as session:
+        try:
+            # 1. TopicRequest 상태 업데이트
+            from sqlalchemy import select
+            stmt = select(TopicRequest).where(TopicRequest.id == topic_request_id)
+            row = (await session.execute(stmt)).scalar_one_or_none()
+            if row:
+                row.status = "verified" if formatted.get("script") else "failed"
+            
+            # 2. ScriptDraft 저장
+            if formatted.get("script"):
+                draft = ScriptDraft(
+                    id=uuid.uuid4(),
+                    topic_request_id=topic_request_id,
+                    script_json=formatted["script"],
+                    metadata_json={
+                        "references_count": len(formatted.get("references", [])),
+                        "competitor_count": len(formatted.get("competitor_videos", [])),
+                    },
+                )
+                session.add(draft)
+
+            # 3. VerifiedScript 저장 (전체 포맷된 결과)
+            verified = VerifiedScript(
+                id=uuid.uuid4(),
+                topic_request_id=topic_request_id,
+                final_script_json=formatted.get("script"),
+                source_map_json={
+                    "references": formatted.get("references", []),
+                    "competitor_videos": formatted.get("competitor_videos", []),
+                },
+            )
+            session.add(verified)
+
+            await session.commit()
+            logger.info(f"[DB] 결과 저장 완료 (topic_request_id={topic_request_id})")
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[DB] 결과 저장 실패: {e}", exc_info=True)
+
+
+async def _create_topic_request(topic: str, user_id: str = None, channel_id: str = None):
+    """TopicRequest 레코드 생성"""
+    from app.core.db import AsyncSessionLocal
+    from app.models.topic_request import TopicRequest
+
+    request_id = uuid.uuid4()
+    async with AsyncSessionLocal() as session:
+        try:
+            tr = TopicRequest(
+                id=request_id,
+                user_id=user_id or uuid.uuid4(),  # user_id 없으면 임시 생성
+                channel_id=channel_id,
+                topic_title=topic,
+                status="created",
+            )
+            session.add(tr)
+            await session.commit()
+            logger.info(f"[DB] TopicRequest 생성: {request_id}")
+        except Exception as e:
+            await session.rollback()
+            logger.error(f"[DB] TopicRequest 생성 실패: {e}", exc_info=True)
+    return str(request_id)
+
 
 @celery_app.task(bind=True)
-def task_generate_script(self, topic: str, channel_profile: dict, topic_request_id: str = None):
+def task_generate_script(self, topic: str, channel_profile: dict, topic_request_id: str = None, user_id: str = None, channel_id: str = None):
     """
     [Celery Task] 스크립트 생성 파이프라인 실행
     
@@ -24,13 +97,19 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
         try:
+            # TopicRequest가 없으면 생성
+            if not topic_request_id:
+                topic_request_id = loop.run_until_complete(
+                    _create_topic_request(topic, user_id, channel_id)
+                )
+            
             result = loop.run_until_complete(generate_script(
                 topic=topic,
                 channel_profile=channel_profile,
                 topic_request_id=topic_request_id
             ))
         finally:
-            loop.close()
+            pass  # loop.close()는 DB 저장 후에
         
         logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
         
@@ -49,18 +128,13 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             images_count = len(art.get("images", []))
             logger.info(f"[DEBUG] Article {i+1}: facts={facts_count}, images={images_count}")
         
-        # 결과 반환 (Celery Backend인 Redis에 JSON으로 저장됨)
-        # Pydantic 모델이나 복잡한 객체는 JSON 직렬화 가능한 dict로 변환되어야 함
-        # generate_script는 이미 dict를 반환하므로 OK
-        
-        # 프론트엔드 호환성을 위한 데이터 매핑 (API 라우터 로직을 여기로 이동)
+        # 프론트엔드 호환성을 위한 데이터 매핑
         final_script = None
         script_obj = result.get("script", {})
         
         if script_obj:
             chapters = []
             for ch in script_obj.get("chapters", []):
-                # Beat 등을 합쳐서 하나의 텍스트로
                 content = ch.get("narration", "")
                 if not content:
                     beats = ch.get("beats", [])
@@ -84,7 +158,6 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         
         for art in articles:
             if art.get("title") and art.get("url"):
-                # Facts & Opinions 추출 (analysis 필드 사용)
                 analysis_data = art.get("analysis", {})
                 facts = analysis_data.get("facts", [])
                 opinions = analysis_data.get("opinions", [])
@@ -98,10 +171,8 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                     if isinstance(img, dict) and img.get("url"):
                         img_url = img.get("url")
                         logger.info(f"[DEBUG IMG] Processing: {img_url}")
-                        # 로컬 경로인 경우 Base64 변환 시도
                         if img_url.startswith("/"):
                             try:
-                                # BE 폴더 기준 절대 경로 생성
                                 be_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
                                 file_path = os.path.join(be_root, "public", img_url.lstrip("/"))
                                 logger.info(f"[DEBUG IMG] file_path: {file_path}, exists: {os.path.exists(file_path)}")
@@ -136,7 +207,6 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                     },
                     "images": images
                 })
-                # 디버깅용 최종 확인
                 logger.info(f"[DEBUG FINAL] 기사 '{art.get('title', '')[:30]}' - facts: {len(facts)}, opinions: {len(opinions)}, images: {len(images)}")
         
         # Competitor Videos 변환
@@ -156,13 +226,35 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                     "strong_points": video.get("strong_points", [])
                 })
         
-        return {
+        formatted_result = {
             "success": True,
             "message": "작업 완료",
             "script": final_script,
             "references": references,
             "competitor_videos": competitor_videos
         }
+        
+        # ====== DB에 결과 저장 ======
+        if topic_request_id:
+            try:
+                loop.run_until_complete(
+                    _save_result_to_db(
+                        topic=topic,
+                        topic_request_id=topic_request_id,
+                        user_id=user_id or "",
+                        channel_id=channel_id or "",
+                        result=result,
+                        formatted=formatted_result,
+                    )
+                )
+            except Exception as e:
+                logger.error(f"[DB 저장 실패] {e}", exc_info=True)
+        
+        loop.close()
+        
+        # topic_request_id를 결과에 포함 (프론트에서 조회용)
+        formatted_result["topic_request_id"] = topic_request_id
+        return formatted_result
         
     except Exception as e:
         logger.error(f"[Task {self.request.id}] 실행 실패: {e}", exc_info=True)
@@ -172,3 +264,4 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             "script": None,
             "references": None
         }
+

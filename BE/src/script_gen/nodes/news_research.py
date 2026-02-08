@@ -38,33 +38,41 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("News Research Node (Advanced) 시작")
     
     # 1. 입력 데이터
-    content_brief = state.get("content_brief", {})
-    research_plan = content_brief.get("researchPlan", {})
-    base_queries = research_plan.get("newsQuery", [])
+    # Recommender가 생성한 search_keywords를 검색 쿼리로 사용
+    channel_profile = state.get("channel_profile", {})
+    topic_context = channel_profile.get("topic_context", {})
+    base_queries = topic_context.get("search_keywords", []) if topic_context else []
+    
+    logger.info(f"검색 쿼리 (Recommender): {base_queries}")
     
     if not base_queries:
         return {"news_data": {"articles": []}}
     
     # 2. 뉴스 대량 수집 (Deep Fetch)
     # 쿼리당 15개씩 수집 -> 후보군 확보
+    topic = state.get("topic", "")
     logger.info(f"뉴스 후보군 수집 시작: 쿼리당 15개")
     raw_articles = _fetch_naver_news_bulk(base_queries)
     logger.info(f"뉴스 후보군 확보: {len(raw_articles)}개")
     
-    # 3. 중복 제거 및 대표 기사 선정 (Smart Dedup)
+    # 3. GPT 관련도 필터 (Chain-of-Thought: 핵심 대상 추출 → 관련 기사 선별)
+    relevant_articles = _filter_relevant_articles(raw_articles, topic, search_keywords=base_queries)
+    logger.info(f"관련도 필터 후: {len(relevant_articles)}개 (원본 {len(raw_articles)}개)")
+    
+    # 4. 중복 제거 및 대표 기사 선정 (Smart Dedup)
     # 비슷한 기사는 묶어서 버리고, 서로 다른 주제의 알짜 기사만 남김
-    unique_articles = _deduplicate_articles(raw_articles)
+    unique_articles = _deduplicate_articles(relevant_articles)
     logger.info(f"중복 제거 후 선별된 Top 기사: {len(unique_articles)}개")
     
-    # 4. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
+    # 5. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
     full_articles = _crawl_and_analyze(unique_articles)
     
-    # 5. [Fact Extractor] 팩트 구조화 및 시각화 제안 (New!)
+    # 6. [Fact Extractor] 팩트 구조화 및 시각화 제안
     # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
     structured_facts = _structure_facts(full_articles)
     
-    # 6. 결과 반환 (차트가 있는 기사 우선 정렬)
+    # 7. 결과 반환 (차트가 있는 기사 우선 정렬)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
     
     # [NEW] Writer에게 전달할 Opinions 모음 (모든 기사의 오피니언 통합)
@@ -86,6 +94,118 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "collected_at": datetime.now().isoformat()
         }
     }
+
+
+
+def _filter_relevant_articles(articles: List[Dict], topic: str, search_keywords: List[str] = None) -> List[Dict]:
+    """
+    GPT-4o-mini로 기사 제목+설명을 한 번에 보내서
+    주제와 관련 있는 기사만 필터링합니다.
+    
+    비용: ~$0.01 (제목+설명만 전송)
+    시간: 2~3초
+    """
+    if not articles or not topic:
+        return articles
+    
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OPENAI_API_KEY 없음 → 필터 스킵")
+            return articles
+        
+        # 기사 목록 텍스트 생성
+        article_list = ""
+        for i, art in enumerate(articles):
+            article_list += f"{i+1}. [{art.get('title', '')}] {art.get('desc', '')}\n"
+        
+        keywords_str = ", ".join(search_keywords) if search_keywords else "없음"
+        
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0)
+        
+        prompt = f"""당신은 YouTube 스크립트 작성을 위한 뉴스 기사 선별 전문가입니다.
+
+[영상 주제]
+"{topic}"
+
+[검색 키워드]
+{keywords_str}
+
+[판단 프로세스 - 반드시 이 순서대로 수행]
+
+Step 1. 핵심 대상 추출
+영상 주제에서 핵심 대상(고유명사: 제품명, 인물명, 기업명, 기술명)을 추출하세요.
+"AI", "기술", "인공지능", "시장", "트렌드" 같은 범용 단어는 핵심 대상이 아닙니다.
+예) "챗GPT와 클로드 비교 분석" → 핵심 대상: 챗GPT, ChatGPT, 클로드, Claude, OpenAI, Anthropic
+예) "엔비디아 주가 전망" → 핵심 대상: 엔비디아, NVIDIA, 젠슨황
+
+Step 2. 기사별 판단
+각 기사에 대해 이 질문에 답하세요:
+"영상 스크립트를 쓰는 사람이 이 기사를 열었을 때, 스크립트에 직접 인용할 내용을 찾을 수 있는가?"
+
+포함 (O):
+- 기사의 주제 자체가 핵심 대상에 관한 것
+- 핵심 대상의 성능, 기능, 업데이트, 비교를 직접 다루는 기사
+- 핵심 대상에 대한 전문가 의견, 데이터, 분석이 담긴 기사
+
+제외 (X) - 아래 하나라도 해당하면 무조건 제외:
+- 핵심 대상이 제목과 설명에 전혀 등장하지 않는 기사
+- 다른 분야(의학, 교육, 부동산, 기업전략 등) 기사에서 핵심 대상을 도구/사례로 잠깐 언급하는 기사
+- 기업 전략, 주식, 투자 기사에서 핵심 대상 이름이 나올 뿐인 기사
+
+⚠️ 제목에 핵심 대상이 없고 설명에만 있는 기사는 특히 의심하세요.
+다른 분야 기사에서 잠깐 언급하는 경우가 대부분입니다.
+
+[기사 목록]
+{article_list}
+
+[응답 형식 - 반드시 이 형식으로]
+핵심대상: (추출한 핵심 대상 나열)
+관련기사: (번호를 쉼표로 구분, 예: 1,3,5)
+
+관련 기사가 없으면:
+핵심대상: (추출한 핵심 대상 나열)
+관련기사: 없음"""
+        
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+        
+        # Chain-of-Thought 응답 파싱
+        lines = content.strip().split("\n")
+        core_entities_line = ""
+        articles_line = ""
+        
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith("핵심대상:"):
+                core_entities_line = line_stripped.replace("핵심대상:", "").strip()
+            elif line_stripped.startswith("관련기사:"):
+                articles_line = line_stripped.replace("관련기사:", "").strip()
+        
+        logger.info(f"GPT 핵심대상: {core_entities_line}")
+        logger.info(f"GPT 관련기사: {articles_line}")
+        
+        if articles_line == "없음" or not articles_line:
+            logger.warning("GPT가 관련 기사 없음으로 판단 → 원본 유지")
+            return articles
+        
+        # 번호 파싱
+        try:
+            relevant_indices = [int(x.strip()) - 1 for x in articles_line.split(",") if x.strip().isdigit()]
+            filtered = [articles[i] for i in relevant_indices if 0 <= i < len(articles)]
+            
+            if not filtered:
+                logger.warning("필터 결과 0개 → 원본 유지")
+                return articles
+            
+            return filtered
+        except Exception as e:
+            logger.warning(f"GPT 응답 파싱 실패: {e} → 원본 유지")
+            return articles
+            
+    except Exception as e:
+        logger.warning(f"관련도 필터 에러: {e} → 필터 스킵")
+        return articles
 
 
 def _fetch_naver_news_bulk(queries: List[str]) -> List[Dict]:

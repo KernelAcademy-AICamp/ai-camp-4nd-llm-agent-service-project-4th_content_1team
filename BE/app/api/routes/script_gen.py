@@ -72,12 +72,20 @@ async def execute_pipeline_async(
             topic_recommendation_id=request.topic_recommendation_id,
         )
         
-        # 2. Celery Task 실행 (.delay() 사용)
-        # 데이터는 직렬화 가능한 dict 형태여야 함
+        # 2. topic_context를 channel_profile에 병합
+        # (Planner가 channel_profile.topic_context에서 추천 컨텍스트를 읽음)
+        channel_profile = planner_input["channel_profile"].copy()
+        if planner_input.get("topic_context"):
+            channel_profile["topic_context"] = planner_input["topic_context"]
+        
+        # 3. Celery Task 실행 (.delay() 사용)
+        # user_id, channel_id를 전달하여 DB에 결과 저장
         task = task_generate_script.delay(
             topic=planner_input["topic"],
-            channel_profile=planner_input["channel_profile"],
-            topic_request_id=None
+            channel_profile=channel_profile,
+            topic_request_id=None,
+            user_id=str(current_user.id),
+            channel_id=channel_profile.get("channel_id"),
         )
         
         return ScriptGenTaskResponse(
@@ -337,6 +345,116 @@ async def run_planner(
             message="콘텐츠 기획안 생성에 실패했습니다.",
             content_brief=None,
             error=str(e),
+        )
+
+
+# =============================================================================
+# History Endpoint (새로고침 후 결과 조회)
+# =============================================================================
+
+from sqlalchemy import select, desc
+
+
+@router.get("/scripts/history")
+async def get_script_history(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    limit: int = 10,
+):
+    """
+    사용자의 생성 이력 조회 (새로고침해도 결과 유지)
+    """
+    from app.models.topic_request import TopicRequest
+    from app.models.script_output import VerifiedScript
+
+    try:
+        # TopicRequest + VerifiedScript 조인 조회
+        stmt = (
+            select(TopicRequest, VerifiedScript)
+            .outerjoin(VerifiedScript, TopicRequest.id == VerifiedScript.topic_request_id)
+            .where(TopicRequest.user_id == current_user.id)
+            .order_by(desc(TopicRequest.created_at))
+            .limit(limit)
+        )
+        rows = (await db.execute(stmt)).all()
+
+        results = []
+        for topic_req, verified in rows:
+            item = {
+                "topic_request_id": str(topic_req.id),
+                "topic_title": topic_req.topic_title,
+                "status": topic_req.status,
+                "created_at": topic_req.created_at.isoformat() if topic_req.created_at else None,
+                "script": None,
+                "references": None,
+                "competitor_videos": None,
+            }
+            if verified:
+                item["script"] = verified.final_script_json
+                source_map = verified.source_map_json or {}
+                item["references"] = source_map.get("references", [])
+                item["competitor_videos"] = source_map.get("competitor_videos", [])
+            results.append(item)
+
+        return {"success": True, "results": results}
+
+    except Exception as e:
+        logger.error(f"History fetch failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"이력 조회 실패: {str(e)}",
+        )
+
+
+@router.get("/scripts/{topic_request_id}")
+async def get_script_by_id(
+    topic_request_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    특정 스크립트 결과 조회
+    """
+    from app.models.topic_request import TopicRequest
+    from app.models.script_output import VerifiedScript
+
+    try:
+        stmt = (
+            select(TopicRequest, VerifiedScript)
+            .outerjoin(VerifiedScript, TopicRequest.id == VerifiedScript.topic_request_id)
+            .where(TopicRequest.id == topic_request_id)
+            .where(TopicRequest.user_id == current_user.id)
+        )
+        row = (await db.execute(stmt)).first()
+
+        if not row:
+            raise HTTPException(status_code=404, detail="결과를 찾을 수 없습니다.")
+
+        topic_req, verified = row
+        result = {
+            "success": True,
+            "topic_request_id": str(topic_req.id),
+            "topic_title": topic_req.topic_title,
+            "status": topic_req.status,
+            "script": None,
+            "references": None,
+            "competitor_videos": None,
+        }
+        if verified:
+            result["script"] = verified.final_script_json
+            source_map = verified.source_map_json or {}
+            result["references"] = source_map.get("references", [])
+            result["competitor_videos"] = source_map.get("competitor_videos", [])
+
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Script fetch failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"결과 조회 실패: {str(e)}",
         )
 
 

@@ -218,6 +218,10 @@ def _build_planner_prompt(
     topic_context_data = channel_profile.get("topic_context")  # API에서 전달
     if topic_context_data:
         topic_context = "\n\n**AI RECOMMENDATION CONTEXT** (Why this topic was recommended):\n"
+        
+        if topic_context_data.get('based_on_topic'):
+            topic_context += f"- Based On Trend: {topic_context_data.get('based_on_topic')}\n"
+        
         topic_context += f"- Trend Basis: {topic_context_data.get('trend_basis', '')}\n"
         topic_context += f"- Urgency: {topic_context_data.get('urgency', 'normal').upper()}\n"
         
@@ -228,6 +232,12 @@ def _build_planner_prompt(
         
         if topic_context_data.get('recommendation_reason'):
             topic_context += f"- Why This Fits Your Channel: {topic_context_data.get('recommendation_reason')}\n"
+        
+        # Recommender가 생성한 검색 키워드 (newsQuery 생성 시 참고)
+        if topic_context_data.get('search_keywords'):
+            topic_context += "- Pre-researched Keywords (USE these as base for newsQuery):\n"
+            for kw in topic_context_data.get('search_keywords', []):
+                topic_context += f"  • {kw}\n"
     
     # [Trend Scout] 커뮤니티 반응 컨텍스트 (주석처리됨, 향후 사용 가능)
     # trend_context = ""
@@ -266,6 +276,14 @@ def _build_planner_prompt(
     
     if audience_needs:
         personalization_context += f"- Audience Needs: {audience_needs}\n"
+    
+    differentiator = channel_profile.get("differentiator")
+    if differentiator:
+        personalization_context += f"- Differentiator: {differentiator}\n"
+    
+    title_patterns = channel_profile.get("title_patterns", [])
+    if title_patterns:
+        personalization_context += f"- Proven Title Patterns: {', '.join(title_patterns)}\n"
     
     base_prompt = f"""You are an expert YouTube content planner specializing in high-engagement videos.
 
