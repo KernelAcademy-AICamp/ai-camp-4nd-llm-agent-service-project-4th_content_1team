@@ -36,7 +36,7 @@ class TopicRequest(Base):
     )
     
     topic_title = Column(String(300), nullable=False)
-    topic_keywords = Column(JSONB, nullable=True)  # 사용자 직접 입력 키워드
+    topic_keywords = Column(JSONB, nullable=False, default=list)  # channel_topics/trend_topics에서 가져온 검색 키워드
     language = Column(String(10), nullable=False, default="ko")
     region = Column(String(10), nullable=False, default="KR")
     

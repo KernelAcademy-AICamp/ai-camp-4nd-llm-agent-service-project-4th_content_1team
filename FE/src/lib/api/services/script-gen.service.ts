@@ -101,3 +101,9 @@ export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistor
     return response.data.results || [];
 };
 
+// 특정 topic_request_id로 스크립트 결과 조회
+export const getScriptById = async (topicRequestId: string): Promise<ScriptHistoryItem> => {
+    const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
+    return response.data;
+};
+

@@ -11,7 +11,7 @@ import base64
 import uuid
 
 
-async def _save_result_to_db(topic: str, topic_request_id: str, user_id: str, channel_id: str, result: dict, formatted: dict):
+async def _save_result_to_db(topic_request_id: str, formatted: dict):
     """파이프라인 결과를 DB에 저장"""
     from app.core.db import AsyncSessionLocal
     from app.models.topic_request import TopicRequest
@@ -58,19 +58,23 @@ async def _save_result_to_db(topic: str, topic_request_id: str, user_id: str, ch
             logger.error(f"[DB] 결과 저장 실패: {e}", exc_info=True)
 
 
-async def _create_topic_request(topic: str, user_id: str = None, channel_id: str = None):
+async def _create_topic_request(topic: str, user_id: str = None, channel_id: str = None, topic_keywords: list = None):
     """TopicRequest 레코드 생성"""
     from app.core.db import AsyncSessionLocal
     from app.models.topic_request import TopicRequest
+
+    if not user_id:
+        raise ValueError("user_id is required to create a TopicRequest")
 
     request_id = uuid.uuid4()
     async with AsyncSessionLocal() as session:
         try:
             tr = TopicRequest(
                 id=request_id,
-                user_id=user_id or uuid.uuid4(),  # user_id 없으면 임시 생성
+                user_id=user_id,
                 channel_id=channel_id,
                 topic_title=topic,
+                topic_keywords=topic_keywords or [],  # channel_topics/trend_topics의 search_keywords
                 status="created",
             )
             session.add(tr)
@@ -79,6 +83,7 @@ async def _create_topic_request(topic: str, user_id: str = None, channel_id: str
         except Exception as e:
             await session.rollback()
             logger.error(f"[DB] TopicRequest 생성 실패: {e}", exc_info=True)
+            raise  # 실패 시 호출자에게 전파
     return str(request_id)
 
 
@@ -99,8 +104,11 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         try:
             # TopicRequest가 없으면 생성
             if not topic_request_id:
+                # channel_profile 안의 topic_context에서 search_keywords를 꺼냄
+                topic_context = channel_profile.get("topic_context", {})
+                search_keywords = topic_context.get("search_keywords", []) if topic_context else []
                 topic_request_id = loop.run_until_complete(
-                    _create_topic_request(topic, user_id, channel_id)
+                    _create_topic_request(topic, user_id, channel_id, topic_keywords=search_keywords)
                 )
             
             result = loop.run_until_complete(generate_script(
@@ -108,149 +116,143 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 channel_profile=channel_profile,
                 topic_request_id=topic_request_id
             ))
-        finally:
-            pass  # loop.close()는 DB 저장 후에
         
-        logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
-        
-        # [DEBUG] 결과 데이터 확인
-        logger.info(f"[DEBUG] competitor_data 존재: {result.get('competitor_data') is not None}")
-        if result.get('competitor_data'):
-            video_count = len(result.get('competitor_data', {}).get('video_analyses', []))
-            logger.info(f"[DEBUG] competitor_data.video_analyses 개수: {video_count}")
-        
-        news_data = result.get("news_data", {})
-        articles = news_data.get("articles", [])
-        logger.info(f"[DEBUG] articles 개수: {len(articles)}")
-        for i, art in enumerate(articles[:3]):  # 처음 3개만
-            analysis = art.get("analysis", {})
-            facts_count = len(analysis.get("facts", []))
-            images_count = len(art.get("images", []))
-            logger.info(f"[DEBUG] Article {i+1}: facts={facts_count}, images={images_count}")
-        
-        # 프론트엔드 호환성을 위한 데이터 매핑
-        final_script = None
-        script_obj = result.get("script", {})
-        
-        if script_obj:
-            chapters = []
-            for ch in script_obj.get("chapters", []):
-                content = ch.get("narration", "")
-                if not content:
-                    beats = ch.get("beats", [])
-                    content = "\n".join([b.get("line", "") for b in beats])
-                
-                chapters.append({
-                    "title": ch.get("title", ""),
-                    "content": content
-                })
-                
-            final_script = {
-                "hook": script_obj.get("hook", {}).get("text", ""),
-                "chapters": chapters,
-                "outro": script_obj.get("closing", {}).get("text", "")
-            }
-        
-        # References 매핑 (Facts, Opinions, Images 포함)
-        references = [] 
-        news_data = result.get("news_data", {})
-        articles = news_data.get("articles", [])
-        
-        for art in articles:
-            if art.get("title") and art.get("url"):
-                analysis_data = art.get("analysis", {})
-                facts = analysis_data.get("facts", [])
-                opinions = analysis_data.get("opinions", [])
-                
-                # Images + Charts 추출 및 Base64 변환
-                images = []
-                all_raw_images = art.get("images", []) + art.get("charts", [])
-                logger.info(f"[DEBUG IMG] Article '{art.get('title', '')[:30]}...' - images: {len(art.get('images', []))}, charts: {len(art.get('charts', []))}")
-                
-                for img in all_raw_images:
-                    if isinstance(img, dict) and img.get("url"):
-                        img_url = img.get("url")
-                        logger.info(f"[DEBUG IMG] Processing: {img_url}")
-                        if img_url.startswith("/"):
-                            try:
-                                be_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                                file_path = os.path.join(be_root, "public", img_url.lstrip("/"))
-                                logger.info(f"[DEBUG IMG] file_path: {file_path}, exists: {os.path.exists(file_path)}")
-                                if os.path.exists(file_path):
-                                    with open(file_path, "rb") as f:
-                                        encoded_string = base64.b64encode(f.read()).decode("utf-8")
-                                        ext = img_url.split(".")[-1].lower()
-                                        mime_type = "image/jpeg" if ext in ["jpg", "jpeg"] else f"image/{ext}"
-                                        img_url = f"data:{mime_type};base64,{encoded_string[:50]}..."  # 로그용 축약
-                                        logger.info(f"[DEBUG IMG] Base64 변환 성공!")
-                                        img_url = f"data:{mime_type};base64,{encoded_string}"  # 실제 데이터
-                                else:
-                                    logger.warning(f"Image file not found: {file_path}")
-                            except Exception as e:
-                                logger.warning(f"Image Base64 conversion failed: {e}")
+            logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
+            
+            # [DEBUG] 결과 데이터 확인
+            logger.info(f"[DEBUG] competitor_data 존재: {result.get('competitor_data') is not None}")
+            if result.get('competitor_data'):
+                video_count = len(result.get('competitor_data', {}).get('video_analyses', []))
+                logger.info(f"[DEBUG] competitor_data.video_analyses 개수: {video_count}")
+            
+            news_data = result.get("news_data", {})
+            articles = news_data.get("articles", [])
+            logger.info(f"[DEBUG] articles 개수: {len(articles)}")
+            for i, art in enumerate(articles[:3]):  # 처음 3개만
+                analysis = art.get("analysis", {})
+                facts_count = len(analysis.get("facts", []))
+                images_count = len(art.get("images", []))
+                logger.info(f"[DEBUG] Article {i+1}: facts={facts_count}, images={images_count}")
+            
+            # 프론트엔드 호환성을 위한 데이터 매핑
+            final_script = None
+            script_obj = result.get("script", {})
+            
+            if script_obj:
+                chapters = []
+                for ch in script_obj.get("chapters", []):
+                    content = ch.get("narration", "")
+                    if not content:
+                        beats = ch.get("beats", [])
+                        content = "\n".join([b.get("line", "") for b in beats])
+                    
+                    chapters.append({
+                        "title": ch.get("title", ""),
+                        "content": content
+                    })
+                    
+                final_script = {
+                    "hook": script_obj.get("hook", {}).get("text", ""),
+                    "chapters": chapters,
+                    "outro": script_obj.get("closing", {}).get("text", "")
+                }
+            
+            # References 매핑 (Facts, Opinions, Images 포함)
+            references = [] 
+            news_data = result.get("news_data", {})
+            articles = news_data.get("articles", [])
+            
+            for art in articles:
+                if art.get("title") and art.get("url"):
+                    analysis_data = art.get("analysis", {})
+                    facts = analysis_data.get("facts", [])
+                    opinions = analysis_data.get("opinions", [])
+                    
+                    # Images + Charts 추출 및 Base64 변환
+                    images = []
+                    all_raw_images = art.get("images", []) + art.get("charts", [])
+                    logger.info(f"[DEBUG IMG] Article '{art.get('title', '')[:30]}...' - images: {len(art.get('images', []))}, charts: {len(art.get('charts', []))}")
+                    
+                    for img in all_raw_images:
+                        if isinstance(img, dict) and img.get("url"):
+                            img_url = img.get("url")
+                            logger.info(f"[DEBUG IMG] Processing: {img_url}")
+                            if img_url.startswith("/"):
+                                try:
+                                    be_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+                                    file_path = os.path.join(be_root, "public", img_url.lstrip("/"))
+                                    logger.info(f"[DEBUG IMG] file_path: {file_path}, exists: {os.path.exists(file_path)}")
+                                    if os.path.exists(file_path):
+                                        with open(file_path, "rb") as f:
+                                            encoded_string = base64.b64encode(f.read()).decode("utf-8")
+                                            ext = img_url.split(".")[-1].lower()
+                                            mime_type = "image/jpeg" if ext in ["jpg", "jpeg"] else f"image/{ext}"
+                                            img_url = f"data:{mime_type};base64,{encoded_string[:50]}..."  # 로그용 축약
+                                            logger.info(f"[DEBUG IMG] Base64 변환 성공!")
+                                            img_url = f"data:{mime_type};base64,{encoded_string}"  # 실제 데이터
+                                    else:
+                                        logger.warning(f"Image file not found: {file_path}")
+                                except Exception as e:
+                                    logger.warning(f"Image Base64 conversion failed: {e}")
 
-                        images.append({
-                            "url": img_url,
-                            "caption": img.get("caption") or img.get("desc", ""),
-                            "is_chart": img.get("is_chart", False) or (img.get("type") in ["chart", "table"])
-                        })
-                
-                references.append({
-                    "title": art.get("title"),
-                    "summary": art.get("summary_short") or art.get("summary", "")[:100] + "...",
-                    "source": art.get("source", "Unknown"),
-                    "url": art.get("url"),
-                    "date": art.get("pub_date"),
-                    "analysis": {
-                        "facts": facts,
-                        "opinions": opinions
-                    },
-                    "images": images
-                })
-                logger.info(f"[DEBUG FINAL] 기사 '{art.get('title', '')[:30]}' - facts: {len(facts)}, opinions: {len(opinions)}, images: {len(images)}")
-        
-        # Competitor Videos 변환
-        competitor_videos = []
-        competitor_data = result.get("competitor_data", {})
-        if competitor_data:
-            video_analyses = competitor_data.get("video_analyses", [])
-            for video in video_analyses:
-                competitor_videos.append({
-                    "video_id": video.get("video_id"),
-                    "title": video.get("title"),
-                    "channel": video.get("channel"),
-                    "url": video.get("url"),
-                    "thumbnail": video.get("thumbnail"),
-                    "hook_analysis": video.get("hook_analysis", ""),
-                    "weak_points": video.get("weak_points", []),
-                    "strong_points": video.get("strong_points", [])
-                })
-        
-        formatted_result = {
-            "success": True,
-            "message": "작업 완료",
-            "script": final_script,
-            "references": references,
-            "competitor_videos": competitor_videos
-        }
-        
-        # ====== DB에 결과 저장 ======
-        if topic_request_id:
-            try:
-                loop.run_until_complete(
-                    _save_result_to_db(
-                        topic=topic,
-                        topic_request_id=topic_request_id,
-                        user_id=user_id or "",
-                        channel_id=channel_id or "",
-                        result=result,
-                        formatted=formatted_result,
+                            images.append({
+                                "url": img_url,
+                                "caption": img.get("caption") or img.get("desc", ""),
+                                "is_chart": img.get("is_chart", False) or (img.get("type") in ["chart", "table"])
+                            })
+                    
+                    references.append({
+                        "title": art.get("title"),
+                        "summary": art.get("summary_short") or art.get("summary", "")[:100] + "...",
+                        "source": art.get("source", "Unknown"),
+                        "url": art.get("url"),
+                        "date": art.get("pub_date"),
+                        "analysis": {
+                            "facts": facts,
+                            "opinions": opinions
+                        },
+                        "images": images
+                    })
+                    logger.info(f"[DEBUG FINAL] 기사 '{art.get('title', '')[:30]}' - facts: {len(facts)}, opinions: {len(opinions)}, images: {len(images)}")
+            
+            # Competitor Videos 변환
+            competitor_videos = []
+            competitor_data = result.get("competitor_data", {})
+            if competitor_data:
+                video_analyses = competitor_data.get("video_analyses", [])
+                for video in video_analyses:
+                    competitor_videos.append({
+                        "video_id": video.get("video_id"),
+                        "title": video.get("title"),
+                        "channel": video.get("channel"),
+                        "url": video.get("url"),
+                        "thumbnail": video.get("thumbnail"),
+                        "hook_analysis": video.get("hook_analysis", ""),
+                        "weak_points": video.get("weak_points", []),
+                        "strong_points": video.get("strong_points", [])
+                    })
+            
+            formatted_result = {
+                "success": True,
+                "message": "작업 완료",
+                "script": final_script,
+                "references": references,
+                "competitor_videos": competitor_videos
+            }
+            
+            # ====== DB에 결과 저장 ======
+            if topic_request_id:
+                try:
+                    loop.run_until_complete(
+                        _save_result_to_db(
+                            topic_request_id=topic_request_id,
+                            formatted=formatted_result,
+                        )
                     )
-                )
-            except Exception as e:
-                logger.error(f"[DB 저장 실패] {e}", exc_info=True)
-        
-        loop.close()
+                except Exception as e:
+                    logger.error(f"[DB 저장 실패] {e}", exc_info=True)
+        finally:
+            loop.close()  # 성공/실패 무관하게 반드시 루프 닫기
         
         # topic_request_id를 결과에 포함 (프론트에서 조회용)
         formatted_result["topic_request_id"] = topic_request_id
@@ -264,4 +266,5 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             "script": None,
             "references": None
         }
+
 

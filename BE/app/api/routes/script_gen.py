@@ -417,12 +417,19 @@ async def get_script_by_id(
     """
     from app.models.topic_request import TopicRequest
     from app.models.script_output import VerifiedScript
+    from uuid import UUID as PyUUID
+
+    # URL에서 받은 str → UUID 변환 (잘못된 값이면 400 에러)
+    try:
+        topic_uuid = PyUUID(topic_request_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="유효하지 않은 ID 형식입니다.")
 
     try:
         stmt = (
             select(TopicRequest, VerifiedScript)
             .outerjoin(VerifiedScript, TopicRequest.id == VerifiedScript.topic_request_id)
-            .where(TopicRequest.id == topic_request_id)
+            .where(TopicRequest.id == topic_uuid)
             .where(TopicRequest.user_id == current_user.id)
         )
         row = (await db.execute(stmt)).first()

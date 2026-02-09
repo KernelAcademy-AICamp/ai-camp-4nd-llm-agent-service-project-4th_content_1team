@@ -7,7 +7,7 @@ import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
-import { executeScriptGen, pollScriptGenResult, getScriptHistory } from "../../lib/api/services"
+import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle } from "../../lib/api/services"
 
 function ScriptPageContent() {
@@ -18,20 +18,29 @@ function ScriptPageContent() {
   const [isGenerating, setIsGenerating] = useState(false)
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
-  const [competitorVideos, setCompetitorVideos] = useState<any[]>([])
 
   // 페이지 로드 시 DB에서 이전 결과 불러오기
   useEffect(() => {
     const loadHistory = async () => {
       try {
-        const history = await getScriptHistory(1)
-        if (history.length > 0) {
-          const latest = history[0]
-          if (latest.script) {
-            console.log("[FE] 이전 결과 복원:", latest.topic_title)
-            setScriptData(latest.script)
-            setReferences(latest.references || [])
-            setCompetitorVideos(latest.competitor_videos || [])
+        if (topicId) {
+          // topicId가 있으면 해당 결과만 조회
+          const result = await getScriptById(topicId)
+          if (result.script) {
+            console.log("[FE] 이전 결과 복원 (by ID):", result.topic_title)
+            setScriptData(result.script)
+            setReferences(result.references || [])
+          }
+        } else {
+          // topicId 없으면 최근 이력에서 복원
+          const history = await getScriptHistory(1)
+          if (history.length > 0) {
+            const latest = history[0]
+            if (latest.script) {
+              console.log("[FE] 이전 결과 복원 (최근):", latest.topic_title)
+              setScriptData(latest.script)
+              setReferences(latest.references || [])
+            }
           }
         }
       } catch (error) {
@@ -39,7 +48,7 @@ function ScriptPageContent() {
       }
     }
     loadHistory()
-  }, [])
+  }, [topicId])
 
   const handleGenerate = async () => {
     setIsGenerating(true)
@@ -56,7 +65,6 @@ function ScriptPageContent() {
         console.log("[FE] 생성 완료!", result)
         setScriptData(result.script)
         setReferences(result.references || [])
-        setCompetitorVideos(result.competitor_videos || [])
       } else {
         console.error("[FE] 생성 실패:", result.error)
         alert(`생성 실패: ${result.error}`)

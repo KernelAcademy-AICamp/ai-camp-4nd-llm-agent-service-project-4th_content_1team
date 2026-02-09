@@ -38,7 +38,7 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("News Research Node (Advanced) 시작")
     
     # 1. 입력 데이터
-    # Recommender가 생성한 search_keywords를 검색 쿼리로 사용
+    # channel_topics/trend_topics에서 가져온 search_keywords를 검색 쿼리로 사용
     channel_profile = state.get("channel_profile", {})
     topic_context = channel_profile.get("topic_context", {})
     base_queries = topic_context.get("search_keywords", []) if topic_context else []
@@ -133,38 +133,48 @@ def _filter_relevant_articles(articles: List[Dict], topic: str, search_keywords:
 
 [판단 프로세스 - 반드시 이 순서대로 수행]
 
-Step 1. 핵심 대상 추출
-영상 주제에서 핵심 대상(고유명사: 제품명, 인물명, 기업명, 기술명)을 추출하세요.
-"AI", "기술", "인공지능", "시장", "트렌드" 같은 범용 단어는 핵심 대상이 아닙니다.
-예) "챗GPT와 클로드 비교 분석" → 핵심 대상: 챗GPT, ChatGPT, 클로드, Claude, OpenAI, Anthropic
-예) "엔비디아 주가 전망" → 핵심 대상: 엔비디아, NVIDIA, 젠슨황
+Step 1. 핵심 키워드 그룹 추출 (2개 그룹)
+영상 주제를 분석하여 **독립적인 키워드 그룹**을 추출하세요.
+
+그룹A - 고유명사: 제품명, 인물명, 기업명, 기술명 (예: Claude, Anthropic, GPT)
+그룹B - 핵심 개념: 주제의 구체적 테마 (예: AI 윤리, AI 편향성, 저작권 침해)
+
+⚠️ "AI", "기술", "인공지능", "시장", "트렌드" 같은 범용 단어는 어느 그룹에도 넣지 마세요.
+⚠️ 그룹B는 주제에 명시된 구체적 개념만 포함합니다.
+
+예) "Claude 3 출시와 AI의 윤리적 문제 심층 분석"
+→ 그룹A: Claude 3, Claude, Anthropic, 앤트로픽
+→ 그룹B: AI 윤리, AI 편향, AI 규제, 책임 AI, AI 안전
+
+예) "엔비디아 주가 전망과 반도체 시장 분석"
+→ 그룹A: 엔비디아, NVIDIA, 젠슨황
+→ 그룹B: 반도체 시장, GPU 수요, AI 칩
 
 Step 2. 기사별 판단
 각 기사에 대해 이 질문에 답하세요:
 "영상 스크립트를 쓰는 사람이 이 기사를 열었을 때, 스크립트에 직접 인용할 내용을 찾을 수 있는가?"
 
-포함 (O):
-- 기사의 주제 자체가 핵심 대상에 관한 것
-- 핵심 대상의 성능, 기능, 업데이트, 비교를 직접 다루는 기사
-- 핵심 대상에 대한 전문가 의견, 데이터, 분석이 담긴 기사
+포함 (O) - 아래 중 하나라도 해당하면 포함:
+- 그룹A의 고유명사가 기사의 주요 주제인 경우
+- 그룹B의 핵심 개념을 직접 다루는 기사 (전문가 의견, 데이터, 사례 포함)
+- 그룹A + 그룹B 모두 관련된 기사 (최우선 선택)
 
 제외 (X) - 아래 하나라도 해당하면 무조건 제외:
-- 핵심 대상이 제목과 설명에 전혀 등장하지 않는 기사
-- 다른 분야(의학, 교육, 부동산, 기업전략 등) 기사에서 핵심 대상을 도구/사례로 잠깐 언급하는 기사
-- 기업 전략, 주식, 투자 기사에서 핵심 대상 이름이 나올 뿐인 기사
-
-⚠️ 제목에 핵심 대상이 없고 설명에만 있는 기사는 특히 의심하세요.
-다른 분야 기사에서 잠깐 언급하는 경우가 대부분입니다.
+- 그룹A, 그룹B 어디에도 해당하지 않는 기사
+- 다른 분야 기사에서 핵심 대상을 도구/사례로 잠깐 언급하는 기사
+- 제목에 핵심 대상이 없고 설명에서만 잠깐 언급되는 기사
 
 [기사 목록]
 {article_list}
 
 [응답 형식 - 반드시 이 형식으로]
-핵심대상: (추출한 핵심 대상 나열)
+그룹A: (고유명사 나열)
+그룹B: (핵심 개념 나열)
 관련기사: (번호를 쉼표로 구분, 예: 1,3,5)
 
 관련 기사가 없으면:
-핵심대상: (추출한 핵심 대상 나열)
+그룹A: (고유명사 나열)
+그룹B: (핵심 개념 나열)
 관련기사: 없음"""
         
         response = llm.invoke(prompt)
@@ -172,17 +182,23 @@ Step 2. 기사별 판단
         
         # Chain-of-Thought 응답 파싱
         lines = content.strip().split("\n")
-        core_entities_line = ""
+        group_a_line = ""
+        group_b_line = ""
         articles_line = ""
         
         for line in lines:
             line_stripped = line.strip()
-            if line_stripped.startswith("핵심대상:"):
-                core_entities_line = line_stripped.replace("핵심대상:", "").strip()
+            if line_stripped.startswith("그룹A:"):
+                group_a_line = line_stripped.replace("그룹A:", "").strip()
+            elif line_stripped.startswith("그룹B:"):
+                group_b_line = line_stripped.replace("그룹B:", "").strip()
+            elif line_stripped.startswith("핵심대상:"):
+                group_a_line = line_stripped.replace("핵심대상:", "").strip()
             elif line_stripped.startswith("관련기사:"):
                 articles_line = line_stripped.replace("관련기사:", "").strip()
         
-        logger.info(f"GPT 핵심대상: {core_entities_line}")
+        logger.info(f"GPT 그룹A(고유명사): {group_a_line}")
+        logger.info(f"GPT 그룹B(핵심개념): {group_b_line}")
         logger.info(f"GPT 관련기사: {articles_line}")
         
         if articles_line == "없음" or not articles_line:

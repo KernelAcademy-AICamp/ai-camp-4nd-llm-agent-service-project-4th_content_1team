@@ -242,7 +242,7 @@ async def _build_topic_context(
             "urgency": topic.urgency or "normal",
             "content_angles": topic.content_angles or [],
             "recommendation_reason": topic.recommendation_reason or "",
-            "search_keywords": topic.search_keywords or [],  # Recommender가 생성한 검색 키워드
+            "search_keywords": topic.search_keywords or [],  # channel_topics/trend_topics 테이블의 뉴스 검색 키워드
             "based_on_topic": topic.based_on_topic or "",  # 어떤 트렌드 기반인지
         }
         

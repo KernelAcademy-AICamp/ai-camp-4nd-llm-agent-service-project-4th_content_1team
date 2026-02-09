@@ -25,7 +25,7 @@ def upgrade() -> None:
     sa.Column('user_id', sa.UUID(), nullable=False),
     sa.Column('channel_id', sa.String(), nullable=True),
     sa.Column('topic_title', sa.String(length=300), nullable=False),
-    sa.Column('topic_keywords', postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+    sa.Column('topic_keywords', postgresql.JSONB(astext_type=sa.Text()), nullable=False),
     sa.Column('language', sa.String(length=10), nullable=False),
     sa.Column('region', sa.String(length=10), nullable=False),
     sa.Column('status', sa.String(length=20), nullable=False),

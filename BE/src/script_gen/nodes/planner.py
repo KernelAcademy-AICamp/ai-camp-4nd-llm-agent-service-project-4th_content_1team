@@ -97,6 +97,13 @@ async def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             
             # --- 2-5. 성공! State 업데이트 ---
             logger.info("✅ Planner success: Content brief generated")
+            
+            # search_keywords → search_queries (yt_fetcher용)
+            topic_context = state.get("channel_profile", {}).get("topic_context", {})
+            search_keywords = topic_context.get("search_keywords", []) if topic_context else []
+            if search_keywords:
+                content_brief["search_queries"] = search_keywords
+            
             return {"content_brief": content_brief}
             
         
@@ -233,7 +240,7 @@ def _build_planner_prompt(
         if topic_context_data.get('recommendation_reason'):
             topic_context += f"- Why This Fits Your Channel: {topic_context_data.get('recommendation_reason')}\n"
         
-        # Recommender가 생성한 검색 키워드 (newsQuery 생성 시 참고)
+        # channel_topics/trend_topics에서 가져온 검색 키워드 (newsQuery 생성 시 참고)
         if topic_context_data.get('search_keywords'):
             topic_context += "- Pre-researched Keywords (USE these as base for newsQuery):\n"
             for kw in topic_context_data.get('search_keywords', []):
