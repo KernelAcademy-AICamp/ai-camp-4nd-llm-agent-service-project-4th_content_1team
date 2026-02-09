@@ -34,8 +34,11 @@ def verifier_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     logger.info("Verifier Node 시작")
     
-    # 1. 입력 데이터 추출
+    # Fan-in Guard: script_draft가 비어있으면 skip (Writer가 skip한 경우)
     script_draft = state.get("script_draft", {})
+    if not script_draft.get("script"):
+        logger.info("Verifier: 스크립트 없음, skip")
+        return {}
     script = Script(**script_draft.get("script", {}))
     news_data = state.get("news_data", {})
     facts = news_data.get("structured_facts", [])

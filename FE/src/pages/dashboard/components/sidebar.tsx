@@ -1,7 +1,7 @@
 "use client"
 
 import { Link, useLocation } from "react-router-dom"
-import { Play, Calendar, FileText, ImageIcon, Upload, Settings, LogOut, User } from "lucide-react"
+import { Play, Calendar, FileText, ImageIcon, Upload, Settings, LogOut, User, BarChart3 } from "lucide-react"
 import { cn } from "../../../lib/utils"
 import { Avatar, AvatarFallback } from "../../../components/ui/avatar"
 import {
@@ -14,6 +14,7 @@ import {
 
 const navItems = [
   { href: "/dashboard", label: "대시보드", icon: Calendar },
+  { href: "/analysis", label: "분석", icon: BarChart3 },
   { href: "/script", label: "스크립트", icon: FileText },
   { href: "/thumbnail", label: "썸네일", icon: ImageIcon },
   { href: "/upload", label: "업로드", icon: Upload },

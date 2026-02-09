@@ -10,6 +10,7 @@ Architecture (Phase 1 - MVP):
 
 import logging
 import uuid
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
@@ -80,7 +81,7 @@ class ScriptDraft(BaseModel):
     quality_report: QualityReport
 
 
-def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
+async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     Writer Node: Insight Blueprint를 바탕으로 대본 작성
     
@@ -92,6 +93,11 @@ def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         - script_draft: ScriptDraft 객체
     """
     logger.info("Writer Node 시작")
+    
+    # Fan-in Guard: insight_pack이 비어있으면 skip (Insight Builder가 skip한 경우)
+    if not state.get("insight_pack"):
+        logger.info("Writer: insight 데이터 없음, skip")
+        return {}
     
     # 1. 입력 데이터 추출
     insight_pack = state.get("insight_pack", {})
@@ -106,22 +112,33 @@ def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 2. Iterative Generation
     # (1) Intro
     logger.info("Generating Intro...")
-    hook = _generate_intro(base_context)
+    hook = await _generate_intro(base_context)
     
-    # (2) Chapters Loop
-    chapters = []
+    # (2) Chapters - 병렬 생성! (속도 최적화)
     chapter_plans = insight_pack.get("story_structure", {}).get("chapters", [])
     
-    for i, plan in enumerate(chapter_plans, 1):
-        logger.info(f"Generating Chapter {i}/{len(chapter_plans)}: {plan.get('title')}")
-        ch = _generate_chapter(base_context, plan, i)
-        # 챕터 번호 강제 할당 (순서 보장)
-        ch.chapter_id = str(i)
-        chapters.append(ch)
+    if chapter_plans:
+        logger.info(f"Generating {len(chapter_plans)} chapters in PARALLEL...")
+        
+        # 모든 챕터 동시 생성
+        chapter_tasks = [
+            _generate_chapter(base_context, plan, i)
+            for i, plan in enumerate(chapter_plans, 1)
+        ]
+        chapter_results = await asyncio.gather(*chapter_tasks)
+        
+        # 챕터 번호 할당
+        chapters = []
+        for i, ch in enumerate(chapter_results, 1):
+            ch.chapter_id = str(i)
+            chapters.append(ch)
+            logger.info(f"Chapter {i} generated: {ch.title}")
+    else:
+        chapters = []
         
     # (3) Outro
     logger.info("Generating Outro...")
-    closing = _generate_outro(base_context)
+    closing = await _generate_outro(base_context)
     
     # 3. Final Assembly
     final_script = Script(
@@ -167,7 +184,7 @@ def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
 # Helper Functions (Iterative Generation)
 # =============================================================================
 
-def _generate_intro(context_str: str) -> Hook:
+async def _generate_intro(context_str: str) -> Hook:
     """Step 1: Intro (Hook) 생성"""
     llm = ChatOpenAI(model=MODEL_NAME, temperature=0.7)
     structured_llm = llm.with_structured_output(Hook)
@@ -188,12 +205,12 @@ def _generate_intro(context_str: str) -> Hook:
 
 Generate the Hook object.
 """
-    return structured_llm.invoke([
+    return await structured_llm.ainvoke([
         SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language."),
         HumanMessage(content=prompt)
     ])
 
-def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index: int) -> Chapter:
+async def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index: int) -> Chapter:
     """Step 2: Single Chapter 생성 (상세 모드)"""
     llm = ChatOpenAI(model=MODEL_NAME, temperature=0.7)
     structured_llm = llm.with_structured_output(Chapter)
@@ -223,12 +240,12 @@ def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index: int) 
 
 **OUTPUT**: A single Chapter object with multiple Beats.
 """
-    return structured_llm.invoke([
+    return await structured_llm.ainvoke([
         SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language. Write DETAILED content."),
         HumanMessage(content=prompt)
     ])
 
-def _generate_outro(context_str: str) -> Closing:
+async def _generate_outro(context_str: str) -> Closing:
     """Step 3: Outro 생성"""
     llm = ChatOpenAI(model=MODEL_NAME, temperature=0.6)
     structured_llm = llm.with_structured_output(Closing)
@@ -247,7 +264,7 @@ def _generate_outro(context_str: str) -> Closing:
 
 Generate the Closing object.
 """
-    return structured_llm.invoke([
+    return await structured_llm.ainvoke([
         SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language."),
         HumanMessage(content=prompt)
     ])

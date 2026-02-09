@@ -1,4 +1,5 @@
 from celery import Celery
+from celery.schedules import crontab
 import os
 from dotenv import load_dotenv
 
@@ -23,4 +24,12 @@ celery_app.conf.update(
     enable_utc=False,
     # 작업 결과 만료 시간 (1시간)
     result_expires=3600,
+    # Celery Beat 스케줄
+    beat_schedule={
+        # 매일 오전 6시에 경쟁 유튜버 최신 영상 업데이트
+        "update-competitor-videos-daily": {
+            "task": "app.worker.task_update_all_competitor_videos",
+            "schedule": crontab(hour=6, minute=0),
+        },
+    },
 )

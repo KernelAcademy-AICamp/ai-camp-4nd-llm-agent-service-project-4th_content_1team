@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
 
     # Nano Banana API (for image generation)
-    nano_banana_api_key: str
+    nano_banana_api_key: Optional[str] = None
     
     @property
     def cors_origins_list(self) -> list[str]:

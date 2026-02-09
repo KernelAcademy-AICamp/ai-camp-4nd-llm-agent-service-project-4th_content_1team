@@ -45,8 +45,11 @@ export interface TaskStatusResponse {
 }
 
 // 스크립트 생성 시작
-export const executeScriptGen = async (topic: string): Promise<TaskStatusResponse> => {
-    const response = await api.post('/script-gen/execute', { topic });
+export const executeScriptGen = async (topic: string, topicRecommendationId?: string): Promise<TaskStatusResponse> => {
+    const response = await api.post('/script-gen/execute', {
+        topic,
+        topic_recommendation_id: topicRecommendationId,
+    });
     return response.data;
 };
 
@@ -81,3 +84,26 @@ export const pollScriptGenResult = async (
         }, 3000);
     });
 };
+
+// 스크립트 생성 이력 조회 (새로고침 후 결과 복원)
+export interface ScriptHistoryItem {
+    topic_request_id: string;
+    topic_title: string;
+    status: string;
+    created_at: string | null;
+    script: GeneratedScript | null;
+    references: ReferenceArticle[] | null;
+    competitor_videos: any[] | null;
+}
+
+export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistoryItem[]> => {
+    const response = await api.get(`/script-gen/scripts/history?limit=${limit}`);
+    return response.data.results || [];
+};
+
+// 특정 topic_request_id로 스크립트 결과 조회
+export const getScriptById = async (topicRequestId: string): Promise<ScriptHistoryItem> => {
+    const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
+    return response.data;
+};
+
