@@ -268,3 +268,69 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         }
 
 
+@celery_app.task(bind=True)
+def task_update_all_competitor_videos(self):
+    """
+    [Celery Task] 모든 경쟁 유튜버의 최신 영상 업데이트
+
+    매일 스케줄로 실행되어 등록된 모든 경쟁 채널의 최신 영상 3개를 가져옴
+    """
+    try:
+        logger.info(f"[Task {self.request.id}] 경쟁 유튜버 최신 영상 업데이트 시작")
+
+        # 비동기 함수 실행
+        result = asyncio.get_event_loop().run_until_complete(
+            _update_all_competitor_videos_async()
+        )
+
+        logger.info(f"[Task {self.request.id}] 경쟁 유튜버 최신 영상 업데이트 완료: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[Task {self.request.id}] 실행 실패: {e}", exc_info=True)
+        return {
+            "success": False,
+            "message": str(e),
+            "updated_count": 0
+        }
+
+
+async def _update_all_competitor_videos_async():
+    """경쟁 유튜버 최신 영상 업데이트 (비동기)"""
+    from sqlalchemy import select
+
+    from app.core.db import AsyncSessionLocal
+    from app.models.competitor_channel import CompetitorChannel
+    from app.services.competitor_channel_service import CompetitorChannelService
+
+    updated_count = 0
+    failed_count = 0
+
+    async with AsyncSessionLocal() as db:
+        # 모든 경쟁 채널 조회
+        result = await db.execute(select(CompetitorChannel))
+        channels = result.scalars().all()
+
+        logger.info(f"총 {len(channels)}개 경쟁 채널 업데이트 시작")
+
+        for channel in channels:
+            try:
+                # 서비스 메서드 사용 (영상 + 댓글 저장)
+                await CompetitorChannelService._save_recent_videos(
+                    db, channel.id, channel.channel_id
+                )
+                await db.commit()
+                updated_count += 1
+                logger.info(f"채널 '{channel.title}' 업데이트 완료")
+
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"채널 '{channel.title}' 업데이트 실패: {e}")
+                await db.rollback()
+
+    return {
+        "success": True,
+        "message": f"{updated_count}개 채널 업데이트 완료, {failed_count}개 실패",
+        "updated_count": updated_count,
+        "failed_count": failed_count
+    }

@@ -15,6 +15,8 @@ from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCo
 from app.models.caption import VideoCaption
 from app.models.video_content_analysis import VideoContentAnalysis
 from app.models.content_topic import ChannelTopic, TrendTopic
+from app.models.competitor_channel import CompetitorChannel
+from app.models.competitor_channel_video import CompetitorRecentVideo, RecentVideoComment, RecentVideoCaption
 
 # 스크립트 생성 파이프라인 모델
 from app.models.topic_request import TopicRequest, AgentRun
@@ -49,6 +51,10 @@ __all__ = [
     "VideoContentAnalysis",
     "ChannelTopic",
     "TrendTopic",
+    "CompetitorChannel",
+    "CompetitorRecentVideo",
+    "RecentVideoComment",
+    "RecentVideoCaption",
     # 파이프라인 공통
     "TopicRequest",
     "AgentRun",
