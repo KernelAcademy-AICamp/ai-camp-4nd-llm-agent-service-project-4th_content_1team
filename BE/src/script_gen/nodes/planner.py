@@ -11,6 +11,7 @@ import json
 import logging
 import re
 import time
+import asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +25,7 @@ class ValidationError(Exception):
     pass
 
 
-def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
+async def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     주제와 채널 정보를 바탕으로 콘텐츠 기획안을 생성하는 노드
     재시도 로직을 통해 정확히 5개의 챕터를 보장합니다.
@@ -51,7 +52,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # --- 1.5. News RAG: 최신 뉴스 검색 ---
     # Planner 호출 전에 최근 뉴스를 가져와서 프롬프트에 포함
     logger.info(f"Fetching recent news for topic: {topic}")
-    recent_news = _fetch_recent_news(topic)
+    recent_news = await _fetch_recent_news(topic)
     logger.info(f"Found {len(recent_news)} recent news articles")
     
     
@@ -80,7 +81,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 model=OPENAI_MODEL,
                 temperature=0.4,  # 낮은 값: 일관된 JSON 형식 유지 (0.7→0.4)
             )
-            response = llm.invoke(prompt)
+            response = await llm.ainvoke(prompt)
             
             
             # --- 2-3. 응답 파싱 ---
@@ -96,6 +97,13 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             
             # --- 2-5. 성공! State 업데이트 ---
             logger.info("✅ Planner success: Content brief generated")
+            
+            # search_keywords → search_queries (yt_fetcher용)
+            topic_context = state.get("channel_profile", {}).get("topic_context", {})
+            search_keywords = topic_context.get("search_keywords", []) if topic_context else []
+            if search_keywords:
+                content_brief["search_queries"] = search_keywords
+            
             return {"content_brief": content_brief}
             
         
@@ -114,7 +122,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # Exponential backoff (1초, 2초, 4초)
             wait_time = 2 ** attempt
             logger.info(f"Retrying in {wait_time}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
             continue
         
         except json.JSONDecodeError as e:
@@ -131,7 +139,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # Exponential backoff
             wait_time = 2 ** attempt
             logger.info(f"Retrying in {wait_time}s...")
-            time.sleep(wait_time)
+            await asyncio.sleep(wait_time)
             continue
     
     # 여기까지 오면 안 됨 (위에서 return 또는 raise 했어야 함)
@@ -140,7 +148,7 @@ def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 # --- 헬퍼 함수들 ---
 
-def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]:
+async def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]:
     """
     주제와 관련된 최신 뉴스를 검색하는 함수 (News RAG)
     
@@ -161,7 +169,7 @@ def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str, str]]
         )
         
         # 검색 쿼리 실행
-        results = search.invoke(f"{topic} 최신 뉴스")
+        results = await search.ainvoke(f"{topic} 최신 뉴스")
         
         # 결과 포맷팅
         news_list = []
@@ -217,6 +225,10 @@ def _build_planner_prompt(
     topic_context_data = channel_profile.get("topic_context")  # API에서 전달
     if topic_context_data:
         topic_context = "\n\n**AI RECOMMENDATION CONTEXT** (Why this topic was recommended):\n"
+        
+        if topic_context_data.get('based_on_topic'):
+            topic_context += f"- Based On Trend: {topic_context_data.get('based_on_topic')}\n"
+        
         topic_context += f"- Trend Basis: {topic_context_data.get('trend_basis', '')}\n"
         topic_context += f"- Urgency: {topic_context_data.get('urgency', 'normal').upper()}\n"
         
@@ -227,6 +239,12 @@ def _build_planner_prompt(
         
         if topic_context_data.get('recommendation_reason'):
             topic_context += f"- Why This Fits Your Channel: {topic_context_data.get('recommendation_reason')}\n"
+        
+        # channel_topics/trend_topics에서 가져온 검색 키워드 (newsQuery 생성 시 참고)
+        if topic_context_data.get('search_keywords'):
+            topic_context += "- Pre-researched Keywords (USE these as base for newsQuery):\n"
+            for kw in topic_context_data.get('search_keywords', []):
+                topic_context += f"  • {kw}\n"
     
     # [Trend Scout] 커뮤니티 반응 컨텍스트 (주석처리됨, 향후 사용 가능)
     # trend_context = ""
@@ -265,6 +283,14 @@ def _build_planner_prompt(
     
     if audience_needs:
         personalization_context += f"- Audience Needs: {audience_needs}\n"
+    
+    differentiator = channel_profile.get("differentiator")
+    if differentiator:
+        personalization_context += f"- Differentiator: {differentiator}\n"
+    
+    title_patterns = channel_profile.get("title_patterns", [])
+    if title_patterns:
+        personalization_context += f"- Proven Title Patterns: {', '.join(title_patterns)}\n"
     
     base_prompt = f"""You are an expert YouTube content planner specializing in high-engagement videos.
 

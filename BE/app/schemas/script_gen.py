@@ -50,6 +50,7 @@ class TopicContextResponse(BaseModel):
     urgency: str
     content_angles: List[str]
     recommendation_reason: str
+    search_keywords: List[str] = Field(default_factory=list)  # channel_topics/trend_topics 테이블에서 가져온 뉴스 검색 키워드
 
 
 class PlannerInputResponse(BaseModel):

@@ -1,29 +1,60 @@
 "use client"
 
-import { Suspense, useState } from "react"
+import { Suspense, useState, useEffect } from "react"
 import { useSearchParams } from "react-router-dom"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
-import { executeScriptGen, pollScriptGenResult } from "../../lib/api/services"
+import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle } from "../../lib/api/services"
 
 function ScriptPageContent() {
   const [searchParams] = useSearchParams()
   const topic = searchParams.get("topic") || "2026 게임 트렌드 예측"
+  const topicId = searchParams.get("topicId") || undefined
 
   const [isGenerating, setIsGenerating] = useState(false)
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
-  const [competitorVideos, setCompetitorVideos] = useState<any[]>([])
+
+  // 페이지 로드 시 DB에서 이전 결과 불러오기
+  useEffect(() => {
+    const loadHistory = async () => {
+      try {
+        if (topicId) {
+          // topicId가 있으면 해당 결과만 조회
+          const result = await getScriptById(topicId)
+          if (result.script) {
+            console.log("[FE] 이전 결과 복원 (by ID):", result.topic_title)
+            setScriptData(result.script)
+            setReferences(result.references || [])
+          }
+        } else {
+          // topicId 없으면 최근 이력에서 복원
+          const history = await getScriptHistory(1)
+          if (history.length > 0) {
+            const latest = history[0]
+            if (latest.script) {
+              console.log("[FE] 이전 결과 복원 (최근):", latest.topic_title)
+              setScriptData(latest.script)
+              setReferences(latest.references || [])
+            }
+          }
+        }
+      } catch (error) {
+        console.log("[FE] 이력 조회 실패 (첫 방문이면 정상):", error)
+      }
+    }
+    loadHistory()
+  }, [topicId])
 
   const handleGenerate = async () => {
     setIsGenerating(true)
     try {
       console.log("[FE] 스크립트 생성 요청:", topic)
-      const { task_id } = await executeScriptGen(topic)
+      const { task_id } = await executeScriptGen(topic, topicId)
       console.log("[FE] Task ID:", task_id)
 
       const result = await pollScriptGenResult(task_id, (status) => {
@@ -34,7 +65,6 @@ function ScriptPageContent() {
         console.log("[FE] 생성 완료!", result)
         setScriptData(result.script)
         setReferences(result.references || [])
-        setCompetitorVideos(result.competitor_videos || [])
       } else {
         console.error("[FE] 생성 실패:", result.error)
         alert(`생성 실패: ${result.error}`)
