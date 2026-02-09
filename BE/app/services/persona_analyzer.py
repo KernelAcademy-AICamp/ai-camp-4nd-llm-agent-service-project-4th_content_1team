@@ -216,6 +216,7 @@ class VideoStatsData:
     view_count: int
     like_count: int
     comment_count: int
+    duration_seconds: int
 
 
 def analyze_view_consistency(video_stats: List[VideoStatsData]) -> Interpretation:
@@ -362,6 +363,102 @@ def analyze_engagement(video_stats: List[VideoStatsData]) -> Interpretation:
         interpretation=" ".join(interpretations),
         category=category,
         confidence="high" if len(video_stats) >= 10 else "medium",
+    )
+
+
+# =============================================================================
+# 5. 최적 영상 길이 해석
+# =============================================================================
+
+def analyze_optimal_duration(video_stats: List[VideoStatsData]) -> Interpretation:
+    """
+    영상 길이별 성과를 분석하여 최적 길이 도출.
+
+    구간 분류:
+    | 구간       | 라벨       |
+    |-----------|-----------|
+    | ~300초     | ~5분      |
+    | 300~600   | 5~10분    |
+    | 600~1200  | 10~20분   |
+    | 1200~1800 | 20~30분   |
+    | 1800~     | 30분 이상  |
+
+    로직:
+    1. 각 구간별 영상 수, 평균 조회수 계산
+    2. 영상이 2개 이상인 구간 중 평균 조회수가 가장 높은 구간 = 최적 길이
+    3. 해당 구간의 라벨을 반환
+    """
+    if not video_stats or len(video_stats) < 5:
+        return Interpretation(
+            signal="영상 수 부족",
+            interpretation="최적 길이 분석을 위한 충분한 영상 데이터가 없습니다.",
+            category="insufficient_data",
+            confidence="low",
+        )
+
+    # 유효한 영상만 필터링 (duration > 0, view_count > 0)
+    valid_videos = [
+        v for v in video_stats
+        if v.duration_seconds and v.duration_seconds > 0 and v.view_count > 0
+    ]
+
+    if len(valid_videos) < 5:
+        return Interpretation(
+            signal="유효 데이터 부족",
+            interpretation="영상 길이 정보가 충분하지 않아 분석할 수 없습니다.",
+            category="insufficient_data",
+            confidence="low",
+        )
+
+    # 구간 정의
+    duration_ranges = [
+        (0, 300, "~5분"),
+        (300, 600, "5~10분"),
+        (600, 1200, "10~20분"),
+        (1200, 1800, "20~30분"),
+        (1800, float('inf'), "30분 이상"),
+    ]
+
+    # 구간별 집계
+    range_stats = {}
+    for min_sec, max_sec, label in duration_ranges:
+        videos_in_range = [
+            v for v in valid_videos
+            if min_sec <= v.duration_seconds < max_sec
+        ]
+        if videos_in_range:
+            avg_views = sum(v.view_count for v in videos_in_range) / len(videos_in_range)
+            range_stats[label] = {
+                "count": len(videos_in_range),
+                "avg_views": avg_views,
+            }
+
+    if not range_stats:
+        return Interpretation(
+            signal="분석 불가",
+            interpretation="영상 길이 데이터를 분석할 수 없습니다.",
+            category="no_data",
+            confidence="low",
+        )
+
+    # 영상 2개 이상인 구간 중 평균 조회수가 가장 높은 구간
+    valid_ranges = {k: v for k, v in range_stats.items() if v["count"] >= 2}
+
+    if not valid_ranges:
+        # 2개 이상인 구간이 없으면 가장 영상 수 많은 구간
+        best_range = max(range_stats.keys(), key=lambda k: range_stats[k]["count"])
+        stats = range_stats[best_range]
+    else:
+        best_range = max(valid_ranges.keys(), key=lambda k: valid_ranges[k]["avg_views"])
+        stats = valid_ranges[best_range]
+
+    avg_views_str = _format_number(int(stats["avg_views"]))
+
+    return Interpretation(
+        signal=f"최적 길이: {best_range} (평균 조회수 {avg_views_str}회, {stats['count']}개 영상)",
+        interpretation=f"{best_range} 길이의 영상이 가장 높은 성과를 보입니다. 이 길이에 맞춰 콘텐츠를 기획하면 좋습니다.",
+        category=best_range,
+        confidence="high" if stats["count"] >= 5 else "medium",
     )
 
 

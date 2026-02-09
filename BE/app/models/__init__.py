@@ -9,12 +9,14 @@ from app.models.youtube_channel import (
     YTAudienceDaily,
     YTGeoDaily,
 )
+from app.models.channel_video import YTChannelVideo, YTVideoStats
 from app.models.thumbnail_strategy import ThumbnailStrategy
 from app.models.thumbnail_generation import ThumbnailGeneration
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
 from app.models.caption import VideoCaption
 from app.models.video_content_analysis import VideoContentAnalysis
 from app.models.content_topic import ChannelTopic, TrendTopic
+from app.models.yt_my_video_analysis import YTMyVideoAnalysis
 
 __all__ = [
     "User",
@@ -26,6 +28,8 @@ __all__ = [
     "YTChannelTopic",
     "YTAudienceDaily",
     "YTGeoDaily",
+    "YTChannelVideo",
+    "YTVideoStats",
     "ThumbnailStrategy",
     "ThumbnailGeneration",
     "CompetitorCollection",
@@ -35,4 +39,5 @@ __all__ = [
     "VideoContentAnalysis",
     "ChannelTopic",
     "TrendTopic",
+    "YTMyVideoAnalysis",
 ]
