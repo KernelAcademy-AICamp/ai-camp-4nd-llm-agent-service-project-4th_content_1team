@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
@@ -9,21 +9,109 @@ import { Button } from "../../components/ui/button"
 import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
-import { BarChart3, Users, Search, FileText, Loader2, Plus, Sparkles } from "lucide-react"
+import { BarChart3, Users, Search, FileText, Loader2, Plus, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   searchChannels,
   addCompetitorChannel,
   getCompetitorChannels,
-  fetchVideoSubtitles,
+  analyzeRecentVideo,
+  refreshCompetitorVideos,
   type ChannelSearchResult,
   type CompetitorChannelResponse,
+  type CompetitorChannelListResponse,
+  type CompetitorChannelVideo,
+  type RecentVideoAnalyzeResponse,
 } from "../../lib/api/index"
+
+function VideoAnalysisResults({ video }: { video: CompetitorChannelVideo }) {
+  return (
+    <div className="mt-3 space-y-3 border-t border-border/50 pt-3">
+      {/* 성공이유 */}
+      {video.analysis_strengths && video.analysis_strengths.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+            <span className="text-xs font-semibold text-green-600">성공이유</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {video.analysis_strengths.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 부족한점 */}
+      {video.analysis_weaknesses && video.analysis_weaknesses.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-xs font-semibold text-orange-600">부족한점</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {video.analysis_weaknesses.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {/* 유저 반응 */}
+      {video.comment_insights && (
+        (video.comment_insights.reactions?.length > 0 || video.comment_insights.needs?.length > 0) && (
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <MessageSquare className="w-3.5 h-3.5 text-purple-500" />
+              <span className="text-xs font-semibold text-purple-600">유저 반응</span>
+            </div>
+            {video.comment_insights.reactions?.length > 0 && (
+              <div className="space-y-1 pl-5">
+                <span className="text-xs font-medium text-muted-foreground">주요 반응</span>
+                <ul className="space-y-1">
+                  {video.comment_insights.reactions.map((item, idx) => (
+                    <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {video.comment_insights.needs?.length > 0 && (
+              <div className="space-y-1 pl-5">
+                <span className="text-xs font-medium text-muted-foreground">시청자가 원하는 콘텐츠</span>
+                <ul className="space-y-1">
+                  {video.comment_insights.needs.map((item, idx) => (
+                    <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
+        )
+      )}
+
+      {/* 내 채널에 적용할 포인트 */}
+      {video.applicable_points && video.applicable_points.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Lightbulb className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-xs font-semibold text-blue-600">내 채널에 적용할 포인트</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {video.applicable_points.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
 
 export default function AnalysisPage() {
   const [searchQuery, setSearchQuery] = useState("")
   const [shouldSearch, setShouldSearch] = useState(false)
   const [analyzingVideoId, setAnalyzingVideoId] = useState<string | null>(null)
+  const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)
   const queryClient = useQueryClient()
 
   // 채널 검색 쿼리
@@ -46,6 +134,24 @@ export default function AnalysisPage() {
     staleTime: 1000 * 60 * 5,
   })
 
+  // 페이지 진입 시 최신 영상 자동 갱신 (분석 중이 아닐 때만 invalidate)
+  const refreshMutation = useMutation({
+    mutationFn: refreshCompetitorVideos,
+    onSuccess: (data) => {
+      if (data.updated_channels > 0 && !analyzingVideoId) {
+        console.log(`${data.updated_channels}개 채널 영상 갱신됨`)
+        queryClient.invalidateQueries({ queryKey: ['competitor-channels'] })
+      }
+    },
+    onError: (error) => {
+      console.warn('영상 갱신 실패 (기존 데이터 유지):', error)
+    },
+  })
+
+  useEffect(() => {
+    refreshMutation.mutate()
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+
   // 경쟁 채널 추가 mutation
   const addMutation = useMutation({
     mutationFn: (channel: ChannelSearchResult) =>
@@ -67,33 +173,63 @@ export default function AnalysisPage() {
     },
   })
 
-  // AI 영상 분석 (자막 가져오기) mutation
+  // AI 영상 분석 mutation (캐시 직접 업데이트로 스크롤 유지)
   const analysisMutation = useMutation({
-    mutationFn: (videoId: string) => fetchVideoSubtitles(videoId),
+    mutationFn: (videoId: string) => analyzeRecentVideo(videoId),
     onMutate: (videoId) => {
       setAnalyzingVideoId(videoId)
     },
-    onSuccess: (data) => {
-      console.log('자막 가져오기 결과:', data)
-      if (data.success) {
-        alert(data.message + '\n(콘솔에서 상세 내용 확인)')
-      } else {
-        alert(data.message || '자막을 가져올 수 없습니다')
-      }
+    onSuccess: (data: RecentVideoAnalyzeResponse) => {
+      console.log('AI 분석 결과:', data)
+      setExpandedVideoId(data.video_id)
+
+      // invalidateQueries 대신 캐시 직접 업데이트 → 스크롤 위치 유지
+      queryClient.setQueryData(
+        ['competitor-channels'],
+        (old: CompetitorChannelListResponse | undefined) => {
+          if (!old) return old
+          return {
+            ...old,
+            channels: old.channels.map((ch) => ({
+              ...ch,
+              recent_videos: ch.recent_videos?.map((v) =>
+                v.video_id === data.video_id
+                  ? {
+                      ...v,
+                      analysis_strengths: data.analysis_strengths,
+                      analysis_weaknesses: data.analysis_weaknesses,
+                      applicable_points: data.applicable_points,
+                      comment_insights: data.comment_insights,
+                      analyzed_at: data.analyzed_at,
+                    }
+                  : v
+              ),
+            })),
+          }
+        }
+      )
     },
     onError: (error: any) => {
-      console.error('자막 가져오기 실패:', error)
-      alert('자막 가져오기 실패: ' + (error?.response?.data?.detail || '알 수 없는 오류'))
+      console.error('AI 분석 실패:', error)
+      alert('AI 분석 실패: ' + (error?.response?.data?.detail || '알 수 없는 오류'))
     },
     onSettled: () => {
       setAnalyzingVideoId(null)
     },
   })
 
-  const handleAnalyzeVideo = (videoId: string, e: React.MouseEvent) => {
-    e.preventDefault()  // 링크 클릭 방지
-    e.stopPropagation() // 이벤트 버블링 방지
-    analysisMutation.mutate(videoId)
+  const handleAnalyzeVideo = (video: CompetitorChannelVideo, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // 이미 분석 완료된 영상이면 결과 토글
+    if (video.analyzed_at) {
+      setExpandedVideoId(expandedVideoId === video.video_id ? null : video.video_id)
+      return
+    }
+
+    // 분석 실행
+    analysisMutation.mutate(video.video_id)
   }
 
   const handleSearch = () => {
@@ -119,6 +255,47 @@ export default function AnalysisPage() {
       return `${(num / 10000).toFixed(1)}만`
     }
     return num.toLocaleString()
+  }
+
+  const getAnalysisButton = (video: CompetitorChannelVideo) => {
+    const isAnalyzing = analyzingVideoId === video.video_id
+    const isAnalyzed = !!video.analyzed_at
+    const isExpanded = expandedVideoId === video.video_id
+
+    if (isAnalyzing) {
+      return (
+        <Button size="sm" variant="outline" className="w-full mt-2 gap-1 text-xs" disabled>
+          <Loader2 className="w-3 h-3 animate-spin" />
+          AI 분석 중...
+        </Button>
+      )
+    }
+
+    if (isAnalyzed) {
+      return (
+        <Button
+          size="sm"
+          variant={isExpanded ? "default" : "outline"}
+          className="w-full mt-2 gap-1 text-xs"
+          onClick={(e) => handleAnalyzeVideo(video, e)}
+        >
+          <CheckCircle2 className="w-3 h-3" />
+          {isExpanded ? "분석 결과 닫기" : "AI 분석 결과 보기"}
+        </Button>
+      )
+    }
+
+    return (
+      <Button
+        size="sm"
+        variant="outline"
+        className="w-full mt-2 gap-1 text-xs"
+        onClick={(e) => handleAnalyzeVideo(video, e)}
+      >
+        <Sparkles className="w-3 h-3" />
+        AI 영상 분석
+      </Button>
+    )
   }
 
   return (
@@ -193,7 +370,7 @@ export default function AnalysisPage() {
                           className="pl-10"
                         />
                       </div>
-                      <Button 
+                      <Button
                         onClick={handleSearch}
                         disabled={!searchQuery.trim() || isLoading}
                         className="gap-2"
@@ -373,20 +550,10 @@ export default function AnalysisPage() {
                                         <div className="text-xs text-muted-foreground mt-1">
                                           댓글 {formatNumber(video.comment_count)}
                                         </div>
-                                        <Button
-                                          size="sm"
-                                          variant="outline"
-                                          className="w-full mt-2 gap-1 text-xs"
-                                          onClick={(e) => handleAnalyzeVideo(video.video_id, e)}
-                                          disabled={analyzingVideoId === video.video_id}
-                                        >
-                                          {analyzingVideoId === video.video_id ? (
-                                            <Loader2 className="w-3 h-3 animate-spin" />
-                                          ) : (
-                                            <Sparkles className="w-3 h-3" />
-                                          )}
-                                          AI 영상 분석
-                                        </Button>
+                                        {getAnalysisButton(video)}
+                                        {expandedVideoId === video.video_id && video.analyzed_at && (
+                                          <VideoAnalysisResults video={video} />
+                                        )}
                                       </div>
                                     </div>
                                   ))}
