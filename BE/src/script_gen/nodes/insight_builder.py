@@ -31,6 +31,11 @@ MODEL_NAME = "gpt-4o"
 def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("Insight Builder Node (2-Pass) 시작")
     
+    # Fan-in Guard: competitor_data가 아직 없으면 skip (GPT 호출 낭비 방지)
+    if state.get("competitor_data") is None:
+        logger.info("Insight Builder: competitor 분석 대기 중, skip")
+        return {}
+    
     # --- 1. 입력 데이터 파싱 및 안전한 변환 ---
     topic = state.get("topic", "Unknown Topic")  # [FIX] 주제 추가
     channel_profile = state.get("channel_profile", {})

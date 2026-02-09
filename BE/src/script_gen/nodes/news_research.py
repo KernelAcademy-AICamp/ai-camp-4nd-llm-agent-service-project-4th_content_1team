@@ -38,33 +38,41 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("News Research Node (Advanced) 시작")
     
     # 1. 입력 데이터
-    content_brief = state.get("content_brief", {})
-    research_plan = content_brief.get("researchPlan", {})
-    base_queries = research_plan.get("newsQuery", [])
+    # channel_topics/trend_topics에서 가져온 search_keywords를 검색 쿼리로 사용
+    channel_profile = state.get("channel_profile", {})
+    topic_context = channel_profile.get("topic_context", {})
+    base_queries = topic_context.get("search_keywords", []) if topic_context else []
+    
+    logger.info(f"검색 쿼리 (Recommender): {base_queries}")
     
     if not base_queries:
         return {"news_data": {"articles": []}}
     
     # 2. 뉴스 대량 수집 (Deep Fetch)
     # 쿼리당 15개씩 수집 -> 후보군 확보
+    topic = state.get("topic", "")
     logger.info(f"뉴스 후보군 수집 시작: 쿼리당 15개")
     raw_articles = _fetch_naver_news_bulk(base_queries)
     logger.info(f"뉴스 후보군 확보: {len(raw_articles)}개")
     
-    # 3. 중복 제거 및 대표 기사 선정 (Smart Dedup)
+    # 3. GPT 관련도 필터 (Chain-of-Thought: 핵심 대상 추출 → 관련 기사 선별)
+    relevant_articles = _filter_relevant_articles(raw_articles, topic, search_keywords=base_queries)
+    logger.info(f"관련도 필터 후: {len(relevant_articles)}개 (원본 {len(raw_articles)}개)")
+    
+    # 4. 중복 제거 및 대표 기사 선정 (Smart Dedup)
     # 비슷한 기사는 묶어서 버리고, 서로 다른 주제의 알짜 기사만 남김
-    unique_articles = _deduplicate_articles(raw_articles)
+    unique_articles = _deduplicate_articles(relevant_articles)
     logger.info(f"중복 제거 후 선별된 Top 기사: {len(unique_articles)}개")
     
-    # 4. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
+    # 5. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
     full_articles = _crawl_and_analyze(unique_articles)
     
-    # 5. [Fact Extractor] 팩트 구조화 및 시각화 제안 (New!)
+    # 6. [Fact Extractor] 팩트 구조화 및 시각화 제안
     # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
     structured_facts = _structure_facts(full_articles)
     
-    # 6. 결과 반환 (차트가 있는 기사 우선 정렬)
+    # 7. 결과 반환 (차트가 있는 기사 우선 정렬)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
     
     # [NEW] Writer에게 전달할 Opinions 모음 (모든 기사의 오피니언 통합)
@@ -86,6 +94,134 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
             "collected_at": datetime.now().isoformat()
         }
     }
+
+
+
+def _filter_relevant_articles(articles: List[Dict], topic: str, search_keywords: List[str] = None) -> List[Dict]:
+    """
+    GPT-4o-mini로 기사 제목+설명을 한 번에 보내서
+    주제와 관련 있는 기사만 필터링합니다.
+    
+    비용: ~$0.01 (제목+설명만 전송)
+    시간: 2~3초
+    """
+    if not articles or not topic:
+        return articles
+    
+    try:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            logger.warning("OPENAI_API_KEY 없음 → 필터 스킵")
+            return articles
+        
+        # 기사 목록 텍스트 생성
+        article_list = ""
+        for i, art in enumerate(articles):
+            article_list += f"{i+1}. [{art.get('title', '')}] {art.get('desc', '')}\n"
+        
+        keywords_str = ", ".join(search_keywords) if search_keywords else "없음"
+        
+        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0)
+        
+        prompt = f"""당신은 YouTube 스크립트 작성을 위한 뉴스 기사 선별 전문가입니다.
+
+[영상 주제]
+"{topic}"
+
+[검색 키워드]
+{keywords_str}
+
+[판단 프로세스 - 반드시 이 순서대로 수행]
+
+Step 1. 핵심 키워드 그룹 추출 (2개 그룹)
+영상 주제를 분석하여 **독립적인 키워드 그룹**을 추출하세요.
+
+그룹A - 고유명사: 제품명, 인물명, 기업명, 기술명 (예: Claude, Anthropic, GPT)
+그룹B - 핵심 개념: 주제의 구체적 테마 (예: AI 윤리, AI 편향성, 저작권 침해)
+
+⚠️ "AI", "기술", "인공지능", "시장", "트렌드" 같은 범용 단어는 어느 그룹에도 넣지 마세요.
+⚠️ 그룹B는 주제에 명시된 구체적 개념만 포함합니다.
+
+예) "Claude 3 출시와 AI의 윤리적 문제 심층 분석"
+→ 그룹A: Claude 3, Claude, Anthropic, 앤트로픽
+→ 그룹B: AI 윤리, AI 편향, AI 규제, 책임 AI, AI 안전
+
+예) "엔비디아 주가 전망과 반도체 시장 분석"
+→ 그룹A: 엔비디아, NVIDIA, 젠슨황
+→ 그룹B: 반도체 시장, GPU 수요, AI 칩
+
+Step 2. 기사별 판단
+각 기사에 대해 이 질문에 답하세요:
+"영상 스크립트를 쓰는 사람이 이 기사를 열었을 때, 스크립트에 직접 인용할 내용을 찾을 수 있는가?"
+
+포함 (O) - 아래 중 하나라도 해당하면 포함:
+- 그룹A의 고유명사가 기사의 주요 주제인 경우
+- 그룹B의 핵심 개념을 직접 다루는 기사 (전문가 의견, 데이터, 사례 포함)
+- 그룹A + 그룹B 모두 관련된 기사 (최우선 선택)
+
+제외 (X) - 아래 하나라도 해당하면 무조건 제외:
+- 그룹A, 그룹B 어디에도 해당하지 않는 기사
+- 다른 분야 기사에서 핵심 대상을 도구/사례로 잠깐 언급하는 기사
+- 제목에 핵심 대상이 없고 설명에서만 잠깐 언급되는 기사
+
+[기사 목록]
+{article_list}
+
+[응답 형식 - 반드시 이 형식으로]
+그룹A: (고유명사 나열)
+그룹B: (핵심 개념 나열)
+관련기사: (번호를 쉼표로 구분, 예: 1,3,5)
+
+관련 기사가 없으면:
+그룹A: (고유명사 나열)
+그룹B: (핵심 개념 나열)
+관련기사: 없음"""
+        
+        response = llm.invoke(prompt)
+        content = response.content.strip()
+        
+        # Chain-of-Thought 응답 파싱
+        lines = content.strip().split("\n")
+        group_a_line = ""
+        group_b_line = ""
+        articles_line = ""
+        
+        for line in lines:
+            line_stripped = line.strip()
+            if line_stripped.startswith("그룹A:"):
+                group_a_line = line_stripped.replace("그룹A:", "").strip()
+            elif line_stripped.startswith("그룹B:"):
+                group_b_line = line_stripped.replace("그룹B:", "").strip()
+            elif line_stripped.startswith("핵심대상:"):
+                group_a_line = line_stripped.replace("핵심대상:", "").strip()
+            elif line_stripped.startswith("관련기사:"):
+                articles_line = line_stripped.replace("관련기사:", "").strip()
+        
+        logger.info(f"GPT 그룹A(고유명사): {group_a_line}")
+        logger.info(f"GPT 그룹B(핵심개념): {group_b_line}")
+        logger.info(f"GPT 관련기사: {articles_line}")
+        
+        if articles_line == "없음" or not articles_line:
+            logger.warning("GPT가 관련 기사 없음으로 판단 → 원본 유지")
+            return articles
+        
+        # 번호 파싱
+        try:
+            relevant_indices = [int(x.strip()) - 1 for x in articles_line.split(",") if x.strip().isdigit()]
+            filtered = [articles[i] for i in relevant_indices if 0 <= i < len(articles)]
+            
+            if not filtered:
+                logger.warning("필터 결과 0개 → 원본 유지")
+                return articles
+            
+            return filtered
+        except Exception as e:
+            logger.warning(f"GPT 응답 파싱 실패: {e} → 원본 유지")
+            return articles
+            
+    except Exception as e:
+        logger.warning(f"관련도 필터 에러: {e} → 필터 스킵")
+        return articles
 
 
 def _fetch_naver_news_bulk(queries: List[str]) -> List[Dict]:
@@ -522,23 +658,20 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                 # [DEBUG] 중복 제거 후 로깅
                 logger.info(f"[DEBUG] 중복 제거 후: {len(candidates)}개")
                 
-                # --- AI 분석 단계 (Context check) ---
+                # --- AI 분석 단계 (Context check) - 병렬 처리! ---
                 final_images = []
                 charts = []
                 
                 # 기사 요약 (앞부분 500자) - AI에게 문맥 제공용
                 summary = text[:500]
                 
-                # 최대 5개 이미지에 대해 AI 검수 (비용 조절) [Change] 8 -> 5
-                logger.info(f"[DEBUG] AI 분석 시작: {len(candidates[:5])}개 이미지")
-                for img in candidates[:5]:
-                    # Referer로 기사 URL 전달하여 Hotlink Protection 우회
+                # 최대 5개 이미지에 대해 AI 검수 (비용 조절)
+                target_images = candidates[:5]
+                logger.info(f"[DEBUG] AI 분석 시작: {len(target_images)}개 이미지 (병렬)")
+                
+                # 병렬 처리 함수
+                def analyze_single_image(img):
                     analysis = _check_image_context(img["url"], item["title"], summary, referrer_url=item["url"])
-                    
-                    # [DEBUG] AI 분석 결과 로깅
-                    if not analysis.get("relevant"):
-                        logger.debug(f"[AI] 거부됨: {img['url'][:80]} - {analysis}")
-                    
                     if analysis.get("relevant"):
                         img_data = {
                             "url": img["url"],
@@ -547,17 +680,22 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                             "type": analysis.get("type", "other"),
                             "desc": analysis.get("description", "")
                         }
-                        
                         # [Local Save] 이미지 로컬 저장
                         local_path = download_image_to_local(img["url"], item["url"])
                         if local_path:
                             img_data["url"] = local_path
-                        else:
-                            # 저장 실패하면 원본 유지 (혹은 제외 정책에 따라 continue 가능)
-                            pass
-                        
-                        # [분리 로직] 차트/표는 charts에만, 나머지는 images에만 넣기
-                        if analysis.get("type") in ["chart", "table"]:
+                        return (analysis.get("type"), img_data)
+                    return None
+                
+                # ThreadPoolExecutor로 병렬 실행 (최대 5개 동시)
+                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as img_executor:
+                    results = list(img_executor.map(analyze_single_image, target_images))
+                
+                # 결과 분류
+                for result in results:
+                    if result:
+                        img_type, img_data = result
+                        if img_type in ["chart", "table"]:
                             charts.append(img_data)
                         else:
                             final_images.append(img_data)
