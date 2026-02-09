@@ -3,6 +3,7 @@ import type {
     CompetitorChannelCreate,
     CompetitorChannelResponse,
     CompetitorChannelListResponse,
+    RecentVideoAnalyzeResponse,
 } from '../types/competitor-channel.types';
 
 export const addCompetitorChannel = async (
@@ -45,6 +46,22 @@ export interface FetchSubtitlesResponse {
 
 export const fetchVideoSubtitles = async (videoId: string): Promise<FetchSubtitlesResponse> => {
     const response = await api.post('/api/v1/channels/competitor/fetch-subtitles', {
+        video_id: videoId
+    });
+    return response.data;
+};
+
+export const refreshCompetitorVideos = async (): Promise<{
+    success: boolean;
+    updated_channels: number;
+    total_channels: number;
+}> => {
+    const response = await api.post('/api/v1/channels/competitor/refresh-videos');
+    return response.data;
+};
+
+export const analyzeRecentVideo = async (videoId: string): Promise<RecentVideoAnalyzeResponse> => {
+    const response = await api.post('/api/v1/channels/competitor/analyze-video', {
         video_id: videoId
     });
     return response.data;

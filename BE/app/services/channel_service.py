@@ -294,12 +294,15 @@ class ChannelService:
                 search_resp.raise_for_status()
                 search_data = search_resp.json()
                 
-                video_ids = [
-                    item["id"]["videoId"]
-                    for item in search_data.get("items", [])
-                    if item.get("id", {}).get("videoId")
-                ]
-                
+                # 중복 제거하면서 순서 유지
+                seen = set()
+                video_ids = []
+                for item in search_data.get("items", []):
+                    vid = item.get("id", {}).get("videoId")
+                    if vid and vid not in seen:
+                        seen.add(vid)
+                        video_ids.append(vid)
+
                 if not video_ids:
                     return []
                 

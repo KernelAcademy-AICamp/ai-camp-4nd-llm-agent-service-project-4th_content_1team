@@ -38,6 +38,8 @@ class CompetitorRecentVideo(Base):
     analysis_strengths = Column(JSONB)  # 영상 장점 (리스트)
     analysis_weaknesses = Column(JSONB)  # 영상 부족한 점 (리스트)
     audience_reaction = Column(Text)  # 시청자 반응
+    applicable_points = Column(JSONB)  # 내 채널에 적용할 수 있는 포인트 (리스트)
+    comment_insights = Column(JSONB)  # 댓글 분석 결과 { reactions: [...], needs: [...] }
     
     # 메타
     created_at = Column(DateTime(timezone=True), default=datetime.utcnow)

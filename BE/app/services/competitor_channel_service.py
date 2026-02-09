@@ -1,3 +1,4 @@
+import json
 import logging
 from datetime import datetime
 from typing import List, Optional
@@ -137,9 +138,16 @@ class CompetitorChannelService:
                 max_results=3
             )
 
-            # 안전장치: 3개 초과 시 잘라내기
-            recent_videos = recent_videos[:3]
-            logger.info(f"YouTube API에서 {len(recent_videos)}개 영상 조회")
+            # 중복 제거 + 3개 제한
+            seen_ids = set()
+            unique_videos = []
+            for v in recent_videos:
+                vid = v.get("video_id")
+                if vid and vid not in seen_ids:
+                    seen_ids.add(vid)
+                    unique_videos.append(v)
+            recent_videos = unique_videos[:3]
+            logger.info(f"YouTube API에서 {len(recent_videos)}개 영상 조회 (중복 제거 후)")
 
             saved_videos = []
 
@@ -183,6 +191,17 @@ class CompetitorChannelService:
 
             await db.flush()
             logger.info("댓글 저장 완료 (flush)")
+
+            # 각 영상의 자막 미리 가져오기 (AI 분석 속도 향상)
+            for video, youtube_video_id in saved_videos:
+                try:
+                    caption_result = await CompetitorChannelService.get_or_fetch_caption(
+                        db, youtube_video_id
+                    )
+                    cue_count = sum(len(t.get("cues", [])) for t in caption_result.get("tracks", []))
+                    logger.info(f"자막 프리페치 완료: {youtube_video_id}, cues={cue_count}")
+                except Exception as e:
+                    logger.warning(f"자막 프리페치 실패 (분석 시 재시도): {youtube_video_id}: {e}")
 
         except Exception as e:
             logger.error(f"최신 영상 저장 실패: {e}", exc_info=True)
@@ -324,6 +343,59 @@ class CompetitorChannelService:
         return list(result.scalars().all())
 
     @staticmethod
+    async def refresh_competitor_videos(
+        db: AsyncSession,
+        user_id: UUID,
+    ) -> dict:
+        """
+        모든 경쟁 채널의 최신 영상을 확인하고 새 영상이 있으면 업데이트.
+
+        1. 각 채널별로 YouTube에서 최신 1개 영상 ID를 조회
+        2. DB에 저장된 영상 ID와 비교
+        3. 새 영상이 있으면 3개 모두 다시 가져오기
+        4. 새 영상이 없으면 스킵
+        """
+        channels = await CompetitorChannelService.get_all_competitor_channels(
+            db, user_id, include_videos=True
+        )
+
+        updated = 0
+        for channel in channels:
+            try:
+                # 최신 1개만 빠르게 조회하여 비교
+                latest = await ChannelService.get_channel_recent_videos(
+                    channel_id=channel.channel_id, max_results=1
+                )
+                if not latest:
+                    continue
+
+                latest_id = latest[0].get("video_id")
+                existing_ids = [v.video_id for v in (channel.recent_videos or [])]
+
+                if latest_id in existing_ids:
+                    logger.info(f"새 영상 없음 (스킵): {channel.title}")
+                    continue
+
+                # 새 영상 발견 → 전체 3개 다시 가져오기
+                logger.info(f"새 영상 발견! 갱신 시작: {channel.title}")
+                await CompetitorChannelService._save_recent_videos(
+                    db, channel.id, channel.channel_id
+                )
+                updated += 1
+
+            except Exception as e:
+                logger.warning(f"영상 갱신 실패 ({channel.title}): {e}")
+
+        if updated > 0:
+            await db.commit()
+
+        logger.info(f"영상 갱신 완료: {updated}/{len(channels)} 채널 업데이트")
+        return {
+            "updated_channels": updated,
+            "total_channels": len(channels),
+        }
+
+    @staticmethod
     async def delete_competitor_channel(
         db: AsyncSession,
         competitor_id: UUID
@@ -446,3 +518,193 @@ class CompetitorChannelService:
 
         fetch_result["from_cache"] = False
         return fetch_result
+
+    @staticmethod
+    async def analyze_recent_video(
+        db: AsyncSession,
+        youtube_video_id: str,
+        user_id: UUID,
+    ) -> dict:
+        """
+        경쟁 영상 AI 분석 (성공이유, 부족한점, 내 채널 적용 포인트)
+
+        1. 영상 조회 + 캐시 확인
+        2. 자막 텍스트 추출
+        3. 유저 채널 페르소나 조회
+        4. GPT-4o-mini로 분석
+        5. 결과 저장 및 반환
+        """
+        # 1. CompetitorRecentVideo 조회
+        result = await db.execute(
+            select(CompetitorRecentVideo)
+            .where(CompetitorRecentVideo.video_id == youtube_video_id)
+            .limit(1)
+        )
+        video = result.scalar_one_or_none()
+
+        if not video:
+            raise HTTPException(status_code=404, detail="등록된 경쟁 영상을 찾을 수 없습니다")
+
+        # 2. 캐시 확인 (이미 분석된 영상이면 즉시 반환)
+        if video.analyzed_at and video.analysis_strengths and video.analysis_weaknesses and video.applicable_points:
+            logger.info(f"캐시된 분석 결과 반환: {youtube_video_id}")
+            return {
+                "video_id": youtube_video_id,
+                "analysis_strengths": video.analysis_strengths,
+                "analysis_weaknesses": video.analysis_weaknesses,
+                "applicable_points": video.applicable_points,
+                "comment_insights": video.comment_insights or {"reactions": [], "needs": []},
+                "analyzed_at": video.analyzed_at.isoformat(),
+            }
+
+        # 3. 자막 텍스트 추출
+        caption_result = await CompetitorChannelService.get_or_fetch_caption(db, youtube_video_id)
+
+        tracks = caption_result.get("tracks", [])
+        cue_count = sum(len(t.get("cues", [])) for t in tracks)
+
+        if cue_count == 0:
+            raise HTTPException(status_code=400, detail="자막이 없는 영상은 AI 분석을 할 수 없습니다")
+
+        # 자막 텍스트 합치기
+        caption_text = ""
+        for track in tracks:
+            for cue in track.get("cues", []):
+                caption_text += cue.get("text", "") + " "
+        caption_text = caption_text.strip()
+
+        # 자막 길이 제한
+        max_chars = 12000
+        if len(caption_text) > max_chars:
+            caption_text = caption_text[:max_chars] + "..."
+
+        # 4. 유저의 ChannelPersona 조회 (내 채널 컨텍스트)
+        from app.models.channel_persona import ChannelPersona
+        from app.models.youtube_channel import YouTubeChannel
+
+        persona_context = ""
+        try:
+            yt_result = await db.execute(
+                select(YouTubeChannel).where(YouTubeChannel.user_id == user_id)
+            )
+            my_channel = yt_result.scalar_one_or_none()
+
+            if my_channel:
+                persona_result = await db.execute(
+                    select(ChannelPersona).where(ChannelPersona.channel_id == my_channel.channel_id)
+                )
+                persona = persona_result.scalar_one_or_none()
+
+                if persona:
+                    persona_context = f"""
+[내 채널 정보]
+- 채널 한줄 정의: {persona.one_liner or '없음'}
+- 주요 주제: {', '.join(persona.main_topics) if persona.main_topics else '없음'}
+- 콘텐츠 스타일: {persona.content_style or '없음'}
+- 타겟 시청자: {persona.target_audience or '없음'}
+- 차별화 포인트: {persona.differentiator or '없음'}
+"""
+        except Exception as e:
+            logger.warning(f"페르소나 조회 실패 (분석은 계속): {e}")
+
+        # 5. 댓글 데이터 추출
+        comments_context = ""
+        try:
+            comments_result = await db.execute(
+                select(RecentVideoComment)
+                .where(RecentVideoComment.recent_video_id == video.id)
+                .order_by(RecentVideoComment.likes.desc())
+                .limit(10)
+            )
+            comments = list(comments_result.scalars().all())
+
+            if comments:
+                comment_lines = []
+                for c in comments:
+                    likes_str = f"(좋아요 {c.likes})" if c.likes else ""
+                    comment_lines.append(f"- {c.text} {likes_str}")
+                comments_text = "\n".join(comment_lines)
+                comments_context = f"""
+[시청자 댓글 (좋아요 순 상위 {len(comments)}개)]
+{comments_text}
+"""
+                logger.info(f"댓글 {len(comments)}개 프롬프트에 포함")
+        except Exception as e:
+            logger.warning(f"댓글 조회 실패 (분석은 계속): {e}")
+
+        # 6. LLM 호출
+        api_key = settings.openai_api_key
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API 키가 설정되지 않았습니다.")
+
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+
+        llm = ChatOpenAI(model="gpt-5.2", api_key=api_key)
+
+        prompt = f"""당신은 전문 유튜브 콘텐츠 분석가입니다. 경쟁 유튜버의 영상 자막과 시청자 댓글을 분석하여 4가지를 알려주세요.
+
+분석 대상 영상 제목: {video.title}
+
+[자막 트랜스크립트]
+{caption_text}
+{comments_context}{persona_context}
+분석 지침:
+1. "strengths" — 이 영상이 잘 된 이유 3~5개. 구체적 근거(자막 내용 인용)를 반드시 포함.
+2. "weaknesses" — 이 영상에서 아쉬운 점 2~4개. "왜냐하면", "예를 들어" 등으로 구체적 이유를 반드시 포함.
+3. "applicable_points" — 내 채널에 적용할 수 있는 구체적 액션 아이템 3~5개.
+   {('내 채널 정보를 참고하여 맞춤형으로 제안해주세요.' if persona_context else '일반적인 유튜브 채널에 적용할 수 있도록 제안해주세요.')}
+4. "comment_insights" — 댓글 분석 결과:
+   - "reactions": 시청자들의 주요 반응 3~5개 (긍정/부정/요청 등 실제 댓글 내용 기반)
+   - "needs": 시청자들이 원하는 콘텐츠/니즈 2~4개 (댓글에서 추출한 구체적 요구사항)
+   {('댓글이 없으면 자막 내용에서 예상되는 시청자 반응과 니즈를 추론해주세요.' if not comments_context else '')}
+
+작성 스타일:
+- 한국어로 작성
+- 쉽고 자연스러운 구어체 사용
+- 구체적이고 실용적으로 작성 (추상적 표현 금지)
+- 각 항목은 1~2문장으로 간결하게
+
+출력 형식 (JSON만 출력, 다른 텍스트 없이):
+{{
+  "strengths": ["성공이유1", "성공이유2", ...],
+  "weaknesses": ["부족한점1", "부족한점2", ...],
+  "applicable_points": ["적용포인트1", "적용포인트2", ...],
+  "comment_insights": {{
+    "reactions": ["시청자 반응1", "시청자 반응2", ...],
+    "needs": ["시청자 니즈1", "시청자 니즈2", ...]
+  }}
+}}"""
+
+        try:
+            res = llm.invoke([HumanMessage(content=prompt)])
+            content = res.content.strip()
+            content = content.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"LLM 분석 파싱 실패: {e}")
+            raise HTTPException(status_code=500, detail="영상 분석 중 오류가 발생했습니다.")
+
+        strengths = parsed.get("strengths", [])
+        weaknesses = parsed.get("weaknesses", [])
+        applicable_points = parsed.get("applicable_points", [])
+        comment_insights = parsed.get("comment_insights", {"reactions": [], "needs": []})
+
+        # 결과 저장
+        video.analysis_strengths = strengths
+        video.analysis_weaknesses = weaknesses
+        video.applicable_points = applicable_points
+        video.comment_insights = comment_insights
+        video.analyzed_at = datetime.utcnow()
+
+        await db.commit()
+        logger.info(f"영상 분석 완료: {youtube_video_id}")
+
+        return {
+            "video_id": youtube_video_id,
+            "analysis_strengths": strengths,
+            "analysis_weaknesses": weaknesses,
+            "applicable_points": applicable_points,
+            "comment_insights": comment_insights,
+            "analyzed_at": video.analyzed_at.isoformat(),
+        }

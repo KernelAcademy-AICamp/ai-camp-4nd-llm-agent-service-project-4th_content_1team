@@ -17,6 +17,8 @@ from app.schemas.competitor_channel import (
     CompetitorChannelResponse,
     CompetitorChannelListResponse,
     CompetitorChannelVideoResponse,
+    RecentVideoAnalyzeRequest,
+    RecentVideoAnalyzeResponse,
 )
 from app.services.channel_service import ChannelService
 from app.services.competitor_channel_service import CompetitorChannelService
@@ -103,6 +105,8 @@ async def add_competitor_channel(
                     analysis_strengths=v.analysis_strengths,
                     analysis_weaknesses=v.analysis_weaknesses,
                     audience_reaction=v.audience_reaction,
+                    applicable_points=v.applicable_points,
+                    comment_insights=v.comment_insights,
                     analyzed_at=v.analyzed_at,
                 )
                 for v in channel.recent_videos
@@ -172,6 +176,8 @@ async def get_competitor_channels(
                         analysis_strengths=v.analysis_strengths,
                         analysis_weaknesses=v.analysis_weaknesses,
                         audience_reaction=v.audience_reaction,
+                        applicable_points=v.applicable_points,
+                        comment_insights=v.comment_insights,
                         analyzed_at=v.analyzed_at,
                     )
                     for v in ch.recent_videos[:3]  # 최대 3개만
@@ -261,6 +267,34 @@ async def update_competitor_videos(
         )
 
 
+@router.post("/competitor/refresh-videos")
+async def refresh_competitor_videos(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    경쟁 채널 최신 영상 자동 갱신
+
+    각 채널별로 새 영상이 있는지 확인하고, 있으면 업데이트합니다.
+    새 영상이 없으면 기존 데이터를 유지합니다.
+    """
+    try:
+        result = await CompetitorChannelService.refresh_competitor_videos(
+            db=db,
+            user_id=current_user.id,
+        )
+        return {
+            "success": True,
+            **result,
+        }
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"영상 갱신 실패: {str(e)}"
+        )
+
+
 class FetchSubtitlesRequest(BaseModel):
     video_id: str
 
@@ -305,4 +339,33 @@ async def fetch_video_subtitles(
         raise HTTPException(
             status_code=500,
             detail=f"자막 가져오기 실패: {str(e)}"
+        )
+
+
+@router.post("/competitor/analyze-video", response_model=RecentVideoAnalyzeResponse)
+async def analyze_recent_video(
+    request: RecentVideoAnalyzeRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    경쟁 영상 AI 분석 (성공이유, 부족한점, 내 채널 적용 포인트)
+
+    자막 기반으로 GPT-4o-mini가 3가지 분석을 수행합니다.
+    이미 분석된 영상은 캐시된 결과를 즉시 반환합니다.
+    """
+    try:
+        result = await CompetitorChannelService.analyze_recent_video(
+            db=db,
+            youtube_video_id=request.video_id,
+            user_id=current_user.id,
+        )
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"영상 분석 실패: {str(e)}"
         )

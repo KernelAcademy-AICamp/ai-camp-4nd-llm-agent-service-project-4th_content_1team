@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import Dict, List, Optional
 from datetime import datetime
 
 
@@ -38,6 +38,8 @@ class CompetitorChannelVideoResponse(BaseModel):
     analysis_strengths: Optional[List[str]] = None
     analysis_weaknesses: Optional[List[str]] = None
     audience_reaction: Optional[str] = None
+    applicable_points: Optional[List[str]] = None
+    comment_insights: Optional[Dict] = None  # { reactions: [...], needs: [...] }
     analyzed_at: Optional[datetime] = None
 
     class Config:
@@ -77,3 +79,24 @@ class CompetitorChannelListResponse(BaseModel):
     """경쟁 채널 목록 응답"""
     total: int
     channels: List[CompetitorChannelResponse]
+
+
+class RecentVideoAnalyzeRequest(BaseModel):
+    """영상 AI 분석 요청"""
+    video_id: str
+
+
+class CommentInsights(BaseModel):
+    """댓글 분석 결과"""
+    reactions: List[str] = []
+    needs: List[str] = []
+
+
+class RecentVideoAnalyzeResponse(BaseModel):
+    """영상 AI 분석 응답"""
+    video_id: str
+    analysis_strengths: List[str]
+    analysis_weaknesses: List[str]
+    applicable_points: List[str]
+    comment_insights: CommentInsights
+    analyzed_at: datetime

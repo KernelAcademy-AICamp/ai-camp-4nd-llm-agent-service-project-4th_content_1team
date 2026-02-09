@@ -31,6 +31,11 @@ export interface CompetitorChannelVideo {
     analysis_strengths?: string[];
     analysis_weaknesses?: string[];
     audience_reaction?: string;
+    applicable_points?: string[];
+    comment_insights?: {
+        reactions: string[];
+        needs: string[];
+    };
     analyzed_at?: string;
 }
 
@@ -57,4 +62,18 @@ export interface CompetitorChannelResponse {
 export interface CompetitorChannelListResponse {
     total: number;
     channels: CompetitorChannelResponse[];
+}
+
+export interface CommentInsights {
+    reactions: string[];
+    needs: string[];
+}
+
+export interface RecentVideoAnalyzeResponse {
+    video_id: string;
+    analysis_strengths: string[];
+    analysis_weaknesses: string[];
+    applicable_points: string[];
+    comment_insights: CommentInsights;
+    analyzed_at: string;
 }
