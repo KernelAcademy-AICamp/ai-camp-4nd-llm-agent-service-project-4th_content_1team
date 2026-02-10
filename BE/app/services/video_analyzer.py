@@ -412,7 +412,7 @@ async def _analyze_batch_with_llm(
                         "contents": [{"parts": [{"text": prompt}]}],
                         "generationConfig": {
                             "temperature": 0.3,
-                            "maxOutputTokens": 8192,
+                            "maxOutputTokens": 16384,
                             "responseMimeType": "application/json",
                         },
                     },
