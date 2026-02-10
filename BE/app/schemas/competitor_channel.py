@@ -100,3 +100,20 @@ class RecentVideoAnalyzeResponse(BaseModel):
     applicable_points: List[str]
     comment_insights: CommentInsights
     analyzed_at: datetime
+
+
+class CompetitorTopicItem(BaseModel):
+    """경쟁자 분석 기반 추천 주제 항목"""
+    title: str
+    recommendation_reason: str
+    content_angles: List[str] = []
+    urgency: str = "normal"
+    search_keywords: List[str] = []
+    trend_basis: Optional[str] = None
+
+
+class CompetitorTopicsGenerateResponse(BaseModel):
+    """경쟁자 분석 기반 주제 추천 응답"""
+    success: bool
+    message: str
+    topics: List[CompetitorTopicItem] = []

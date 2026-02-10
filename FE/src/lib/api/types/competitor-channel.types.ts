@@ -77,3 +77,27 @@ export interface RecentVideoAnalyzeResponse {
     comment_insights: CommentInsights;
     analyzed_at: string;
 }
+
+export interface CompetitorTopicsGenerateResponse {
+    success: boolean;
+    message: string;
+    topics: Array<{
+        title: string;
+        recommendation_reason: string;
+        content_angles: string[];
+        urgency: string;
+        search_keywords: string[];
+        trend_basis: string | null;
+    }>;
+}
+
+export interface AutoAnalyzeResponse {
+    success: boolean;
+    refresh: {
+        updated_channels: number;
+        total_channels: number;
+    };
+    analyzed: number;
+    reused: number;
+    skipped: number;
+}
