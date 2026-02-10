@@ -66,7 +66,7 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     
     # 5. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
-    full_articles = _crawl_and_analyze(unique_articles)
+    full_articles = _crawl_and_analyze(unique_articles, topic=topic)
     
     # 6. [Fact Extractor] 팩트 구조화 및 시각화 제안
     # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
@@ -170,21 +170,28 @@ Step 2. 기사별 판단
 [응답 형식 - 반드시 이 형식으로]
 그룹A: (고유명사 나열)
 그룹B: (핵심 개념 나열)
-관련기사: (번호를 쉼표로 구분, 예: 1,3,5)
+A+B기사: (그룹A와 그룹B 모두 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
+A기사: (그룹A만 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
+B기사: (그룹B만 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
 
-관련 기사가 없으면:
-그룹A: (고유명사 나열)
-그룹B: (핵심 개념 나열)
-관련기사: 없음"""
+예시:
+그룹A: Claude, Anthropic, 앤트로픽
+그룹B: AI 윤리, AI 규제
+A+B기사: 1,3
+A기사: 5,7
+B기사: 2,8"""
         
         response = llm.invoke(prompt)
         content = response.content.strip()
         
-        # Chain-of-Thought 응답 파싱
+        # 카테고리별 응답 파싱
         lines = content.strip().split("\n")
         group_a_line = ""
         group_b_line = ""
-        articles_line = ""
+        ab_line = ""
+        a_only_line = ""
+        b_only_line = ""
+        legacy_articles_line = ""  # 이전 형식 호환
         
         for line in lines:
             line_stripped = line.strip()
@@ -194,27 +201,76 @@ Step 2. 기사별 판단
                 group_b_line = line_stripped.replace("그룹B:", "").strip()
             elif line_stripped.startswith("핵심대상:"):
                 group_a_line = line_stripped.replace("핵심대상:", "").strip()
+            elif line_stripped.startswith("A+B기사:"):
+                ab_line = line_stripped.replace("A+B기사:", "").strip()
+            elif line_stripped.startswith("A기사:"):
+                a_only_line = line_stripped.replace("A기사:", "").strip()
+            elif line_stripped.startswith("B기사:"):
+                b_only_line = line_stripped.replace("B기사:", "").strip()
             elif line_stripped.startswith("관련기사:"):
-                articles_line = line_stripped.replace("관련기사:", "").strip()
+                legacy_articles_line = line_stripped.replace("관련기사:", "").strip()
         
         logger.info(f"GPT 그룹A(고유명사): {group_a_line}")
         logger.info(f"GPT 그룹B(핵심개념): {group_b_line}")
-        logger.info(f"GPT 관련기사: {articles_line}")
+        logger.info(f"GPT A+B기사: {ab_line}, A기사: {a_only_line}, B기사: {b_only_line}")
         
-        if articles_line == "없음" or not articles_line:
-            logger.warning("GPT가 관련 기사 없음으로 판단 → 원본 유지")
-            return articles
+        # 번호 파싱 헬퍼
+        def parse_indices(line_str):
+            if not line_str or line_str == "없음":
+                return []
+            return [int(x.strip()) - 1 for x in line_str.split(",") if x.strip().isdigit()]
         
-        # 번호 파싱
         try:
-            relevant_indices = [int(x.strip()) - 1 for x in articles_line.split(",") if x.strip().isdigit()]
-            filtered = [articles[i] for i in relevant_indices if 0 <= i < len(articles)]
+            # 이전 형식 호환: "관련기사:" 형식으로 응답한 경우
+            if not ab_line and not a_only_line and not b_only_line and legacy_articles_line:
+                logger.info("이전 형식 응답 감지 → 레거시 파싱")
+                relevant_indices = parse_indices(legacy_articles_line)
+                filtered = [articles[i] for i in relevant_indices if 0 <= i < len(articles)]
+                return filtered if filtered else articles
             
-            if not filtered:
+            ab_indices = parse_indices(ab_line)
+            a_only_indices = parse_indices(a_only_line)
+            b_only_indices = parse_indices(b_only_line)
+            
+            # 전부 비어있으면 원본 유지
+            if not ab_indices and not a_only_indices and not b_only_indices:
+                logger.warning("GPT가 관련 기사 없음으로 판단 → 원본 유지")
+                return articles
+            
+            # 우선순위 정렬: A+B 먼저, 나머지 슬롯은 A/B 균등 배분
+            MAX_ARTICLES = 5
+            result = []
+            
+            # 1순위: A+B 기사 (최대 5개)
+            for i in ab_indices:
+                if 0 <= i < len(articles) and len(result) < MAX_ARTICLES:
+                    result.append(articles[i])
+            
+            logger.info(f"A+B 기사 {len(result)}개 선택")
+            
+            # 남은 슬롯을 A/B 균등 배분
+            remaining = MAX_ARTICLES - len(result)
+            if remaining > 0:
+                a_articles = [articles[i] for i in a_only_indices if 0 <= i < len(articles)]
+                b_articles = [articles[i] for i in b_only_indices if 0 <= i < len(articles)]
+                
+                # 균등 배분: 각각 remaining // 2, 나머지는 A부터
+                a_count = (remaining + 1) // 2  # 홀수면 A가 1개 더
+                b_count = remaining // 2
+                
+                for art in a_articles[:a_count]:
+                    result.append(art)
+                for art in b_articles[:b_count]:
+                    result.append(art)
+                
+                logger.info(f"A기사 {min(len(a_articles), a_count)}개, B기사 {min(len(b_articles), b_count)}개 추가")
+            
+            if not result:
                 logger.warning("필터 결과 0개 → 원본 유지")
                 return articles
             
-            return filtered
+            logger.info(f"최종 선별: {len(result)}개 (A+B:{len([i for i in ab_indices if 0 <= i < len(articles)])}, A:{len(a_only_indices)}, B:{len(b_only_indices)})")
+            return result
         except Exception as e:
             logger.warning(f"GPT 응답 파싱 실패: {e} → 원본 유지")
             return articles
@@ -303,8 +359,8 @@ def _deduplicate_articles(articles: List[Dict]) -> List[Dict]:
             union = len(words_i | words_j)
             keyword_sim = intersection / union if union > 0 else 0
             
-            # 제목 40% 이상 OR 내용 70% 이상 OR 키워드 50% 이상 비슷하면 같은 기사
-            if title_sim >= 0.4 or desc_sim >= 0.7 or keyword_sim >= 0.5:
+            # 제목 65% 이상 OR 내용 70% 이상 OR 키워드 60% 이상 비슷하면 같은 기사
+            if title_sim >= 0.65 or desc_sim >= 0.7 or keyword_sim >= 0.6:
                 current_cluster.append(articles[j])
                 visited[j] = True
         
@@ -476,7 +532,7 @@ def _check_image_context(image_url: str, article_title: str, article_summary: st
     return {"relevant": False}
 
 
-def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
+def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
     """Playwright로 접속하여 본문 및 이미지를 싹 긁어오고 AI로 분석"""
     results = []
     
@@ -704,50 +760,87 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                 
                 # [AI] 기사 분석 및 UI용 데이터 구조화 (Fact vs Opinion)
                 try:
-                    # 텍스트가 너무 길면 앞부분 4000자만 사용
-                    input_text = text[:4000] 
+                    # 텍스트가 너무 길면 앞부분 15000자 사용 (8000 → 15000 확장, 긴 기사 후반부 킬러 포인트 확보)
+                    input_text = text[:15000] 
                     
                     api_key = os.getenv("OPENAI_API_KEY")
                     if api_key and len(input_text) > 300:
-                        llm_extract = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.0)
+                        llm_extract = ChatOpenAI(model="gpt-5-mini", api_key=api_key, temperature=1)
                         
-                        analysis_prompt = f"""
-                        Analyze the news article below and return a JSON object with the following fields:
+                        analysis_prompt = f"""당신은 YouTube 크리에이터의 리서치 어시스턴트입니다.
 
-                        1. "source": Name of the news outlet/press (e.g., "TechCrunch", "매일경제"). Extract from text or infer from context.
-                        2. "summary_short": A single sentence summary of the most critical point (Korean).
-                        3. "analysis": An object containing two lists:
-                            - "facts": A list of objective facts, statistics, specific numbers, and confirmed events (Korean).
-                            - "opinions": A list of subjective claims, interpretations, and predictions (Korean). 
-                                          **CRITICAL EXECUTION & SORTING ORDER (Final Logic)**:
-                                          
-                                          1. **Extraction (UNLIMITED)**:
-                                             - Extract ALL explicit quotes/opinions from specific speakers (`[전문가]`, `[업계]`, `[분석]`).
-                                             - Extract ALL valid `[전망]` (Outlook) and `[해석]` (Insight) from the text.
-                                          
-                                          2. **Slot Filling Strategy (Target: 5 Items)**:
-                                             - **Slot 1 (Mandatory)**: Best `[전망]`
-                                             - **Slot 2 (Mandatory)**: Best `[해석]`
-                                             - **Slot 3 (Priority)**: `[전문가]` if exists. Else -> Backfill with extra `[전망]`.
-                                             - **Slot 4 (Priority)**: `[업계]` if exists. Else -> Backfill with extra `[해석]`.
-                                             - **Slot 5 (Priority)**: `[분석]` if exists. Else -> Backfill with extra `[전망]` or `[해석]`.
-                                          
-                                          3. **Final Grouping (Strict Sorting)**:
-                                             Regardless of how slots were filled, you MUST sort the final list in this grouped order:
-                                             
-                                             **GROUP 1**: All `[전망]` items (Original + Backfilled)
-                                             **GROUP 2**: All `[해석]` items (Original + Backfilled)
-                                             **GROUP 3**: All `[전문가]` items
-                                             **GROUP 4**: All `[업계]` items
-                                             **GROUP 5**: All `[분석]` items
-                                          
-                                          Example Output (Grouped):
-                                          "[전망] 2026년 성장세 지속", "[전망] (추가) 아시아 시장 확대", "[해석] 규제 완화 덕분", "[전문가] 김교수는...", "[업계] 이대표는..."
-                        4. "key_paragraphs": Extract ALL original distinct paragraphs that contain facts/data (No rewriting, just copy-paste). Separated by double newlines.
+[목적]
+유튜버가 스크립트에서 "OO뉴스에 따르면..."으로 인용할 수 있는 검증 가능한 팩트를 추출합니다.
+추출된 팩트가 스크립트에 녹아들어, 시청자에게 "이 영상은 근거 있는 정보를 전달한다"는 신뢰를 줍니다.
 
-                        [Article Text]
-                        {input_text}
-                        """
+[영상 주제]
+"{topic}"
+
+⚠️ 절대 규칙:
+- 기사에 없는 내용은 절대 만들지 마시오.
+- 관련기사 목록의 제목은 분석 대상이 아닙니다.
+- 기사 전체를 위→아래 순서로 요약하지 마시오. 선별하시오.
+- 같은 내용을 다른 표현으로 반복하지 마시오.
+
+다음 JSON 형식으로 응답하세요:
+
+1. "source": 언론사명 (예: "매일경제", "TechCrunch")
+2. "summary_short": 기사 핵심 1문장 요약 (한국어)
+3. "analysis": 아래 두 리스트를 포함하는 객체:
+
+    - "facts": 유튜버가 스크립트에 인용할 수 있는 검증 가능한 사실 (한국어)
+      
+      추출 기준 — 아래 4가지 유형을 각각 찾으세요:
+      
+      [유형A: 핵심 수치] 금액, 건수, 비율 등 임팩트 있는 숫자 (핵심 2~3개만)
+        예: "앤트로픽은 API 매출 31억 달러를 보고했다"
+      
+      [유형B: 사건·행위] 누가 무엇을 했는지 — 스토리가 되는 것
+        예: "앤트로픽은 유압식 절단기로 중고책을 분리·스캔해 AI 학습에 활용했다"
+      
+      [유형C: 직접 인용] 기사 속 인물/단체의 원문 발언 (큰따옴표 유지)
+        예: "다리오 아모데이는 '처음 앤트로픽을 시작했을 때, 어떻게 돈을 벌지 전혀 몰랐습니다'라고 말했다"
+      
+      [유형D: 의외의 디테일] 시청자가 놀랄만한 에피소드, 반전, 아이러니
+        예: "클로드에게 자판기를 운영시켰더니, 비싸고 쓸모없는 텅스텐 큐브를 재고로 들여놓기로 결정했다"
+      
+      ⚠️ 금지:
+      - 같은 사실을 다른 문장으로 반복 (중복 금지)
+      - "빠르게 성장하고 있다" 같은 모호한 서술
+      - 영상 주제와 관련 없는 배경 정보
+      - 기업이 자사 제품/서비스에 대해 주장하는 내용 → facts가 아니라 opinions의 [업계]로 분류
+        예: "알리바바에 따르면 19개 벤치마크에서 경쟁력을 보였다" → [업계]
+        예: "삼성은 갤럭시가 업계 최고 성능이라고 밝혔다" → [업계]
+
+    - "opinions": 전문가/기관의 의견, 해석, 전망 (한국어)
+      
+      추출 규칙:
+      - facts에 이미 포함된 내용을 말투만 바꿔서 넣지 마시오 (중복 금지)
+      - 반드시 발언한 사람/기관의 이름이 있어야 함
+      - 기사에서 찾을 수 있는 만큼만 추출 (없으면 빈 배열도 가능)
+      - 억지로 개수를 채우지 마시오
+      
+      유형 태그: [전문가] [업계] [전망] [해석] [분석]
+      - [전문가]: 이름+직함이 있는 전문가의 직접 발언
+      - [업계]: 업계 관계자, 협회, 기관의 공식 입장
+      - [전망]: 미래 예측 (구체적 근거가 있는 것만)
+      - [해석]: 기사 속 분석가/전문가의 해석
+      - [분석]: 데이터 기반 분석적 주장
+      
+      [좋은 예시]
+      "[전문가] 다리오 아모데이(앤트로픽 CEO)는 '데이터센터를 그렇게 많이 사서 스스로를 과도하게 레버리지할 수 있을까요?'라고 경쟁사를 비꼬았다"
+      "[업계] 영국출판협회는 '비난받아 마땅하다. 비밀로 유지하려 했다는 사실 자체가 문제점을 인지하고 있었음을 시사한다'고 지적했다"
+      
+      [나쁜 예시 - 이렇게 하지 마시오]
+      "[분석] AI 기술이 발전하고 있다" ← 모호
+      "[전문가] 업계에서는 성장할 것으로 보인다" ← 이름 없음
+      "[전망] 매출이 100억 달러에 근접할 전망이다" ← facts에 이미 있는 내용 중복
+
+4. "key_paragraphs": 팩트/데이터가 포함된 원본 문단 전부 (수정 없이 복사). 이중 줄바꿈으로 구분.
+
+[기사 본문]
+{input_text}
+"""
                         
                         msg = HumanMessage(content=analysis_prompt)
                         res = llm_extract.invoke([msg])
@@ -763,7 +856,7 @@ def _crawl_and_analyze(articles: List[Dict]) -> List[Dict]:
                             # 기존 파이프라인(Writer 등)을 위해 summary 필드에는 원문 핵심 문단을 유지
                             item["summary"] = data.get("key_paragraphs", text[:1000]) 
                             
-                            logger.info(f"[AI] 기사 분석 완료: {item['source']} (Facts: {len(item['analysis']['facts'])}, Opinions: {len(item['analysis']['opinions'])})")
+                            logger.info(f"[AI] 기사 분석 완료: {item['source']} (Facts: {len(item['analysis'].get('facts', []))}, Opinions: {len(item['analysis'].get('opinions', []))})")
                         except json.JSONDecodeError:
                             logger.warning("[AI] JSON 파싱 실패, fallback 수행")
                             item["source"] = "Unknown"
