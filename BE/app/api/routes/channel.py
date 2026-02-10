@@ -401,3 +401,34 @@ async def generate_competitor_topics(
             status_code=500,
             detail=f"경쟁자 기반 주제 추천 실패: {str(e)}"
         )
+
+
+@router.post("/competitor/auto-analyze")
+async def auto_analyze_competitors(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    자동 경쟁자 분석 파이프라인 (대시보드 진입 시 백그라운드 호출)
+
+    1. 경쟁 채널 최신 영상 갱신
+    2. 미분석 영상 자동 분석 (타 유저 분석 결과 공유 활용)
+    3. 분석 결과 반환
+    """
+    try:
+        result = await CompetitorChannelService.auto_analyze_competitors(
+            db=db,
+            user_id=current_user.id,
+        )
+        return {
+            "success": True,
+            **result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"자동 분석 실패: {str(e)}"
+        )

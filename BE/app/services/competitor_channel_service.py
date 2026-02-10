@@ -641,7 +641,7 @@ class CompetitorChannelService:
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
 
-        llm = ChatOpenAI(model="gpt-5.2", api_key=api_key)
+        llm = ChatOpenAI(model="gpt-4.1", api_key=api_key)
 
         prompt = f"""당신은 전문 유튜브 콘텐츠 분석가입니다. 경쟁 유튜버의 영상 자막과 시청자 댓글을 분석하여 4가지를 알려주세요.
 
@@ -708,6 +708,173 @@ class CompetitorChannelService:
             "applicable_points": applicable_points,
             "comment_insights": comment_insights,
             "analyzed_at": video.analyzed_at.isoformat(),
+        }
+
+    @staticmethod
+    async def _generate_applicable_points(
+        db: AsyncSession,
+        video: CompetitorRecentVideo,
+        user_id: UUID,
+    ) -> List[str]:
+        """
+        기존 분석 결과(strengths/weaknesses/comment_insights)를 기반으로
+        내 채널 적용 포인트만 새로 생성하는 경량 LLM 호출.
+        """
+        from app.models.channel_persona import ChannelPersona
+        from app.models.youtube_channel import YouTubeChannel
+
+        # 페르소나 조회
+        persona_context = "일반적인 유튜브 채널에 적용할 수 있도록 제안해주세요."
+        try:
+            yt_result = await db.execute(
+                select(YouTubeChannel).where(YouTubeChannel.user_id == user_id)
+            )
+            my_channel = yt_result.scalar_one_or_none()
+            if my_channel:
+                persona_result = await db.execute(
+                    select(ChannelPersona).where(ChannelPersona.channel_id == my_channel.channel_id)
+                )
+                persona = persona_result.scalar_one_or_none()
+                if persona:
+                    persona_context = f"""내 채널에 맞춤형으로 제안해주세요.
+- 채널 정의: {persona.one_liner or '없음'}
+- 주요 주제: {', '.join(persona.main_topics) if persona.main_topics else '없음'}
+- 콘텐츠 스타일: {persona.content_style or '없음'}
+- 타겟 시청자: {persona.target_audience or '없음'}
+- 시청자 니즈: {persona.audience_needs or '없음'}
+- 차별화 포인트: {persona.differentiator or '없음'}"""
+        except Exception as e:
+            logger.warning(f"페르소나 조회 실패: {e}")
+
+        api_key = settings.openai_api_key
+        if not api_key:
+            return ["분석 결과를 참고하여 채널에 적용해보세요."]
+
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+
+        llm = ChatOpenAI(model="gpt-4.1", api_key=api_key)
+
+        strengths_text = ", ".join(video.analysis_strengths or [])
+        weaknesses_text = ", ".join(video.analysis_weaknesses or [])
+        insights_text = json.dumps(video.comment_insights or {}, ensure_ascii=False)
+
+        prompt = f"""경쟁 유튜버의 영상 분석 결과를 바탕으로, 내 채널에 적용할 수 있는 구체적 액션 아이템 3~5개를 제안해주세요.
+
+[분석 대상 영상]
+제목: {video.title}
+성공 이유: {strengths_text}
+부족한 점: {weaknesses_text}
+시청자 반응: {insights_text}
+
+[내 채널]
+{persona_context}
+
+작성 규칙:
+- 한국어, 구어체, 구체적으로 작성
+- 각 항목은 1~2문장
+
+출력 형식 (JSON 문자열 배열만 출력, 다른 텍스트 없이):
+["액션1", "액션2", "액션3"]"""
+
+        try:
+            res = llm.invoke([HumanMessage(content=prompt)])
+            content = res.content.strip().replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(content)
+            if isinstance(parsed, list):
+                return parsed
+        except Exception as e:
+            logger.error(f"적용 포인트 생성 실패: {e}")
+
+        return ["경쟁 영상의 강점을 참고하여 채널에 적용해보세요."]
+
+    @staticmethod
+    async def auto_analyze_competitors(
+        db: AsyncSession,
+        user_id: UUID,
+    ) -> dict:
+        """
+        자동 경쟁자 분석 파이프라인
+
+        1. 최신 영상 갱신 (새 영상 있으면 업데이트)
+        2. 미분석 영상 자동 분석
+           - 다른 유저가 같은 영상을 이미 분석했으면 → 공유 결과 재사용 + applicable_points만 새로 생성
+           - 아니면 → 전체 분석 (자막 + LLM)
+        """
+        # 1. 최신 영상 갱신
+        try:
+            refresh_result = await CompetitorChannelService.refresh_competitor_videos(db, user_id)
+        except Exception as e:
+            logger.warning(f"영상 갱신 실패 (분석은 계속): {e}")
+            refresh_result = {"updated_channels": 0, "total_channels": 0}
+
+        # 2. 전체 채널 + 영상 조회
+        channels = await CompetitorChannelService.get_all_competitor_channels(
+            db, user_id, include_videos=True
+        )
+
+        analyzed_count = 0
+        reused_count = 0
+        skipped_count = 0
+
+        for ch in channels:
+            for video in (ch.recent_videos or []):
+                # 이미 분석 완료된 영상은 스킵
+                if video.analyzed_at is not None:
+                    skipped_count += 1
+                    continue
+
+                try:
+                    # 다른 유저의 같은 YouTube 영상에서 분석 결과 조회
+                    shared_result = await db.execute(
+                        select(CompetitorRecentVideo).where(
+                            and_(
+                                CompetitorRecentVideo.video_id == video.video_id,
+                                CompetitorRecentVideo.id != video.id,
+                                CompetitorRecentVideo.analyzed_at.isnot(None),
+                            )
+                        ).limit(1)
+                    )
+                    shared_video = shared_result.scalar_one_or_none()
+
+                    if shared_video:
+                        # 공유 분석 결과 복사 (범용 필드)
+                        video.analysis_strengths = shared_video.analysis_strengths
+                        video.analysis_weaknesses = shared_video.analysis_weaknesses
+                        video.comment_insights = shared_video.comment_insights
+
+                        # 내 채널 적용 포인트만 새로 생성
+                        points = await CompetitorChannelService._generate_applicable_points(
+                            db, video, user_id
+                        )
+                        video.applicable_points = points
+                        video.analyzed_at = datetime.utcnow()
+                        await db.commit()
+
+                        reused_count += 1
+                        logger.info(f"공유 분석 재사용 + 적용포인트 생성: {video.video_id}")
+                    else:
+                        # 전체 분석 수행 (자막 fetch + 전체 LLM)
+                        await CompetitorChannelService.analyze_recent_video(
+                            db, video.video_id, user_id
+                        )
+                        analyzed_count += 1
+
+                except Exception as e:
+                    logger.warning(f"자동 분석 실패 ({video.video_id}): {e}")
+                    continue
+
+        total = analyzed_count + reused_count
+        logger.info(
+            f"자동 분석 완료: 새 분석 {analyzed_count}건, 재사용 {reused_count}건, "
+            f"스킵 {skipped_count}건"
+        )
+
+        return {
+            "refresh": refresh_result,
+            "analyzed": analyzed_count,
+            "reused": reused_count,
+            "skipped": skipped_count,
         }
 
     @staticmethod
@@ -828,7 +995,7 @@ class CompetitorChannelService:
         from langchain_openai import ChatOpenAI
         from langchain_core.messages import HumanMessage
 
-        llm = ChatOpenAI(model="gpt-5.2-mini", api_key=api_key)
+        llm = ChatOpenAI(model="gpt-4.1", api_key=api_key)
 
         prompt = f"""당신은 유튜브 콘텐츠 전략 분석가입니다.
 

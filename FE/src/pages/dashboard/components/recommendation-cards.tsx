@@ -25,6 +25,7 @@ import {
   skipTopic,
   updateTopicStatus,
   generateCompetitorTopics,
+  autoAnalyzeCompetitors,
 } from "../../../lib/api/services"
 import type { TopicResponse } from "../../../lib/api/types"
 
@@ -193,10 +194,30 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
     }
   }
 
+  // 백그라운드: 경쟁자 영상 갱신 → 자동 분석 → 주제 추천 갱신
+  const runBackgroundAnalysis = async () => {
+    try {
+      const result = await autoAnalyzeCompetitors()
+      const newlyAnalyzed = result.analyzed + result.reused
+
+      if (newlyAnalyzed > 0) {
+        // 새 분석이 있으면 경쟁자 주제 추천 재생성 후 목록 갱신
+        await generateCompetitorTopics().catch(() => null)
+        const data = await getTopics()
+        setChannelTopics(data.channel_topics)
+        setTrendTopics(data.trend_topics)
+      }
+    } catch (err) {
+      // 백그라운드 작업이므로 UI에 에러 표시하지 않음
+      console.warn("백그라운드 자동 분석:", err)
+    }
+  }
+
   useEffect(() => {
     if (hasCalledRef.current) return
     hasCalledRef.current = true
     loadTopics()
+    runBackgroundAnalysis()
   }, [])
 
   const allTopics = [...channelTopics, ...trendTopics]

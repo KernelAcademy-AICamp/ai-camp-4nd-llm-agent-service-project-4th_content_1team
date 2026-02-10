@@ -90,3 +90,14 @@ export interface CompetitorTopicsGenerateResponse {
         trend_basis: string | null;
     }>;
 }
+
+export interface AutoAnalyzeResponse {
+    success: boolean;
+    refresh: {
+        updated_channels: number;
+        total_channels: number;
+    };
+    analyzed: number;
+    reused: number;
+    skipped: number;
+}
