@@ -87,6 +87,21 @@ class ChannelPersona(Base):
     style_keywords = Column(JSONB, nullable=True)    # 스타일 매칭용
 
     # =========================================================================
+    # 영상 분석 결과 (자막 기반)
+    # =========================================================================
+    video_types = Column(JSONB, nullable=True)           # {"정보형": 40, "튜토리얼형": 30, ...} (퍼센트)
+    content_structures = Column(JSONB, nullable=True)    # {"정보형": "문제→해결→요약", ...}
+    tone_manner = Column(Text, nullable=True)            # 채널 전체 톤앤매너 설명
+    tone_samples = Column(JSONB, nullable=True)          # 말투 샘플 문장 (few-shot용)
+
+    # =========================================================================
+    # 히트/저조 비교 분석 결과
+    # =========================================================================
+    hit_patterns = Column(JSONB, nullable=True)          # ["실용적 팁 제공", "초반 훅 강함"]
+    low_patterns = Column(JSONB, nullable=True)          # ["주제 모호", "영상 너무 김"]
+    success_formula = Column(Text, nullable=True)        # "실용적 정보를 빠르게 전달"
+
+    # =========================================================================
     # 메타
     # =========================================================================
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -127,6 +142,13 @@ class ChannelPersona(Base):
             "preferred_subcategories": self.preferred_subcategories,
             "topic_keywords": self.topic_keywords,
             "style_keywords": self.style_keywords,
+            "video_types": self.video_types,
+            "content_structures": self.content_structures,
+            "tone_manner": self.tone_manner,
+            "tone_samples": self.tone_samples,
+            "hit_patterns": self.hit_patterns,
+            "low_patterns": self.low_patterns,
+            "success_formula": self.success_formula,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }

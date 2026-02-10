@@ -3,6 +3,7 @@
 
 규칙 기반 해석 + LLM 해석을 종합하여 최종 페르소나를 생성합니다.
 """
+import asyncio
 from typing import List, Optional
 from dataclasses import asdict
 
@@ -17,16 +18,16 @@ from app.services.persona_analyzer import (
     analyze_audience,
     analyze_view_consistency,
     analyze_engagement,
+    analyze_optimal_duration,
     AudienceData,
     GeoData,
     VideoStatsData,
 )
 from app.services.persona_llm_analyzer import (
     analyze_video_titles,
-    analyze_hit_vs_low,
     analyze_channel_description,
-    VideoInfo,
 )
+from app.services.video_analyzer import analyze_channel_videos
 
 
 async def generate_persona(
@@ -38,10 +39,11 @@ async def generate_persona(
 
     1. 채널 정보 조회
     2. 영상 데이터 조회
-    3. 규칙 기반 해석 (4개)
+    3. 규칙 기반 해석 (5개)
     4. LLM 해석 (3개)
-    5. 종합 페르소나 생성
-    6. DB 저장
+    5. 영상 자막 분석 (30개)
+    6. 종합 페르소나 생성
+    7. DB 저장
 
     Args:
         db: 데이터베이스 세션
@@ -57,7 +59,7 @@ async def generate_persona(
     channel = result.scalar_one_or_none()
 
     if not channel:
-        print(f"Channel not found: {channel_id}")
+        print(f"[Persona] Channel not found: {channel_id}")
         return None
 
     # 2. 영상 데이터 조회
@@ -85,14 +87,40 @@ async def generate_persona(
         channel_title=channel.title or "",
     )
 
-    # 6. 종합 페르소나 생성
+    # 6. 영상 자막 분석 (30개 영상, 10개씩 배치)
+    video_analysis_summary = None
+    try:
+        video_analysis_summary = await analyze_channel_videos(
+            db=db,
+            channel_id=channel_id,
+            min_videos_required=15,
+        )
+        if video_analysis_summary:
+            print(
+                f"[Persona] 영상 분석 완료: {channel_id}, "
+                f"유형={video_analysis_summary.video_types}"
+            )
+    except Exception as e:
+        print(f"[Persona] 영상 분석 실패 (계속 진행): {e}")
+
+    # 7. 종합 페르소나 생성
     persona_data = await _synthesize_persona(
         channel=channel,
         rule_interpretations=rule_interpretations,
         llm_interpretations=llm_interpretations,
     )
 
-    # 7. DB 저장 (upsert)
+    # 영상 분석 결과 추가
+    if video_analysis_summary:
+        persona_data["video_types"] = video_analysis_summary.video_types
+        persona_data["content_structures"] = video_analysis_summary.content_structures
+        persona_data["tone_manner"] = video_analysis_summary.tone_manner
+        persona_data["tone_samples"] = video_analysis_summary.tone_samples
+        persona_data["hit_patterns"] = video_analysis_summary.hit_patterns
+        persona_data["low_patterns"] = video_analysis_summary.low_patterns
+        persona_data["success_formula"] = video_analysis_summary.success_formula
+
+    # 8. DB 저장 (upsert)
     persona = await _save_persona(db, channel_id, persona_data)
 
     return persona
@@ -130,6 +158,7 @@ async def _get_channel_videos_with_stats(
             view_count=stats.view_count if stats else 0,
             like_count=stats.like_count if stats else 0,
             comment_count=stats.comment_count if stats else 0,
+            duration_seconds=video.duration_seconds or 0,
         ))
 
     return video_stats_list
@@ -225,6 +254,7 @@ def _run_rule_interpretations(
         "audience": asdict(analyze_audience(audience_data, geo_data)),
         "view_consistency": asdict(analyze_view_consistency(video_stats)),
         "engagement": asdict(analyze_engagement(video_stats)),
+        "optimal_duration": asdict(analyze_optimal_duration(video_stats)),
     }
 
 
@@ -237,28 +267,12 @@ async def _run_llm_interpretations(
     # 제목 목록 추출
     titles = [v.title for v in videos]
 
-    # 히트/저조 영상 분리
-    sorted_videos = sorted(videos, key=lambda v: v.view_count, reverse=True)
-    hit_count = max(1, len(sorted_videos) // 10)  # 상위 10%
-    low_count = max(1, len(sorted_videos) // 5)   # 하위 20%
-
-    hit_videos = [
-        VideoInfo(title=v.title, view_count=v.view_count, like_count=v.like_count)
-        for v in sorted_videos[:hit_count]
-    ]
-    low_videos = [
-        VideoInfo(title=v.title, view_count=v.view_count, like_count=v.like_count)
-        for v in sorted_videos[-low_count:]
-    ]
-
-    # LLM 해석 실행
+    # LLM 해석 실행 (히트/저조 분석은 video_analyzer에서 자막 기반으로 수행)
     title_result = await analyze_video_titles(titles)
-    hit_low_result = await analyze_hit_vs_low(hit_videos, low_videos)
     desc_result = await analyze_channel_description(channel_description, channel_title)
 
     return {
         "title_analysis": asdict(title_result) if title_result else None,
-        "hit_vs_low": asdict(hit_low_result) if hit_low_result else None,
         "description_analysis": asdict(desc_result) if desc_result else None,
     }
 
@@ -319,7 +333,7 @@ async def _synthesize_persona(
             channel, rule_interpretations, llm_interpretations
         )
 
-    MAX_RETRIES = 2
+    MAX_RETRIES = 3
     last_error = None
 
     for attempt in range(MAX_RETRIES):
@@ -336,6 +350,13 @@ async def _synthesize_persona(
                         },
                     },
                 )
+
+                if resp.status_code == 429:
+                    wait_time = (attempt + 1) * 5  # 5초, 10초, 15초
+                    last_error = f"HTTP 429: Rate limit"
+                    print(f"[Persona Synthesis] 429 에러, {wait_time}초 대기 후 재시도 ({attempt+1}/{MAX_RETRIES})")
+                    await asyncio.sleep(wait_time)
+                    continue
 
                 if resp.status_code != 200:
                     last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
@@ -412,6 +433,9 @@ def _format_interpretations_for_llm(
     engagement = rule_interpretations.get("engagement", {})
     lines.append(f"- 참여도: {engagement.get('signal', '')} → {engagement.get('interpretation', '')}")
 
+    optimal_duration = rule_interpretations.get("optimal_duration", {})
+    lines.append(f"- 적정 영상 길이: {optimal_duration.get('signal', '')} → {optimal_duration.get('interpretation', '')}")
+
     # LLM 해석
     lines.append("\n### LLM 기반 분석")
 
@@ -421,10 +445,7 @@ def _format_interpretations_for_llm(
         lines.append(f"- 제목 스타일: {title_analysis.get('title_style', '')}")
         lines.append(f"- 콘텐츠 성격: {title_analysis.get('interpretation', '')}")
 
-    hit_vs_low = llm_interpretations.get("hit_vs_low")
-    if hit_vs_low:
-        lines.append(f"- 히트 요인: {', '.join(hit_vs_low.get('hit_factors', []))}")
-        lines.append(f"- 성공 공식: {hit_vs_low.get('success_formula', '')}")
+    # 히트/저조 분석은 video_analyzer에서 자막 기반으로 수행 (여기서는 제외)
 
     desc_analysis = llm_interpretations.get("description_analysis")
     if desc_analysis:
@@ -467,6 +488,7 @@ def _build_default_persona(
 ) -> dict:
     """LLM 실패 시 기본 페르소나 생성."""
     title_analysis = llm_interpretations.get("title_analysis") or {}
+    optimal_duration = rule_interpretations.get("optimal_duration", {})
 
     return {
         "persona_summary": f"{channel.title or '이 채널'}에 대한 분석이 완료되었습니다. LLM 종합이 필요합니다.",
@@ -478,7 +500,7 @@ def _build_default_persona(
         "audience_needs": "분석 필요",
         "hit_topics": [],
         "title_patterns": title_analysis.get("title_patterns", []),
-        "optimal_duration": "분석 필요",
+        "optimal_duration": optimal_duration.get("interpretation", "분석 필요"),
         "growth_opportunities": [],
         "topic_keywords": title_analysis.get("content_topics", []),
         "style_keywords": [],

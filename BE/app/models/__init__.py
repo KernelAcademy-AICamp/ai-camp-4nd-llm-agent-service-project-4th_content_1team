@@ -9,6 +9,7 @@ from app.models.youtube_channel import (
     YTAudienceDaily,
     YTGeoDaily,
 )
+from app.models.channel_video import YTChannelVideo, YTVideoStats
 from app.models.thumbnail_strategy import ThumbnailStrategy
 from app.models.thumbnail_generation import ThumbnailGeneration
 from app.models.competitor import CompetitorCollection, CompetitorVideo, VideoCommentSample
@@ -32,6 +33,8 @@ from app.models.script_output import (
     VerifiedScript,
 )
 
+from app.models.yt_my_video_analysis import YTMyVideoAnalysis
+
 __all__ = [
     "User",
     "OAuthAccount",
@@ -42,6 +45,8 @@ __all__ = [
     "YTChannelTopic",
     "YTAudienceDaily",
     "YTGeoDaily",
+    "YTChannelVideo",
+    "YTVideoStats",
     "ThumbnailStrategy",
     "ThumbnailGeneration",
     "CompetitorCollection",
@@ -75,5 +80,6 @@ __all__ = [
     "ScriptClaim",
     "ScriptSourceMap",
     "VerifiedScript",
+    "YTMyVideoAnalysis",
 ]
 
