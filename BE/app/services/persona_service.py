@@ -52,9 +52,6 @@ async def generate_persona(
     Returns:
         ChannelPersona or None
     """
-    import logging
-    logger = logging.getLogger(__name__)
-
     # 1. 채널 정보 조회
     from app.models.youtube_channel import YouTubeChannel
     stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == channel_id)
@@ -62,7 +59,7 @@ async def generate_persona(
     channel = result.scalar_one_or_none()
 
     if not channel:
-        logger.warning(f"[Persona] Channel not found: {channel_id}")
+        print(f"[Persona] Channel not found: {channel_id}")
         return None
 
     # 2. 영상 데이터 조회
@@ -99,12 +96,12 @@ async def generate_persona(
             min_videos_required=15,
         )
         if video_analysis_summary:
-            logger.info(
+            print(
                 f"[Persona] 영상 분석 완료: {channel_id}, "
                 f"유형={video_analysis_summary.video_types}"
             )
     except Exception as e:
-        logger.warning(f"[Persona] 영상 분석 실패 (계속 진행): {e}")
+        print(f"[Persona] 영상 분석 실패 (계속 진행): {e}")
 
     # 7. 종합 페르소나 생성
     persona_data = await _synthesize_persona(
@@ -357,13 +354,13 @@ async def _synthesize_persona(
                 if resp.status_code == 429:
                     wait_time = (attempt + 1) * 5  # 5초, 10초, 15초
                     last_error = f"HTTP 429: Rate limit"
-                    logger.warning(f"[Persona Synthesis] 429 에러, {wait_time}초 대기 후 재시도 ({attempt+1}/{MAX_RETRIES})")
+                    print(f"[Persona Synthesis] 429 에러, {wait_time}초 대기 후 재시도 ({attempt+1}/{MAX_RETRIES})")
                     await asyncio.sleep(wait_time)
                     continue
 
                 if resp.status_code != 200:
                     last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
-                    logger.warning(f"[Persona Synthesis] Attempt {attempt+1} failed: {last_error}")
+                    print(f"[Persona Synthesis] Attempt {attempt+1} failed: {last_error}")
                     continue
 
                 data = resp.json()

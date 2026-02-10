@@ -470,11 +470,9 @@ async def _analyze_batch_with_llm(
                     tone_candidates=tone_candidates,
                 )
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[VideoAnalyzer] JSON 파싱 실패: {e}")
-            return BatchAnalysisOutput(results=[], patterns=None, tone_candidates=None)
-        except Exception as e:
-            logger.error(f"[VideoAnalyzer] LLM 분석 실패: {e}")
+        except (json.JSONDecodeError, Exception) as e:
+            error_type = "JSON 파싱 실패" if isinstance(e, json.JSONDecodeError) else "LLM 분석 실패"
+            logger.error(f"[VideoAnalyzer] {error_type}: {e}")
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 5
                 logger.warning(f"[VideoAnalyzer] {wait_time}초 대기 후 재시도")
@@ -611,11 +609,9 @@ async def analyze_hit_vs_low_comparison(
 
                 return tone_manner, tone_samples, success_formula
 
-        except json.JSONDecodeError as e:
-            logger.error(f"[VideoAnalyzer] 비교 분석 JSON 파싱 실패: {e}")
-            return "", [], ""
-        except Exception as e:
-            logger.error(f"[VideoAnalyzer] 비교 분석 실패: {e}")
+        except (json.JSONDecodeError, Exception) as e:
+            error_type = "JSON 파싱 실패" if isinstance(e, json.JSONDecodeError) else "분석 실패"
+            logger.error(f"[VideoAnalyzer] 비교 분석 {error_type}: {e}")
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 5
                 logger.warning(f"[VideoAnalyzer] 비교 분석 {wait_time}초 대기 후 재시도")

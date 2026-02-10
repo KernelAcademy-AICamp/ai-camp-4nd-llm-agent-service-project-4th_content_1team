@@ -216,7 +216,7 @@ class VideoStatsData:
     view_count: int
     like_count: int
     comment_count: int
-    duration_seconds: int
+    duration_seconds: Optional[int]
 
 
 def analyze_view_consistency(video_stats: List[VideoStatsData]) -> Interpretation:
