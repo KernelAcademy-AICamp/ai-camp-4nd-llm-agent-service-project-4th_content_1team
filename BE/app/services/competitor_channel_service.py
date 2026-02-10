@@ -1,11 +1,12 @@
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import List, Optional
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, and_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 from fastapi import HTTPException
 
 import httpx
@@ -708,3 +709,235 @@ class CompetitorChannelService:
             "comment_insights": comment_insights,
             "analyzed_at": video.analyzed_at.isoformat(),
         }
+
+    @staticmethod
+    async def generate_competitor_topics(
+        db: AsyncSession,
+        user_id: UUID,
+    ) -> List[dict]:
+        """
+        경쟁자 기반 주제 추천 (3개)
+
+        경쟁 채널 데이터 + 분석 결과를 종합하여 LLM으로 3개 주제를 추천합니다.
+        결과는 ChannelTopic 테이블에 저장됩니다.
+        """
+        from app.models.channel_persona import ChannelPersona
+        from app.models.youtube_channel import YouTubeChannel
+        from app.models.content_topic import ChannelTopic
+
+        # 1. 유저의 YouTube 채널 조회
+        yt_result = await db.execute(
+            select(YouTubeChannel).where(YouTubeChannel.user_id == user_id)
+        )
+        my_channel = yt_result.scalar_one_or_none()
+        if not my_channel:
+            raise HTTPException(status_code=404, detail="연결된 YouTube 채널이 없습니다")
+
+        channel_id = my_channel.channel_id
+
+        # 2. 경쟁 채널 + 최신 영상 조회
+        channels = await CompetitorChannelService.get_all_competitor_channels(
+            db, user_id, include_videos=True
+        )
+
+        if not channels:
+            raise HTTPException(status_code=400, detail="등록된 경쟁 채널이 없습니다")
+
+        # 3. 분석 완료된 영상만 필터
+        competitor_data_lines = []
+        for ch in channels:
+            ch_info = f"채널명: {ch.title}, 구독자: {ch.subscriber_count:,}명"
+            if ch.content_style:
+                ch_info += f", 콘텐츠스타일: {ch.content_style}"
+            if ch.strengths:
+                ch_info += f", 강점: {', '.join(ch.strengths)}"
+            competitor_data_lines.append(ch_info)
+
+            analyzed_videos = [
+                v for v in (ch.recent_videos or [])
+                if v.analyzed_at is not None
+            ]
+            for v in analyzed_videos:
+                v_info = f"  - 영상: {v.title} (조회수: {v.view_count:,})"
+                if v.analysis_strengths:
+                    v_info += f"\n    성공이유: {', '.join(v.analysis_strengths[:3])}"
+                if v.analysis_weaknesses:
+                    v_info += f"\n    부족한점: {', '.join(v.analysis_weaknesses[:3])}"
+                if v.applicable_points:
+                    v_info += f"\n    적용포인트: {', '.join(v.applicable_points[:3])}"
+                if v.comment_insights:
+                    needs = v.comment_insights.get("needs", [])
+                    if needs:
+                        v_info += f"\n    시청자니즈: {', '.join(needs[:3])}"
+                competitor_data_lines.append(v_info)
+
+        competitor_context = "\n".join(competitor_data_lines)
+
+        if not competitor_context.strip():
+            raise HTTPException(status_code=400, detail="분석된 경쟁 영상이 없습니다. 먼저 경쟁 영상을 분석해주세요.")
+
+        # 4. 유저 채널 페르소나 조회
+        persona_context = ""
+        try:
+            persona_result = await db.execute(
+                select(ChannelPersona).where(ChannelPersona.channel_id == channel_id)
+            )
+            persona = persona_result.scalar_one_or_none()
+            if persona:
+                lines = ["[내 채널 페르소나]"]
+                if persona.persona_summary:
+                    lines.append(f"- 채널 요약: {persona.persona_summary}")
+                if persona.one_liner:
+                    lines.append(f"- 한줄 정의: {persona.one_liner}")
+                if persona.main_topics:
+                    lines.append(f"- 주요 주제: {', '.join(persona.main_topics)}")
+                if persona.content_style:
+                    lines.append(f"- 콘텐츠 스타일: {persona.content_style}")
+                if persona.differentiator:
+                    lines.append(f"- 차별화 포인트: {persona.differentiator}")
+
+                lines.append("")
+                lines.append("[타겟 시청자 정보]")
+                if persona.target_audience:
+                    lines.append(f"- 타겟 시청자층: {persona.target_audience}")
+                if persona.audience_needs:
+                    lines.append(f"- 시청자가 원하는 것: {persona.audience_needs}")
+
+                lines.append("")
+                lines.append("[채널 성공 공식]")
+                if persona.hit_topics:
+                    lines.append(f"- 잘 되는 주제: {', '.join(persona.hit_topics)}")
+                if persona.title_patterns:
+                    lines.append(f"- 잘 먹히는 제목 패턴: {', '.join(persona.title_patterns)}")
+                if persona.optimal_duration:
+                    lines.append(f"- 최적 영상 길이: {persona.optimal_duration}")
+
+                if persona.growth_opportunities:
+                    lines.append("")
+                    lines.append(f"[성장 기회 영역]: {', '.join(persona.growth_opportunities)}")
+
+                persona_context = "\n".join(lines)
+        except Exception as e:
+            logger.warning(f"페르소나 조회 실패 (분석은 계속): {e}")
+
+        # 5. LLM 프롬프트 구성
+        api_key = settings.openai_api_key
+        if not api_key:
+            raise HTTPException(status_code=500, detail="OpenAI API 키가 설정되지 않았습니다.")
+
+        from langchain_openai import ChatOpenAI
+        from langchain_core.messages import HumanMessage
+
+        llm = ChatOpenAI(model="gpt-5.2-mini", api_key=api_key)
+
+        prompt = f"""당신은 유튜브 콘텐츠 전략 분석가입니다.
+
+아래 경쟁 유튜버 채널 데이터와 내 채널 페르소나를 종합 분석하여, 내 채널에 최적화된 콘텐츠 주제 3개를 추천해주세요.
+
+[경쟁 채널 데이터]
+{competitor_context}
+
+{persona_context}
+
+핵심 분석 과정:
+1. 경쟁자들의 제목 패턴 추출 (숫자형, 질문형, 비교형 등)
+2. 콘텐츠 유형 분류 (튜토리얼, 뉴스해석, 실전빌드 등)
+3. 경쟁자들이 다루지 않는 콘텐츠 공백(gap) 발견
+4. 경쟁자 강점 반영 + 부족한점/남은 각도 보완 가능한 주제 3개 추천
+
+중요 — 반드시 내 채널 페르소나를 기반으로 추천하세요:
+- 내 채널의 정체성(한줄 정의, 콘텐츠 스타일, 차별화 포인트)에 맞는 주제여야 합니다.
+- 내 타겟 시청자층이 실제로 궁금해할 주제, 시청자가 원하는 것(니즈)을 해결하는 주제를 추천하세요.
+- 내 채널에서 잘 되는 주제와 제목 패턴을 참고하여, 제목을 내 채널 톤에 맞게 작성하세요.
+- 성장 기회 영역이 있다면 해당 방향의 주제도 고려하세요.
+
+각 주제는 반드시 다음을 포함:
+- title: 내 채널 스타일과 제목 패턴에 맞는 구체적이고 클릭하고 싶은 영상 제목
+- recommendation_reason: 아래 3가지를 모두 포함하여 3~5문장으로 작성
+  (1) 왜 이 주제가 경쟁자 분석 관점에서 유망한지
+  (2) 내 타겟 시청자층이 왜 이 주제에 관심을 가질지
+  (3) 내 채널에서 이 주제를 어떤 방향/톤/스타일로 영상을 만들면 좋을지 구체적 제안
+- content_angles: 내 채널 관점에서 이 주제를 다룰 수 있는 구체적 관점 3개
+- urgency: "urgent" 또는 "normal" 또는 "evergreen"
+- search_keywords: 이 주제와 관련된 검색 키워드 3~5개
+- trend_basis: 이 주제가 유망한 근거 1문장
+
+작성 스타일:
+- 한국어로 작성
+- 쉽고 자연스러운 구어체 사용
+- 구체적이고 실용적으로 작성 (추상적 표현 금지)
+
+출력 형식 (JSON 배열만 출력, 다른 텍스트 없이):
+[
+  {{
+    "title": "영상 제목",
+    "recommendation_reason": "추천 이유",
+    "content_angles": ["관점1", "관점2", "관점3"],
+    "urgency": "normal",
+    "search_keywords": ["키워드1", "키워드2"],
+    "trend_basis": "유망 근거"
+  }}
+]"""
+
+        try:
+            res = llm.invoke([HumanMessage(content=prompt)])
+            content = res.content.strip()
+            content = content.replace("```json", "").replace("```", "").strip()
+            parsed = json.loads(content)
+        except (json.JSONDecodeError, Exception) as e:
+            logger.error(f"경쟁자 주제 추천 LLM 파싱 실패: {e}")
+            raise HTTPException(status_code=500, detail="경쟁자 분석 기반 주제 추천 중 오류가 발생했습니다.")
+
+        if not isinstance(parsed, list) or len(parsed) == 0:
+            raise HTTPException(status_code=500, detail="주제 추천 결과가 올바르지 않습니다.")
+
+        # 6. 기존 competitor_analysis 주제 삭제
+        await db.execute(
+            sql_delete(ChannelTopic).where(
+                and_(
+                    ChannelTopic.channel_id == channel_id,
+                    ChannelTopic.based_on_topic.like("competitor_analysis%"),
+                )
+            )
+        )
+        await db.flush()
+
+        # 7. 새 ChannelTopic 3개 생성
+        created_topics = []
+        for idx, item in enumerate(parsed[:3]):
+            topic = ChannelTopic(
+                channel_id=channel_id,
+                rank=idx + 1,
+                display_status="shown",
+                title=item.get("title", "제목 없음"),
+                based_on_topic="competitor_analysis",
+                trend_basis=item.get("trend_basis"),
+                recommendation_reason=item.get("recommendation_reason"),
+                urgency=item.get("urgency", "normal"),
+                search_keywords=item.get("search_keywords", []),
+                content_angles=item.get("content_angles", []),
+                status="recommended",
+                expires_at=datetime.utcnow() + timedelta(days=7),
+            )
+            db.add(topic)
+            created_topics.append(topic)
+
+        await db.commit()
+
+        # refresh to get generated IDs
+        for t in created_topics:
+            await db.refresh(t)
+
+        logger.info(f"경쟁자 기반 주제 추천 {len(created_topics)}개 생성 완료")
+
+        return [
+            {
+                "title": t.title,
+                "recommendation_reason": t.recommendation_reason,
+                "content_angles": t.content_angles or [],
+                "urgency": t.urgency,
+                "search_keywords": t.search_keywords or [],
+                "trend_basis": t.trend_basis,
+            }
+            for t in created_topics
+        ]
