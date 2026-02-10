@@ -16,6 +16,7 @@ import {
   User,
   Zap,
   Calendar,
+  Target,
 } from "lucide-react"
 import {
   getTopics,
@@ -23,6 +24,8 @@ import {
   generateTrendTopics,
   skipTopic,
   updateTopicStatus,
+  generateCompetitorTopics,
+  autoAnalyzeCompetitors,
 } from "../../../lib/api/services"
 import type { TopicResponse } from "../../../lib/api/types"
 
@@ -39,6 +42,7 @@ const urgencyConfig = {
 const topicTypeConfig = {
   channel: { label: "채널 맞춤", icon: User, color: "text-purple-500", bg: "bg-purple-500/20" },
   trend: { label: "트렌드", icon: Zap, color: "text-orange-500", bg: "bg-orange-500/20" },
+  competitor: { label: "경쟁자 분석", icon: Target, color: "text-rose-500", bg: "bg-rose-500/20" },
 }
 
 export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProps) {
@@ -46,6 +50,7 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
   const [trendTopics, setTrendTopics] = useState<TopicResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isGenerating, setIsGenerating] = useState(false)
+  const [isGeneratingCompetitor, setIsGeneratingCompetitor] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [selectedDates, setSelectedDates] = useState<Record<string, string>>({})
   const [addedItems, setAddedItems] = useState<Set<string>>(new Set())
@@ -61,15 +66,35 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
       const status = await getTopicsStatus()
 
       // 트렌드 추천이 없거나 만료된 경우 생성
-      if (!status.trend_exists || status.trend_expired) {
+      const needTrend = !status.trend_exists || status.trend_expired
+      // 경쟁자 분석 추천이 없거나 만료된 경우 생성
+      const needCompetitor = !status.competitor_exists || status.competitor_expired
+
+      if (needTrend || needCompetitor) {
         setIsGenerating(true)
-        const result = await generateTrendTopics()
-        if (!result.success) {
-          setError(result.message || "추천 생성에 실패했습니다.")
-          setIsGenerating(false)
-          setIsLoading(false)
-          return
+
+        // 둘 다 필요하면 병렬로 요청
+        const promises: Promise<any>[] = []
+        if (needTrend) promises.push(generateTrendTopics())
+        if (needCompetitor) promises.push(generateCompetitorTopics().catch((e) => {
+          // 경쟁 채널 미등록 등 실패는 무시 (트렌드만 표시)
+          console.warn("경쟁자 추천 자동 생성 스킵:", e.response?.data?.detail || e.message)
+          return null
+        }))
+
+        const results = await Promise.all(promises)
+
+        // 트렌드 결과 체크 (첫 번째가 트렌드)
+        if (needTrend) {
+          const trendResult = results[0]
+          if (trendResult && !trendResult.success) {
+            setError(trendResult.message || "추천 생성에 실패했습니다.")
+            setIsGenerating(false)
+            setIsLoading(false)
+            return
+          }
         }
+
         setIsGenerating(false)
       }
 
@@ -107,6 +132,27 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
       setError("추천 새로고침에 실패했습니다.")
     } finally {
       setIsGenerating(false)
+    }
+  }
+
+  const handleGenerateCompetitor = async () => {
+    try {
+      setIsGeneratingCompetitor(true)
+      setError(null)
+      const result = await generateCompetitorTopics()
+      if (result.success) {
+        // 주제가 ChannelTopic으로 저장되므로 전체 재조회
+        const data = await getTopics()
+        setChannelTopics(data.channel_topics)
+        setTrendTopics(data.trend_topics)
+      } else {
+        setError(result.message || "경쟁자 분석 추천 생성에 실패했습니다.")
+      }
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || "경쟁자 분석 추천 생성에 실패했습니다."
+      setError(msg)
+    } finally {
+      setIsGeneratingCompetitor(false)
     }
   }
 
@@ -148,10 +194,29 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
     }
   }
 
+  // 백그라운드: 경쟁자 영상 갱신 → 자동 분석 → 주제 추천 갱신
+  const runBackgroundAnalysis = async () => {
+    try {
+      const result = await autoAnalyzeCompetitors()
+      const newlyAnalyzed = result.analyzed + result.reused
+
+      if (newlyAnalyzed > 0) {
+        // 새 분석이 있으면 경쟁자 주제 추천 재생성 후 목록 갱신
+        await generateCompetitorTopics().catch(() => null)
+        const data = await getTopics()
+        setChannelTopics(data.channel_topics)
+        setTrendTopics(data.trend_topics)
+      }
+    } catch (err) {
+      // 백그라운드 작업이므로 UI에 에러 표시하지 않음
+      console.warn("백그라운드 자동 분석:", err)
+    }
+  }
+
   useEffect(() => {
     if (hasCalledRef.current) return
     hasCalledRef.current = true
-    loadTopics()
+    loadTopics().then(() => runBackgroundAnalysis())
   }, [])
 
   const allTopics = [...channelTopics, ...trendTopics]
@@ -167,15 +232,30 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
             <Sparkles className="w-5 h-5 text-primary" />
             AI 추천 주제
           </CardTitle>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleRefreshTrend}
-            disabled={isGenerating}
-          >
-            <RefreshCw className={`w-4 h-4 mr-1 ${isGenerating ? 'animate-spin' : ''}`} />
-            트렌드 새로고침
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleGenerateCompetitor}
+              disabled={isGeneratingCompetitor || isGenerating}
+            >
+              {isGeneratingCompetitor ? (
+                <Loader2 className="w-4 h-4 mr-1 animate-spin" />
+              ) : (
+                <Target className="w-4 h-4 mr-1" />
+              )}
+              경쟁자 분석 추천
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleRefreshTrend}
+              disabled={isGenerating || isGeneratingCompetitor}
+            >
+              <RefreshCw className={`w-4 h-4 mr-1 ${isGenerating ? 'animate-spin' : ''}`} />
+              트렌드 새로고침
+            </Button>
+          </div>
         </div>
         <p className="text-sm text-muted-foreground">
           채널 맞춤 추천과 트렌드 기반 추천입니다. 날짜를 선택하고 캘린더에 추가하세요.
@@ -183,17 +263,17 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
       </CardHeader>
       <CardContent>
         {/* 로딩 상태 */}
-        {(isLoading || isGenerating) && (
+        {(isLoading || isGenerating || isGeneratingCompetitor) && (
           <div className="flex items-center justify-center py-8 gap-3">
             <Loader2 className="w-6 h-6 animate-spin text-primary" />
             <p className="text-muted-foreground">
-              {isGenerating ? "트렌드 분석 중..." : "추천 불러오는 중..."}
+              {isGeneratingCompetitor ? "경쟁자 분석 중..." : isGenerating ? "트렌드 분석 중..." : "추천 불러오는 중..."}
             </p>
           </div>
         )}
 
         {/* 에러 상태 */}
-        {!isLoading && !isGenerating && error && (
+        {!isLoading && !isGenerating && !isGeneratingCompetitor && error && (
           <div className="flex flex-col items-center justify-center py-8 gap-3">
             <p className="text-muted-foreground text-sm">{error}</p>
             <Button variant="outline" size="sm" onClick={loadTopics}>
@@ -203,7 +283,7 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
         )}
 
         {/* 추천 카드 목록 */}
-        {!isLoading && !isGenerating && !error && (
+        {!isLoading && !isGenerating && !isGeneratingCompetitor && !error && (
           <ScrollArea className="w-full">
             <div className="flex gap-4 pb-4">
               {allTopics.length === 0 ? (
@@ -217,7 +297,8 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
               ) : (
                 allTopics.map((topic) => {
                   const urgency = urgencyConfig[topic.urgency] || urgencyConfig.normal
-                  const typeConfig = topicTypeConfig[topic.topic_type]
+                  const effectiveType = topic.based_on_topic?.startsWith("competitor_analysis") ? "competitor" : topic.topic_type
+                  const typeConfig = topicTypeConfig[effectiveType as keyof typeof topicTypeConfig] || topicTypeConfig.channel
                   const TypeIcon = typeConfig.icon
                   const UrgencyIcon = urgency.icon
                   const isAdded = addedItems.has(topic.id)
@@ -227,9 +308,8 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
                     <div
                       key={topic.id}
                       onClick={() => setExpandedId(isExpanded ? null : topic.id)}
-                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${
-                        isAdded ? 'opacity-50' : 'hover:shadow-lg'
-                      } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
+                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${isAdded ? 'opacity-50' : 'hover:shadow-lg'
+                        } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
                     >
                       {/* 헤더 */}
                       <div className="flex items-start justify-between mb-3">
@@ -269,7 +349,7 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
                       )}
 
                       {/* 제목 */}
-                      <h3 className="font-semibold text-foreground mb-3 line-clamp-2">
+                      <h3 className="font-semibold text-foreground mb-3">
                         {topic.title}
                       </h3>
 

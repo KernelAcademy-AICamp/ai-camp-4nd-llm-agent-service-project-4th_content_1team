@@ -102,11 +102,23 @@ async def check_recommendations_exist(
     trend_result = await db.execute(trend_stmt)
     trend_topic = trend_result.scalar_one_or_none()
 
+    # 경쟁자 분석 추천 확인
+    competitor_stmt = select(ChannelTopic).where(
+        and_(
+            ChannelTopic.channel_id == channel_id,
+            ChannelTopic.based_on_topic.like("competitor_analysis%"),
+        )
+    ).limit(1)
+    competitor_result = await db.execute(competitor_stmt)
+    competitor_topic = competitor_result.scalar_one_or_none()
+
     return {
         "channel_exists": channel_topic is not None,
         "channel_expired": channel_topic.expires_at < now if channel_topic else True,
         "trend_exists": trend_topic is not None,
         "trend_expired": trend_topic.expires_at < now if trend_topic else True,
+        "competitor_exists": competitor_topic is not None,
+        "competitor_expired": competitor_topic.expires_at < now if competitor_topic else True,
     }
 
 

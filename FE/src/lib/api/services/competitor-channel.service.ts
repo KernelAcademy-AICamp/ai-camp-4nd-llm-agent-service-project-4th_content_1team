@@ -4,6 +4,8 @@ import type {
     CompetitorChannelResponse,
     CompetitorChannelListResponse,
     RecentVideoAnalyzeResponse,
+    CompetitorTopicsGenerateResponse,
+    AutoAnalyzeResponse,
 } from '../types/competitor-channel.types';
 
 export const addCompetitorChannel = async (
@@ -63,6 +65,18 @@ export const refreshCompetitorVideos = async (): Promise<{
 export const analyzeRecentVideo = async (videoId: string): Promise<RecentVideoAnalyzeResponse> => {
     const response = await api.post('/api/v1/channels/competitor/analyze-video', {
         video_id: videoId
+    });
+    return response.data;
+};
+
+export const generateCompetitorTopics = async (): Promise<CompetitorTopicsGenerateResponse> => {
+    const response = await api.post('/api/v1/channels/competitor/generate-topics');
+    return response.data;
+};
+
+export const autoAnalyzeCompetitors = async (): Promise<AutoAnalyzeResponse> => {
+    const response = await api.post('/api/v1/channels/competitor/auto-analyze', null, {
+        timeout: 300000, // 5분 타임아웃 (여러 영상 분석)
     });
     return response.data;
 };

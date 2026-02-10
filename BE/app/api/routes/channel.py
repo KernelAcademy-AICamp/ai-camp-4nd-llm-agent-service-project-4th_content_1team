@@ -19,6 +19,7 @@ from app.schemas.competitor_channel import (
     CompetitorChannelVideoResponse,
     RecentVideoAnalyzeRequest,
     RecentVideoAnalyzeResponse,
+    CompetitorTopicsGenerateResponse,
 )
 from app.services.channel_service import ChannelService
 from app.services.competitor_channel_service import CompetitorChannelService
@@ -368,4 +369,66 @@ async def analyze_recent_video(
         raise HTTPException(
             status_code=500,
             detail=f"영상 분석 실패: {str(e)}"
+        )
+
+
+@router.post("/competitor/generate-topics", response_model=CompetitorTopicsGenerateResponse)
+async def generate_competitor_topics(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    경쟁자 분석 기반 주제 추천 (3개)
+
+    등록된 경쟁 채널의 분석 데이터를 종합하여 AI가 3개 주제를 추천합니다.
+    결과는 AI 추천 주제 영역에 '경쟁자 분석' 배지로 표시됩니다.
+    """
+    try:
+        topics = await CompetitorChannelService.generate_competitor_topics(
+            db=db,
+            user_id=current_user.id,
+        )
+        return {
+            "success": True,
+            "message": "경쟁자 분석 기반 주제 3개가 생성되었습니다.",
+            "topics": topics,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"경쟁자 기반 주제 추천 실패: {str(e)}"
+        )
+
+
+@router.post("/competitor/auto-analyze")
+async def auto_analyze_competitors(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    자동 경쟁자 분석 파이프라인 (대시보드 진입 시 백그라운드 호출)
+
+    1. 경쟁 채널 최신 영상 갱신
+    2. 미분석 영상 자동 분석 (타 유저 분석 결과 공유 활용)
+    3. 분석 결과 반환
+    """
+    try:
+        result = await CompetitorChannelService.auto_analyze_competitors(
+            db=db,
+            user_id=current_user.id,
+        )
+        return {
+            "success": True,
+            **result,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"자동 분석 실패: {str(e)}"
         )

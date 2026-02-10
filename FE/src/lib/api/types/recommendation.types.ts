@@ -38,6 +38,8 @@ export interface TopicsStatusResponse {
     channel_expired: boolean;
     trend_exists: boolean;
     trend_expired: boolean;
+    competitor_exists: boolean;
+    competitor_expired: boolean;
 }
 
 // 주제 상태 변경 요청
