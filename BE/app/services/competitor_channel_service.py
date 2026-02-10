@@ -913,7 +913,7 @@ class CompetitorChannelService:
         # 3. 분석 완료된 영상만 필터
         competitor_data_lines = []
         for ch in channels:
-            ch_info = f"채널명: {ch.title}, 구독자: {ch.subscriber_count:,}명"
+            ch_info = f"채널명: {ch.title}, 구독자: {(ch.subscriber_count or 0):,}명"
             if ch.content_style:
                 ch_info += f", 콘텐츠스타일: {ch.content_style}"
             if ch.strengths:
@@ -925,7 +925,7 @@ class CompetitorChannelService:
                 if v.analyzed_at is not None
             ]
             for v in analyzed_videos:
-                v_info = f"  - 영상: {v.title} (조회수: {v.view_count:,})"
+                v_info = f"  - 영상: {v.title} (조회수: {(v.view_count or 0):,})"
                 if v.analysis_strengths:
                     v_info += f"\n    성공이유: {', '.join(v.analysis_strengths[:3])}"
                 if v.analysis_weaknesses:

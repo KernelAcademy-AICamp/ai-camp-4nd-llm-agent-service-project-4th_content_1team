@@ -216,8 +216,7 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
   useEffect(() => {
     if (hasCalledRef.current) return
     hasCalledRef.current = true
-    loadTopics()
-    runBackgroundAnalysis()
+    loadTopics().then(() => runBackgroundAnalysis())
   }, [])
 
   const allTopics = [...channelTopics, ...trendTopics]
@@ -309,9 +308,8 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
                     <div
                       key={topic.id}
                       onClick={() => setExpandedId(isExpanded ? null : topic.id)}
-                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${
-                        isAdded ? 'opacity-50' : 'hover:shadow-lg'
-                      } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
+                      className={`flex-shrink-0 w-[280px] p-4 rounded-xl border cursor-pointer transition-all ${urgency.border} ${urgency.bg} ${isAdded ? 'opacity-50' : 'hover:shadow-lg'
+                        } ${isExpanded ? 'ring-2 ring-primary' : ''}`}
                     >
                       {/* 헤더 */}
                       <div className="flex items-start justify-between mb-3">
