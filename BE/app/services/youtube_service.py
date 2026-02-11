@@ -709,3 +709,185 @@ class YouTubeService:
                 status_code=500,
                 detail=f"비디오 정보 조회 중 오류 발생: {str(e)}"
             )
+
+    # ==================== YouTube Captions API (본인 채널용) ====================
+
+    @staticmethod
+    async def fetch_video_captions(
+        video_id: str,
+        access_token: str,
+        languages: List[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        본인 소유 영상의 자막을 YouTube Captions API로 가져옴.
+
+        Args:
+            video_id: YouTube 영상 ID
+            access_token: OAuth access token
+            languages: 우선순위 언어 코드 (예: ["ko", "en"])
+
+        Returns:
+            {"video_id": "...", "status": "success", "tracks": [...]} or None
+        """
+        if languages is None:
+            languages = ["ko", "en"]
+
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        try:
+            # 1. captions.list로 자막 트랙 목록 조회
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                params = {
+                    "part": "snippet",
+                    "videoId": video_id,
+                }
+                resp = await client.get(
+                    f"{YouTubeService.BASE_URL}/captions",
+                    params=params,
+                    headers=headers,
+                )
+
+                if resp.status_code == 403:
+                    error_detail = resp.text
+                    logger.warning(f"[Captions] 403 에러 상세: {video_id} - {error_detail}")
+                    return None
+
+                if resp.status_code == 404:
+                    logger.info(f"[Captions] 자막 없음: {video_id}")
+                    return {
+                        "video_id": video_id,
+                        "status": "no_subtitle",
+                        "tracks": [],
+                        "no_captions": True,
+                    }
+
+                resp.raise_for_status()
+                data = resp.json()
+
+            items = data.get("items", [])
+            if not items:
+                logger.info(f"[Captions] 자막 트랙 없음: {video_id}")
+                return {
+                    "video_id": video_id,
+                    "status": "no_subtitle",
+                    "tracks": [],
+                    "no_captions": True,
+                }
+
+            # 2. 언어 우선순위대로 자막 트랙 선택
+            selected_caption = None
+            for lang in languages:
+                for item in items:
+                    snippet = item.get("snippet", {})
+                    if snippet.get("language") == lang:
+                        selected_caption = item
+                        break
+                if selected_caption:
+                    break
+
+            # 우선순위 언어가 없으면 첫 번째 트랙 사용
+            if not selected_caption and items:
+                selected_caption = items[0]
+
+            if not selected_caption:
+                return {
+                    "video_id": video_id,
+                    "status": "no_subtitle",
+                    "tracks": [],
+                    "no_captions": True,
+                }
+
+            caption_id = selected_caption.get("id")
+            caption_snippet = selected_caption.get("snippet", {})
+            lang_code = caption_snippet.get("language", "unknown")
+            is_auto = caption_snippet.get("trackKind") == "asr"
+
+            logger.info(
+                f"[Captions] 자막 트랙 선택: {video_id}, "
+                f"lang={lang_code}, auto={is_auto}, caption_id={caption_id}"
+            )
+
+            # 3. captions.download로 자막 다운로드
+            caption_text = await YouTubeService._download_caption(
+                caption_id, access_token
+            )
+
+            if not caption_text:
+                return {
+                    "video_id": video_id,
+                    "status": "failed",
+                    "tracks": [],
+                    "error": "Caption download failed",
+                }
+
+            # 4. 텍스트를 cues 형식으로 변환
+            cues = [{"start": 0, "end": 0, "text": caption_text}]
+
+            return {
+                "video_id": video_id,
+                "status": "success",
+                "source": "youtube-api",
+                "tracks": [{
+                    "language_code": lang_code,
+                    "language_name": lang_code,
+                    "is_auto_generated": is_auto,
+                    "cues": cues,
+                }],
+                "no_captions": False,
+            }
+
+        except httpx.HTTPStatusError as e:
+            logger.error(f"[Captions] API 에러 ({video_id}): {e.response.status_code}")
+            return None
+        except Exception as e:
+            logger.error(f"[Captions] 예외 ({video_id}): {e}")
+            return None
+
+    @staticmethod
+    async def _download_caption(
+        caption_id: str,
+        access_token: str,
+    ) -> Optional[str]:
+        """자막 트랙 다운로드."""
+        headers = {"Authorization": f"Bearer {access_token}"}
+
+        try:
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                params = {"tfmt": "srt"}
+                resp = await client.get(
+                    f"{YouTubeService.BASE_URL}/captions/{caption_id}",
+                    params=params,
+                    headers=headers,
+                )
+
+                if resp.status_code != 200:
+                    logger.warning(f"[Captions] 다운로드 실패: {caption_id}, status={resp.status_code}")
+                    return None
+
+                srt_content = resp.text
+                plain_text = YouTubeService._parse_srt_to_text(srt_content)
+
+                logger.info(f"[Captions] 다운로드 성공: {caption_id}, length={len(plain_text)}")
+                return plain_text
+
+        except Exception as e:
+            logger.error(f"[Captions] 다운로드 예외 ({caption_id}): {e}")
+            return None
+
+    @staticmethod
+    def _parse_srt_to_text(srt_content: str) -> str:
+        """SRT 자막에서 텍스트만 추출."""
+        lines = srt_content.strip().split('\n')
+        text_lines = []
+
+        for line in lines:
+            line = line.strip()
+            if line.isdigit():
+                continue
+            if '-->' in line:
+                continue
+            if not line:
+                continue
+            text_lines.append(line)
+
+        return ' '.join(text_lines)

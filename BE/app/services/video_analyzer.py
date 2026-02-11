@@ -19,6 +19,7 @@ from app.core.config import settings
 from app.models.channel_video import YTChannelVideo, YTVideoStats
 from app.models.yt_my_video_analysis import YTMyVideoAnalysis
 from app.services.subtitle_service import SubtitleService
+from app.services.youtube_service import YouTubeService
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,10 @@ class VideoAnalysisResult:
     strengths: List[str]       # 강점
     weaknesses: List[str]      # 약점/개선점
     performance_insight: str   # 성과와 연결된 인사이트
+    # 댓글 기반 분석 (NEW)
+    viewer_reactions: List[str]   # 시청자 반응 (댓글 기반)
+    viewer_needs: List[str]       # 시청자 니즈/요청사항
+    performance_reason: str       # 이 영상이 hit/low인 이유
 
 
 @dataclass
@@ -71,6 +76,10 @@ class ChannelVideoSummary:
     hit_patterns: List[str]    # ["실용적 팁 제공", "초반 훅 강함"]
     low_patterns: List[str]    # ["주제 모호", "영상 너무 김"]
     success_formula: str       # "실용적 정보를 빠르게 전달"
+    # 시청자 반응 분석 (NEW)
+    viewer_likes: List[str]         # 시청자가 좋아하는 포인트 (히트 영상 기반)
+    viewer_dislikes: List[str]      # 시청자가 싫어하는 포인트 (저조 영상 기반)
+    current_viewer_needs: List[str] # 현재 시청자 니즈 (최신 영상 기반)
 
 
 # ============================================================================
@@ -80,16 +89,16 @@ class ChannelVideoSummary:
 async def select_videos_for_analysis(
     db: AsyncSession,
     channel_id: str,
-    hit_count: int = 10,
-    low_count: int = 10,
-    latest_count: int = 10,
+    hit_count: int = 5,
+    low_count: int = 5,
+    latest_count: int = 5,
 ) -> List[VideoForAnalysis]:
     """
-    분석할 영상 30개 선정.
+    분석할 영상 15개 선정.
 
-    - 히트 영상: 조회수 상위 10개
-    - 저조 영상: 조회수 하위 10개
-    - 최신 영상: 최근 업로드 10개 (히트/저조와 중복 제외)
+    - 히트 영상: 조회수 상위 5개
+    - 저조 영상: 조회수 하위 5개
+    - 최신 영상: 최근 업로드 5개 (히트/저조와 중복 제외)
 
     Returns:
         List[VideoForAnalysis]: 분석 대상 영상 목록
@@ -180,12 +189,14 @@ async def select_videos_for_analysis(
 
 async def get_transcripts_for_videos(
     videos: List[VideoForAnalysis],
+    access_token: Optional[str] = None,
 ) -> List[Tuple[VideoForAnalysis, str]]:
     """
     영상 목록의 자막을 가져옴.
 
     Args:
         videos: 분석 대상 영상 목록
+        access_token: OAuth 토큰 (있으면 YouTube API 사용, 없으면 yt-dlp)
 
     Returns:
         List[(video, transcript_text)]: 자막이 있는 영상과 자막 텍스트
@@ -193,40 +204,74 @@ async def get_transcripts_for_videos(
     if not videos:
         return []
 
-    video_ids = [v.youtube_video_id for v in videos]
-
-    # SubtitleService로 자막 가져오기
-    results = await SubtitleService.fetch_subtitles(
-        video_ids=video_ids,
-        languages=["ko", "en"],  # 한국어 우선, 영어 폴백
-        db=None,  # DB 저장은 나중에 별도로
-    )
-
-    # video_id → result 매핑
-    result_map = {r["video_id"]: r for r in results}
-
-    # 자막 텍스트 추출
     videos_with_transcripts = []
-    for video in videos:
-        result = result_map.get(video.youtube_video_id)
-        if not result or result.get("status") != "success":
-            logger.debug(f"[VideoAnalyzer] 자막 없음: {video.youtube_video_id}")
-            continue
 
-        # cues에서 텍스트만 추출
-        tracks = result.get("tracks", [])
-        if not tracks:
-            continue
+    # access_token이 있으면 YouTube Captions API 사용 (본인 채널)
+    if access_token:
+        logger.info(f"[VideoAnalyzer] YouTube Captions API로 자막 추출 시작 ({len(videos)}개)")
 
-        cues = tracks[0].get("cues", [])
-        transcript_text = " ".join(cue.get("text", "") for cue in cues)
+        for video in videos:
+            try:
+                result = await YouTubeService.fetch_video_captions(
+                    video_id=video.youtube_video_id,
+                    access_token=access_token,
+                    languages=["ko", "en"],
+                )
 
-        if transcript_text.strip():
-            videos_with_transcripts.append((video, transcript_text))
-            logger.debug(
-                f"[VideoAnalyzer] 자막 추출 성공: {video.youtube_video_id}, "
-                f"길이={len(transcript_text)}"
-            )
+                if result and result.get("status") == "success":
+                    tracks = result.get("tracks", [])
+                    if tracks:
+                        cues = tracks[0].get("cues", [])
+                        transcript_text = " ".join(cue.get("text", "") for cue in cues)
+
+                        if transcript_text.strip():
+                            videos_with_transcripts.append((video, transcript_text))
+                            logger.debug(
+                                f"[VideoAnalyzer] 자막 추출 성공 (API): {video.youtube_video_id}, "
+                                f"길이={len(transcript_text)}"
+                            )
+                else:
+                    logger.debug(f"[VideoAnalyzer] 자막 없음 (API): {video.youtube_video_id}")
+
+                # Rate limit 방지
+                await asyncio.sleep(0.5)
+
+            except Exception as e:
+                logger.warning(f"[VideoAnalyzer] 자막 추출 실패 (API): {video.youtube_video_id}, {e}")
+
+    # access_token이 없으면 yt-dlp 사용 (경쟁자 채널 등)
+    else:
+        logger.info(f"[VideoAnalyzer] yt-dlp로 자막 추출 시작 ({len(videos)}개)")
+
+        video_ids = [v.youtube_video_id for v in videos]
+
+        results = await SubtitleService.fetch_subtitles(
+            video_ids=video_ids,
+            languages=["ko", "en"],
+            db=None,
+        )
+
+        result_map = {r["video_id"]: r for r in results}
+
+        for video in videos:
+            result = result_map.get(video.youtube_video_id)
+            if not result or result.get("status") != "success":
+                logger.debug(f"[VideoAnalyzer] 자막 없음 (yt-dlp): {video.youtube_video_id}")
+                continue
+
+            tracks = result.get("tracks", [])
+            if not tracks:
+                continue
+
+            cues = tracks[0].get("cues", [])
+            transcript_text = " ".join(cue.get("text", "") for cue in cues)
+
+            if transcript_text.strip():
+                videos_with_transcripts.append((video, transcript_text))
+                logger.debug(
+                    f"[VideoAnalyzer] 자막 추출 성공 (yt-dlp): {video.youtube_video_id}, "
+                    f"길이={len(transcript_text)}"
+                )
 
     logger.info(
         f"[VideoAnalyzer] 자막 추출 완료: "
@@ -237,11 +282,137 @@ async def get_transcripts_for_videos(
 
 
 # ============================================================================
+# 댓글 추출
+# ============================================================================
+
+async def get_comments_for_videos(
+    videos: List[VideoForAnalysis],
+    max_per_video: int = 10,
+) -> dict:
+    """
+    영상 목록의 댓글을 가져옴 (좋아요 순 상위 N개).
+
+    Args:
+        videos: 분석 대상 영상 목록
+        max_per_video: 영상당 가져올 댓글 수
+
+    Returns:
+        dict: {video.id: [{"text": 댓글내용, "likes": 좋아요수}, ...]}
+    """
+    if not videos:
+        return {}
+
+    api_key = settings.youtube_api_key
+    if not api_key:
+        logger.warning("[VideoAnalyzer] YouTube API 키 없음, 댓글 수집 스킵")
+        return {}
+
+    comments_map = {}
+
+    for video in videos:
+        try:
+            comments = await _fetch_video_comments(
+                video_id=video.youtube_video_id,
+                api_key=api_key,
+                max_results=max_per_video,
+            )
+            comments_map[video.id] = comments
+            logger.debug(
+                f"[VideoAnalyzer] 댓글 추출: {video.youtube_video_id}, "
+                f"{len(comments)}개"
+            )
+        except Exception as e:
+            logger.warning(f"[VideoAnalyzer] 댓글 추출 실패 ({video.youtube_video_id}): {e}")
+            comments_map[video.id] = []
+
+        # Rate limit 방지
+        await asyncio.sleep(0.5)
+
+    success_count = sum(1 for c in comments_map.values() if c)
+    logger.info(
+        f"[VideoAnalyzer] 댓글 추출 완료: "
+        f"{success_count}/{len(videos)} 성공"
+    )
+
+    return comments_map
+
+
+async def _fetch_video_comments(
+    video_id: str,
+    api_key: str,
+    max_results: int = 10,
+) -> List[dict]:
+    """
+    YouTube API로 단일 영상의 댓글 가져오기.
+
+    Args:
+        video_id: YouTube 영상 ID
+        api_key: YouTube Data API 키
+        max_results: 가져올 댓글 수
+
+    Returns:
+        List[dict]: [{"text": 댓글내용, "likes": 좋아요수}, ...]
+    """
+    BASE_URL = "https://www.googleapis.com/youtube/v3"
+
+    params = {
+        "part": "snippet",
+        "videoId": video_id,
+        "maxResults": min(max_results * 2, 100),  # 필터링 위해 더 가져옴
+        "order": "relevance",
+        "key": api_key,
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(f"{BASE_URL}/commentThreads", params=params)
+
+            if resp.status_code == 403:
+                # 댓글 비활성화된 영상
+                logger.debug(f"[VideoAnalyzer] 댓글 비활성화: {video_id}")
+                return []
+
+            if resp.status_code == 404:
+                logger.debug(f"[VideoAnalyzer] 영상 없음: {video_id}")
+                return []
+
+            if resp.status_code != 200:
+                logger.warning(f"[VideoAnalyzer] 댓글 API 에러 {resp.status_code}: {video_id}")
+                return []
+
+            data = resp.json()
+            items = data.get("items", [])
+
+            comments = []
+            for item in items:
+                snippet = item.get("snippet", {})
+                top_comment = snippet.get("topLevelComment", {})
+                comment_snippet = top_comment.get("snippet", {})
+
+                comments.append({
+                    "text": comment_snippet.get("textDisplay", ""),
+                    "likes": comment_snippet.get("likeCount", 0),
+                })
+
+            # 좋아요 순 정렬 후 상위 N개
+            comments.sort(key=lambda x: -x["likes"])
+            return comments[:max_results]
+
+    except httpx.TimeoutException:
+        logger.warning(f"[VideoAnalyzer] 댓글 API 타임아웃: {video_id}")
+        return []
+    except Exception as e:
+        logger.error(f"[VideoAnalyzer] 댓글 API 에러 ({video_id}): {e}")
+        return []
+
+
+# ============================================================================
 # LLM 분석
 # ============================================================================
 
 async def analyze_videos_batch(
     videos_with_transcripts: List[Tuple[VideoForAnalysis, str]],
+    comments_map: Optional[dict] = None,
 ) -> Tuple[List[VideoAnalysisResult], List[str], List[str], List[str], List[str]]:
     """
     영상들을 배치로 LLM 분석.
@@ -251,10 +422,13 @@ async def analyze_videos_batch(
 
     Args:
         videos_with_transcripts: (영상, 자막) 튜플 리스트
+        comments_map: {video.id: [댓글 리스트]} 딕셔너리 (Optional)
 
     Returns:
         Tuple[개별 분석 결과, hit 패턴, low 패턴, latest 패턴, tone 후보들]
     """
+    if comments_map is None:
+        comments_map = {}
     if not videos_with_transcripts:
         return [], [], [], [], []
 
@@ -283,7 +457,7 @@ async def analyze_videos_batch(
     if hit_videos:
         logger.info(f"[VideoAnalyzer] hit 배치 분석 시작 ({len(hit_videos)}개)")
         try:
-            output = await _analyze_batch_with_llm(hit_videos, api_key, batch_type="hit")
+            output = await _analyze_batch_with_llm(hit_videos, api_key, batch_type="hit", comments_map=comments_map)
             all_results.extend(output.results)
             hit_patterns = output.patterns or []
             if output.tone_candidates:
@@ -292,13 +466,13 @@ async def analyze_videos_batch(
         except Exception as e:
             logger.error(f"[VideoAnalyzer] hit 배치 실패: {e}")
 
-        await asyncio.sleep(3.0)
+        await asyncio.sleep(10.0)  # Gemini rate limit 방지
 
     # 2. low 배치 분석 (개별 분석 + 공통 패턴 + 말투 후보)
     if low_videos:
         logger.info(f"[VideoAnalyzer] low 배치 분석 시작 ({len(low_videos)}개)")
         try:
-            output = await _analyze_batch_with_llm(low_videos, api_key, batch_type="low")
+            output = await _analyze_batch_with_llm(low_videos, api_key, batch_type="low", comments_map=comments_map)
             all_results.extend(output.results)
             low_patterns = output.patterns or []
             if output.tone_candidates:
@@ -307,13 +481,13 @@ async def analyze_videos_batch(
         except Exception as e:
             logger.error(f"[VideoAnalyzer] low 배치 실패: {e}")
 
-        await asyncio.sleep(3.0)
+        await asyncio.sleep(10.0)  # Gemini rate limit 방지
 
     # 3. latest 배치 분석 (개별 분석 + 공통 패턴 + 말투 후보)
     if latest_videos:
         logger.info(f"[VideoAnalyzer] latest 배치 분석 시작 ({len(latest_videos)}개)")
         try:
-            output = await _analyze_batch_with_llm(latest_videos, api_key, batch_type="latest")
+            output = await _analyze_batch_with_llm(latest_videos, api_key, batch_type="latest", comments_map=comments_map)
             all_results.extend(output.results)
             latest_patterns = output.patterns or []
             if output.tone_candidates:
@@ -331,12 +505,25 @@ async def _analyze_batch_with_llm(
     api_key: str,
     batch_type: str = "latest",  # "hit" / "low" / "latest"
     max_retries: int = 3,
+    comments_map: Optional[dict] = None,
 ) -> BatchAnalysisOutput:
     """단일 배치를 LLM으로 분석. 429 에러 시 재시도."""
+    if comments_map is None:
+        comments_map = {}
 
     # 프롬프트 구성
     videos_text = ""
     for idx, (video, transcript) in enumerate(batch, 1):
+        # 댓글 텍스트 구성
+        comments = comments_map.get(video.id, [])
+        comments_text = ""
+        if comments:
+            comment_lines = []
+            for c in comments[:10]:  # 최대 10개
+                likes_str = f"(좋아요 {c['likes']})" if c.get('likes') else ""
+                comment_lines.append(f"- {c['text']} {likes_str}")
+            comments_text = "\n".join(comment_lines)
+
         videos_text += f"""
 ---
 ### 영상 {idx}
@@ -348,6 +535,9 @@ async def _analyze_batch_with_llm(
 
 자막:
 {transcript}
+
+시청자 댓글 (좋아요 순 상위):
+{comments_text if comments_text else "(댓글 없음)"}
 """
 
     # 기본 프롬프트
@@ -361,7 +551,7 @@ async def _analyze_batch_with_llm(
         batch_desc = "최신 영상들"
         pattern_desc = "최신"
 
-    prompt = f"""다음은 유튜브 채널의 {batch_desc}입니다. 각 영상을 분석해주세요.
+    prompt = f"""다음은 유튜브 채널의 {batch_desc}입니다. 각 영상을 자막과 댓글을 함께 분석해주세요.
 
 {videos_text}
 
@@ -381,7 +571,10 @@ async def _analyze_batch_with_llm(
       "summary": "영상 내용 2-3문장 요약",
       "strengths": ["강점1", "강점2"],
       "weaknesses": ["개선점1", "개선점2"],
-      "performance_insight": "조회수/좋아요와 연결된 성과 인사이트"
+      "performance_insight": "조회수/좋아요와 연결된 성과 인사이트",
+      "viewer_reactions": ["댓글에서 드러나는 시청자 반응1", "반응2", "반응3"],
+      "viewer_needs": ["시청자가 원하는 것/요청사항1", "요청사항2"],
+      "performance_reason": "이 영상이 {pattern_desc}인 이유 (댓글 반응 기반 분석)"
     }}
   ],
   "common_patterns": ["이 {pattern_desc} 영상들의 공통 패턴1", "공통 패턴2", "공통 패턴3"],
@@ -401,6 +594,9 @@ async def _analyze_batch_with_llm(
   - 문장 종결 패턴 (예: ~거든요, ~하시죠)
   - 자주 쓰는 표현 (예: 자, 사실, 근데)
   - 인사말, 마무리 멘트 등
+- viewer_reactions, viewer_needs는 댓글 내용을 분석하여 작성해주세요
+  - 댓글이 없으면 자막 내용에서 예상되는 시청자 반응을 추론해주세요
+- performance_reason은 "{pattern_desc}" 영상인 이유를 댓글 반응 기반으로 분석해주세요
 """
 
     for attempt in range(max_retries):
@@ -462,6 +658,10 @@ async def _analyze_batch_with_llm(
                         strengths=item.get("strengths", []),
                         weaknesses=item.get("weaknesses", []),
                         performance_insight=item.get("performance_insight", ""),
+                        # 댓글 기반 분석 (NEW)
+                        viewer_reactions=item.get("viewer_reactions", []),
+                        viewer_needs=item.get("viewer_needs", []),
+                        performance_reason=item.get("performance_reason", ""),
                     ))
 
                 return BatchAnalysisOutput(
@@ -489,44 +689,86 @@ async def analyze_hit_vs_low_comparison(
     low_patterns: List[str],
     latest_patterns: List[str],
     tone_candidates: List[str],
+    hit_viewer_data: Optional[List[dict]] = None,
+    low_viewer_data: Optional[List[dict]] = None,
+    latest_viewer_data: Optional[List[dict]] = None,
     max_retries: int = 3,
-) -> Tuple[str, List[str], str]:
+) -> dict:
     """
-    패턴 비교 분석 + 말투 종합.
+    패턴 비교 분석 + 말투 종합 + 시청자 반응 분석.
 
     Args:
         hit_patterns: 히트 영상 공통 패턴 리스트
         low_patterns: 저조 영상 공통 패턴 리스트
         latest_patterns: 최신 영상 공통 패턴 리스트
         tone_candidates: 말투 샘플 후보 문장들
+        hit_viewer_data: 히트 영상들의 시청자 반응 [{reactions: [], needs: []}, ...]
+        low_viewer_data: 저조 영상들의 시청자 반응
+        latest_viewer_data: 최신 영상들의 시청자 반응
 
     Returns:
-        Tuple[tone_manner 설명, tone_samples, success_formula]
+        dict: {
+            tone_manner, tone_samples, success_formula,
+            viewer_likes, viewer_dislikes, current_viewer_needs
+        }
     """
+    if hit_viewer_data is None:
+        hit_viewer_data = []
+    if low_viewer_data is None:
+        low_viewer_data = []
+    if latest_viewer_data is None:
+        latest_viewer_data = []
     api_key = settings.gemini_api_key
     if not api_key:
         logger.error("[VideoAnalyzer] Gemini API 키 없음")
-        return "", [], ""
+        return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
     if not hit_patterns and not low_patterns and not tone_candidates:
         logger.warning("[VideoAnalyzer] 비교 분석할 데이터 없음")
-        return "", [], ""
+        return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
     hit_text = "\n".join(f"- {p}" for p in hit_patterns) if hit_patterns else "- 분석 결과 없음"
     low_text = "\n".join(f"- {p}" for p in low_patterns) if low_patterns else "- 분석 결과 없음"
     latest_text = "\n".join(f"- {p}" for p in latest_patterns) if latest_patterns else "- 분석 결과 없음"
     tone_text = "\n".join(f"- {t}" for t in tone_candidates) if tone_candidates else "- 샘플 없음"
 
+    # 시청자 반응 데이터 텍스트 구성
+    def format_viewer_data(data_list: List[dict]) -> str:
+        if not data_list:
+            return "- 데이터 없음"
+        lines = []
+        for item in data_list:
+            reactions = item.get("reactions", [])
+            needs = item.get("needs", [])
+            if reactions:
+                lines.append(f"  반응: {', '.join(reactions[:3])}")
+            if needs:
+                lines.append(f"  니즈: {', '.join(needs[:2])}")
+        return "\n".join(lines) if lines else "- 데이터 없음"
+
+    hit_viewer_text = format_viewer_data(hit_viewer_data)
+    low_viewer_text = format_viewer_data(low_viewer_data)
+    latest_viewer_text = format_viewer_data(latest_viewer_data)
+
     prompt = f"""다음은 한 유튜브 채널의 영상 분석 결과입니다.
 
 ## 히트 영상들의 공통 패턴 (조회수 높음)
 {hit_text}
 
+### 히트 영상 시청자 반응 (댓글 기반)
+{hit_viewer_text}
+
 ## 저조 영상들의 공통 패턴 (조회수 낮음)
 {low_text}
 
+### 저조 영상 시청자 반응 (댓글 기반)
+{low_viewer_text}
+
 ## 최신 영상들의 공통 패턴
 {latest_text}
+
+### 최신 영상 시청자 반응 (댓글 기반) ★ 현재 시청자 니즈 파악에 중요
+{latest_viewer_text}
 
 ## 크리에이터의 말투 샘플 후보
 {tone_text}
@@ -545,14 +787,20 @@ async def analyze_hit_vs_low_comparison(
     "대표 문장3",
     "대표 문장4",
     "대표 문장5"
-  ]
+  ],
+  "viewer_likes": ["시청자가 좋아하는 포인트1 (히트 영상 댓글 기반)", "포인트2", "포인트3"],
+  "viewer_dislikes": ["시청자가 싫어하는/부족하다고 느끼는 포인트1 (저조 영상 댓글 기반)", "포인트2"],
+  "current_viewer_needs": ["최근 시청자가 원하는 것1 (최신 영상 댓글 기반, 가중치 높음)", "원하는 것2", "원하는 것3"]
 }}
 ```
 
 중요:
 - success_formula: 히트 vs 저조 비교를 통해 구체적이고 실행 가능한 성공 공식 도출
-- tone_manner: 스크립트 작성 시 참고할 수 있도록 말투 특성을 상세히 설명 (예: "~거든요 체를 주로 사용하며, '자'로 문장을 시작하는 경우가 많음. 친근하지만 전문적인 느낌")
-- tone_samples: 위 후보 중에서 말투가 가장 잘 드러나는 5-7개 문장 선별 (실제 스크립트 생성 시 few-shot 예시로 활용)
+- tone_manner: 스크립트 작성 시 참고할 수 있도록 말투 특성을 상세히 설명
+- tone_samples: 위 후보 중에서 말투가 가장 잘 드러나는 5-7개 문장 선별
+- viewer_likes: 히트 영상 댓글에서 발견된 시청자가 좋아하는 공통 포인트 3-5개
+- viewer_dislikes: 저조 영상 댓글에서 발견된 시청자가 싫어하거나 부족하다고 느끼는 포인트 2-4개
+- current_viewer_needs: 최신 영상 댓글을 중심으로 현재 시청자가 원하는 것 3-5개 (가장 중요!)
 """
 
     for attempt in range(max_retries):
@@ -578,13 +826,13 @@ async def analyze_hit_vs_low_comparison(
 
                 if resp.status_code != 200:
                     logger.error(f"[VideoAnalyzer] 비교 분석 API 에러: {resp.status_code}")
-                    return "", [], ""
+                    return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
                 data = resp.json()
                 candidates = data.get("candidates", [])
                 if not candidates:
                     logger.error("[VideoAnalyzer] 비교 분석 응답에 candidates 없음")
-                    return "", [], ""
+                    return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
                 text = candidates[0]["content"]["parts"][0]["text"]
 
@@ -599,15 +847,29 @@ async def analyze_hit_vs_low_comparison(
                 success_formula = response_data.get("success_formula", "")
                 tone_manner = response_data.get("tone_manner", "")
                 tone_samples = response_data.get("tone_samples", [])
+                # 시청자 분석 (NEW)
+                viewer_likes = response_data.get("viewer_likes", [])
+                viewer_dislikes = response_data.get("viewer_dislikes", [])
+                current_viewer_needs = response_data.get("current_viewer_needs", [])
 
                 logger.info(
                     f"[VideoAnalyzer] 비교 분석 완료: "
                     f"성공공식 있음={bool(success_formula)}, "
                     f"tone_manner 있음={bool(tone_manner)}, "
-                    f"tone_samples={len(tone_samples)}개"
+                    f"tone_samples={len(tone_samples)}개, "
+                    f"viewer_likes={len(viewer_likes)}개, "
+                    f"viewer_dislikes={len(viewer_dislikes)}개, "
+                    f"current_needs={len(current_viewer_needs)}개"
                 )
 
-                return tone_manner, tone_samples, success_formula
+                return {
+                    "tone_manner": tone_manner,
+                    "tone_samples": tone_samples,
+                    "success_formula": success_formula,
+                    "viewer_likes": viewer_likes,
+                    "viewer_dislikes": viewer_dislikes,
+                    "current_viewer_needs": current_viewer_needs,
+                }
 
         except (json.JSONDecodeError, Exception) as e:
             error_type = "JSON 파싱 실패" if isinstance(e, json.JSONDecodeError) else "분석 실패"
@@ -617,10 +879,10 @@ async def analyze_hit_vs_low_comparison(
                 logger.warning(f"[VideoAnalyzer] 비교 분석 {wait_time}초 대기 후 재시도")
                 await asyncio.sleep(wait_time)
             else:
-                return "", [], ""
+                return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
     logger.error(f"[VideoAnalyzer] 비교 분석 {max_retries}번 시도 후 실패")
-    return "", [], ""
+    return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
 
 # ============================================================================
@@ -674,6 +936,9 @@ async def save_analysis_results(
             existing.strengths = result.strengths
             existing.weaknesses = result.weaknesses
             existing.performance_insight = result.performance_insight
+            existing.viewer_reactions = result.viewer_reactions
+            existing.viewer_needs = result.viewer_needs
+            existing.performance_reason = result.performance_reason
             existing.transcript_text = transcript
         else:
             # 새로 생성
@@ -688,6 +953,9 @@ async def save_analysis_results(
                 strengths=result.strengths,
                 weaknesses=result.weaknesses,
                 performance_insight=result.performance_insight,
+                viewer_reactions=result.viewer_reactions,
+                viewer_needs=result.viewer_needs,
+                performance_reason=result.performance_reason,
                 transcript_text=transcript,
                 selection_reason=video.selection_reason,
             )
@@ -710,6 +978,9 @@ def summarize_video_analyses(
     tone_manner: str,
     tone_samples: List[str],
     success_formula: str,
+    viewer_likes: Optional[List[str]] = None,
+    viewer_dislikes: Optional[List[str]] = None,
+    current_viewer_needs: Optional[List[str]] = None,
 ) -> ChannelVideoSummary:
     """
     개별 영상 분석 결과를 채널 단위로 집계.
@@ -721,6 +992,9 @@ def summarize_video_analyses(
         tone_manner: 말투 특성 설명
         tone_samples: 말투 샘플 문장
         success_formula: 성공 공식
+        viewer_likes: 시청자가 좋아하는 포인트
+        viewer_dislikes: 시청자가 싫어하는 포인트
+        current_viewer_needs: 현재 시청자 니즈
 
     Returns:
         ChannelVideoSummary: 채널 전체 요약
@@ -734,6 +1008,9 @@ def summarize_video_analyses(
             hit_patterns=hit_patterns or [],
             low_patterns=low_patterns or [],
             success_formula=success_formula or "",
+            viewer_likes=viewer_likes or [],
+            viewer_dislikes=viewer_dislikes or [],
+            current_viewer_needs=current_viewer_needs or [],
         )
 
     # 영상 유형 집계
@@ -765,6 +1042,9 @@ def summarize_video_analyses(
         hit_patterns=hit_patterns or [],
         low_patterns=low_patterns or [],
         success_formula=success_formula or "",
+        viewer_likes=viewer_likes or [],
+        viewer_dislikes=viewer_dislikes or [],
+        current_viewer_needs=current_viewer_needs or [],
     )
 
 
@@ -775,14 +1055,15 @@ def summarize_video_analyses(
 async def analyze_channel_videos(
     db: AsyncSession,
     channel_id: str,
-    min_videos_required: int = 15,
+    min_videos_required: int = 8,
+    access_token: Optional[str] = None,
 ) -> Optional[ChannelVideoSummary]:
     """
     채널 영상 분석 파이프라인.
 
-    1. 영상 30개 선정
-    2. 자막 추출
-    3. LLM 분석 (10개씩 배치)
+    1. 영상 15개 선정
+    2. 자막 추출 (access_token 있으면 YouTube API, 없으면 yt-dlp)
+    3. LLM 분석 (5개씩 배치)
     4. DB 저장
     5. 채널 요약 생성
 
@@ -790,6 +1071,7 @@ async def analyze_channel_videos(
         db: DB 세션
         channel_id: 채널 ID
         min_videos_required: 최소 필요 영상 수 (자막 있는 것 기준)
+        access_token: OAuth 토큰 (본인 채널이면 전달)
 
     Returns:
         ChannelVideoSummary or None
@@ -802,8 +1084,8 @@ async def analyze_channel_videos(
         logger.warning(f"[VideoAnalyzer] 분석할 영상 없음: {channel_id}")
         return None
 
-    # 2. 자막 추출
-    videos_with_transcripts = await get_transcripts_for_videos(videos)
+    # 2. 자막 추출 (access_token 있으면 YouTube API 사용)
+    videos_with_transcripts = await get_transcripts_for_videos(videos, access_token=access_token)
 
     if len(videos_with_transcripts) < min_videos_required:
         logger.warning(
@@ -815,26 +1097,65 @@ async def analyze_channel_videos(
     # transcript 맵 만들기
     transcripts = {v.id: t for v, t in videos_with_transcripts}
 
+    # 2.5. 댓글 추출
+    videos_for_comments = [v for v, _ in videos_with_transcripts]
+    comments_map = await get_comments_for_videos(videos_for_comments, max_per_video=10)
+
     # 3. LLM 분석 (hit/low/latest 그룹별로 분석 + 패턴 + tone 후보 추출)
-    results, hit_patterns, low_patterns, latest_patterns, tone_candidates = await analyze_videos_batch(videos_with_transcripts)
+    results, hit_patterns, low_patterns, latest_patterns, tone_candidates = await analyze_videos_batch(
+        videos_with_transcripts,
+        comments_map=comments_map,
+    )
 
     if not results:
         logger.warning(f"[VideoAnalyzer] LLM 분석 결과 없음: {channel_id}")
         return None
 
-    # 4. 비교 분석 (success_formula + tone_manner + tone_samples 추출)
-    await asyncio.sleep(3.0)  # 배치 분석 후 딜레이
-    tone_manner, tone_samples, success_formula = await analyze_hit_vs_low_comparison(
+    # 3.5. 개별 분석 결과에서 시청자 데이터 추출 (hit/low/latest별)
+    videos_map = {v.id: v for v, _ in videos_with_transcripts}
+    hit_viewer_data = []
+    low_viewer_data = []
+    latest_viewer_data = []
+
+    for r in results:
+        video = videos_map.get(r.video_id)
+        if not video:
+            continue
+        viewer_item = {
+            "reactions": r.viewer_reactions,
+            "needs": r.viewer_needs,
+        }
+        if video.selection_reason == "hit":
+            hit_viewer_data.append(viewer_item)
+        elif video.selection_reason == "low":
+            low_viewer_data.append(viewer_item)
+        else:  # latest
+            latest_viewer_data.append(viewer_item)
+
+    # 4. 비교 분석 (success_formula + tone_manner + tone_samples + 시청자 분석)
+    await asyncio.sleep(10.0)  # Gemini rate limit 방지
+    comparison_result = await analyze_hit_vs_low_comparison(
         hit_patterns=hit_patterns,
         low_patterns=low_patterns,
         latest_patterns=latest_patterns,
         tone_candidates=tone_candidates,
+        hit_viewer_data=hit_viewer_data,
+        low_viewer_data=low_viewer_data,
+        latest_viewer_data=latest_viewer_data,
     )
+
+    tone_manner = comparison_result.get("tone_manner", "")
+    tone_samples = comparison_result.get("tone_samples", [])
+    success_formula = comparison_result.get("success_formula", "")
+    viewer_likes = comparison_result.get("viewer_likes", [])
+    viewer_dislikes = comparison_result.get("viewer_dislikes", [])
+    current_viewer_needs = comparison_result.get("current_viewer_needs", [])
 
     logger.info(
         f"[VideoAnalyzer] 비교 분석 완료: "
         f"hit_patterns={len(hit_patterns)}, low_patterns={len(low_patterns)}, "
-        f"tone_samples={len(tone_samples)}개, success_formula 있음={bool(success_formula)}"
+        f"tone_samples={len(tone_samples)}개, success_formula 있음={bool(success_formula)}, "
+        f"viewer_likes={len(viewer_likes)}개, current_needs={len(current_viewer_needs)}개"
     )
 
     # 5. DB 저장
@@ -854,6 +1175,9 @@ async def analyze_channel_videos(
         tone_manner=tone_manner,
         tone_samples=tone_samples,
         success_formula=success_formula,
+        viewer_likes=viewer_likes,
+        viewer_dislikes=viewer_dislikes,
+        current_viewer_needs=current_viewer_needs,
     )
 
     logger.info(
