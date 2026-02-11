@@ -46,6 +46,17 @@ class PersonaResponse(BaseModel):
     topic_keywords: Optional[List[str]] = None
     style_keywords: Optional[List[str]] = None
 
+    # 영상 분석 결과 (자막 기반)
+    video_types: Optional[dict] = None           # {"정보형": 40, "튜토리얼형": 30, ...}
+    content_structures: Optional[dict] = None    # {"정보형": "문제→해결→요약", ...}
+    tone_manner: Optional[str] = None            # 채널 전체 톤앤매너 설명
+    tone_samples: Optional[List[str]] = None     # 말투 샘플 문장 (few-shot용)
+
+    # 히트/저조 비교 분석 결과
+    hit_patterns: Optional[List[str]] = None     # ["실용적 팁 제공", "초반 훅 강함"]
+    low_patterns: Optional[List[str]] = None     # ["주제 모호", "영상 너무 김"]
+    success_formula: Optional[str] = None        # "실용적 정보를 빠르게 전달"
+
     # 메타
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
