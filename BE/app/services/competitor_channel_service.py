@@ -18,6 +18,7 @@ from app.schemas.competitor_channel import CompetitorChannelCreate
 from app.services.channel_service import ChannelService
 from app.services.subtitle_service import SubtitleService
 from sqlalchemy import delete as sql_delete
+from app.services.keyword_extraction_service import extract_keywords_batch
 
 logger = logging.getLogger(__name__)
 
@@ -1057,6 +1058,13 @@ class CompetitorChannelService:
 
         if not isinstance(parsed, list) or len(parsed) == 0:
             raise HTTPException(status_code=500, detail="주제 추천 결과가 올바르지 않습니다.")
+
+        # 5.5. 키워드 에이전트로 search_keywords 품질 향상
+        titles = [item.get("title", "") for item in parsed[:3]]
+        keyword_results = await extract_keywords_batch(titles)
+        for item, new_keywords in zip(parsed[:3], keyword_results):
+            if new_keywords:
+                item["search_keywords"] = new_keywords
 
         # 6. 기존 competitor_analysis 주제 삭제
         await db.execute(
