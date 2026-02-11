@@ -16,6 +16,7 @@ import concurrent.futures
 import os
 import hashlib
 import re
+import uuid
 import difflib  # 유사도 비교용
 from datetime import datetime
 from playwright.sync_api import sync_playwright
@@ -68,12 +69,31 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
     full_articles = _crawl_and_analyze(unique_articles, topic=topic)
     
-    # 6. [Fact Extractor] 팩트 구조화 및 시각화 제안
-    # 기사들의 핵심 문단을 분석하여 Writer가 쓰기 편한 구조화된 데이터 생성
-    structured_facts = _structure_facts(full_articles)
-    
-    # 7. 결과 반환 (차트가 있는 기사 우선 정렬)
+    # 6. 기사 정렬 (차트 있는 기사 우선) — 팩트 수집 전에 먼저 정렬해야 source_index가 일치함
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
+    
+    # 7. [Fact Extractor] 기사별 analysis.facts에서 확정 인덱스로 팩트 수집
+    # 기존 _structure_facts()는 GPT가 source_indices를 추측하여 매핑 오류가 발생했음.
+    # 개선: 정렬 후 순서 기준으로 확정 인덱스(i)를 각 fact에 하드코딩.
+    structured_facts = []
+    for i, art in enumerate(full_articles):
+        art_facts = art.get("analysis", {}).get("facts", [])
+        source_name = art.get("source", "Unknown")
+        article_id = art.get("id", "")
+        article_url = art.get("url", "")
+        for fact_text in art_facts:
+            structured_facts.append({
+                "id": f"fact-{uuid.uuid4().hex[:12]}",
+                "content": fact_text,
+                "source_index": i,           # 확정된 기사 인덱스 (정렬 후 순서)
+                "source_name": source_name,   # 출처명 (Bloomberg, 아시아경제, ...)
+                "source_indices": [i],        # 기존 Writer 호환용
+                "article_id": article_id,
+                "article_url": article_url,
+                "category": "Fact",
+                "visual_proposal": "None",
+            })
+    logger.info(f"[Fact Extractor] 기사별 확정 인덱스 팩트 수집: {len(structured_facts)}개 (기사 {len(full_articles)}개)")
     
     # [NEW] Writer에게 전달할 Opinions 모음 (모든 기사의 오피니언 통합)
     structured_opinions = []
@@ -238,7 +258,7 @@ B기사: 2,8"""
                 return articles
             
             # 우선순위 정렬: A+B 먼저, 나머지 슬롯은 A/B 균등 배분
-            MAX_ARTICLES = 5
+            MAX_ARTICLES = 7  # 중복 제거 후 5개 확보를 위해 여유분 포함
             result = []
             
             # 1순위: A+B 기사 (최대 5개)
@@ -280,6 +300,41 @@ B기사: 2,8"""
         return articles
 
 
+# 도메인 → 언론사명 매핑
+SOURCE_DOMAIN_MAP = {
+    "chosun.com": "조선일보", "donga.com": "동아일보", "joongang.co.kr": "중앙일보",
+    "hani.co.kr": "한겨레", "khan.co.kr": "경향신문", "kmib.co.kr": "국민일보",
+    "seoul.co.kr": "서울신문", "munhwa.com": "문화일보", "segye.com": "세계일보",
+    "mk.co.kr": "매일경제", "mt.co.kr": "머니투데이", "hankyung.com": "한국경제",
+    "sedaily.com": "서울경제", "edaily.co.kr": "이데일리", "fnnews.com": "파이낸셜뉴스",
+    "asiae.co.kr": "아시아경제", "etnews.com": "전자신문", "zdnet.co.kr": "ZDNet Korea",
+    "bloter.net": "블로터", "ddaily.co.kr": "디지털데일리",
+    "yna.co.kr": "연합뉴스", "yonhapnews.co.kr": "연합뉴스",
+    "newsis.com": "뉴시스", "news1.kr": "뉴스1",
+    "bbc.com": "BBC", "bbc.co.uk": "BBC",
+    "reuters.com": "Reuters", "bloomberg.com": "Bloomberg",
+    "nytimes.com": "NYT", "wsj.com": "WSJ",
+    "techcrunch.com": "TechCrunch", "theverge.com": "The Verge",
+    "cnbc.com": "CNBC", "ft.com": "FT",
+}
+
+def _extract_source_from_url(url: str) -> str:
+    """URL 도메인에서 언론사명을 추출합니다."""
+    try:
+        from urllib.parse import urlparse
+        domain = urlparse(url).netloc.lower().replace("www.", "").replace("view.", "").replace("news.", "")
+        # 정확한 매칭
+        if domain in SOURCE_DOMAIN_MAP:
+            return SOURCE_DOMAIN_MAP[domain]
+        # 부분 매칭 (서브도메인 대응)
+        for key, name in SOURCE_DOMAIN_MAP.items():
+            if key in domain:
+                return name
+        return ""
+    except:
+        return ""
+
+
 def _fetch_naver_news_bulk(queries: List[str]) -> List[Dict]:
     """네이버 뉴스 검색결과를 대량으로 가져옵니다 (쿼리당 15개)."""
     articles = []
@@ -314,7 +369,8 @@ def _fetch_naver_news_bulk(queries: List[str]) -> List[Dict]:
                             "url": link,
                             "desc": clean_desc,
                             "pub_date": item.get("pubDate"),
-                            "query": query
+                            "query": query,
+                            "source": _extract_source_from_url(link),
                         })
                         seen_links.add(link)
         except Exception as e:
@@ -849,7 +905,15 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
                         content = res.content.replace("```json", "").replace("```", "").strip()
                         try:
                             data = json.loads(content)
-                            item["source"] = data.get("source", "Unknown")
+                            gpt_source = data.get("source", "")
+                            # GPT가 출처를 못 잡으면 URL 기반 출처 사용
+                            pre_source = item.get("source", "")
+                            if gpt_source and gpt_source not in ("Unknown", "미상", "출처불명", "출처 미상", "기사(출처 미상)", ""):
+                                item["source"] = gpt_source
+                            elif pre_source:
+                                item["source"] = pre_source
+                            else:
+                                item["source"] = gpt_source or "Unknown"
                             item["summary_short"] = data.get("summary_short", "")
                             item["analysis"] = data.get("analysis", {"facts": [], "opinions": []})
                             
