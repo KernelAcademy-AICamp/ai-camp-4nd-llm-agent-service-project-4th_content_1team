@@ -190,8 +190,16 @@ class SubtitleService:
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,  # 전체 메타데이터 추출
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'mweb'],
+                },
+            },
+            'http_headers': {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            },
         }
-        
+
         # 프록시 설정
         if proxy_url:
             ydl_opts['proxy'] = proxy_url
