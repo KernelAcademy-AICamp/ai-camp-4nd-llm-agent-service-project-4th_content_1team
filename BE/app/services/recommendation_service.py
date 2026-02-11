@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content_topic import ChannelTopic, TrendTopic
 from app.models.channel_persona import ChannelPersona
+from app.services.keyword_extraction_service import extract_keywords_batch
 
 
 # =============================================================================
@@ -154,6 +155,9 @@ async def generate_channel_topics(
     if not recommendations_raw:
         return []
 
+    # 3.5. 키워드 에이전트로 search_keywords 품질 향상
+    recommendations_raw = await _enhance_search_keywords(recommendations_raw)
+
     # 4. DB 저장
     now = datetime.utcnow()
     expires_at = now + timedelta(days=7)  # 주간
@@ -215,6 +219,9 @@ async def generate_trend_topics(
 
     if not recommendations_raw:
         return []
+
+    # 3.5. 키워드 에이전트로 search_keywords 품질 향상
+    recommendations_raw = await _enhance_search_keywords(recommendations_raw)
 
     # 4. DB 저장
     now = datetime.utcnow()
@@ -355,6 +362,28 @@ async def _delete_existing_topics(db: AsyncSession, channel_id: str, model):
     """기존 추천 주제 삭제."""
     stmt = delete(model).where(model.channel_id == channel_id)
     await db.execute(stmt)
+
+
+async def _enhance_search_keywords(
+    recommendations: List[dict],
+) -> List[dict]:
+    """
+    키워드 추출 에이전트로 search_keywords 품질 향상.
+
+    각 추천의 title을 기반으로 전용 에이전트가 3개의 고품질 검색 키워드를 생성합니다.
+    에이전트 실패 시 기존 키워드를 유지합니다.
+    """
+    if not recommendations:
+        return recommendations
+
+    titles = [rec.get("title", "") for rec in recommendations]
+    keyword_results = await extract_keywords_batch(titles)
+
+    for rec, new_keywords in zip(recommendations, keyword_results):
+        if new_keywords:
+            rec["search_keywords"] = new_keywords
+
+    return recommendations
 
 
 async def _call_topic_rec(
