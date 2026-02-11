@@ -11,7 +11,13 @@ interface SidebarContextType {
 const SidebarContext = createContext<SidebarContextType | undefined>(undefined)
 
 export function SidebarProvider({ children }: { children: ReactNode }) {
-  const [isAppSidebarOpen, setIsAppSidebarOpen] = useState(true)
+  // Desktop (lg 이상)에서만 기본적으로 사이드바 열림
+  const [isAppSidebarOpen, setIsAppSidebarOpen] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return window.innerWidth >= 1024 // lg breakpoint
+    }
+    return true
+  })
   const [isDetailSidebarOpen, setIsDetailSidebarOpen] = useState(false)
 
   const toggleAppSidebar = () => {

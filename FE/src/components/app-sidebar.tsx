@@ -27,7 +27,20 @@ export function AppSidebar() {
   }
 
   return (
-    <aside className="h-full w-[300px] bg-black border-r border-[#131520] flex flex-col">
+    <>
+      {/* 오버레이 배경 (모바일/태블릿에서만) */}
+      <div 
+        className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+        onClick={toggleAppSidebar}
+        aria-hidden="true"
+      />
+      
+      {/* 사이드바 */}
+      <aside className={cn(
+        "h-full w-[300px] bg-black border-r border-[#131520] flex flex-col",
+        "lg:relative", // Desktop: 일반 레이아웃
+        "fixed z-50 inset-y-0 left-0" // Tablet/Mobile: 오버레이
+      )}>
       {/* 상단: 로고 + 토글 */}
       <div className="h-[66px] px-4 border-b border-[#131520] flex items-center">
         <div className="flex items-center justify-between w-full">
@@ -130,5 +143,6 @@ export function AppSidebar() {
         </div>
       )}
     </aside>
+    </>
   )
 }

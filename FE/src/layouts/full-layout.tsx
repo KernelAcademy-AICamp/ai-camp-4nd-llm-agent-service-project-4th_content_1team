@@ -30,7 +30,7 @@ export function FullLayout({ children, breadcrumb, actions }: FullLayoutProps) {
         <AppHeader breadcrumb={breadcrumb} actions={actions} />
 
         {/* 메인 콘텐츠 */}
-        <main className="flex-1 overflow-y-auto bg-[#c5d9a4]">
+        <main className="flex-1 overflow-y-auto bg-background">
           {children}
         </main>
       </div>

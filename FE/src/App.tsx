@@ -5,6 +5,7 @@ import DashboardPage from './pages/dashboard/page'
 import RootLayout from './pages/layout'
 import OnboardingPage from './pages/onboarding/page'
 import ScriptPage from './pages/script/page'
+import ScriptListPage from './pages/script-list/page'
 import ThumbnailPage from './pages/thumbnail/page'
 import AnalysisPage from './pages/analysis/page'
 import { ProtectedRoute } from './components/ProtectedRoute'
@@ -69,6 +70,17 @@ function App() {
             
             <Route
               path="script"
+              element={
+                <ProtectedRoute>
+                  <FullLayout>
+                    <ScriptListPage />
+                  </FullLayout>
+                </ProtectedRoute>
+              }
+            />
+            
+            <Route
+              path="script/edit"
               element={
                 <ProtectedRoute>
                   <FullLayout>
