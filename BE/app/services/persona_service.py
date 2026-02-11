@@ -41,7 +41,7 @@ async def generate_persona(
     2. 영상 데이터 조회
     3. 규칙 기반 해석 (5개)
     4. LLM 해석 (3개)
-    5. 영상 자막 분석 (30개)
+    5. 영상 자막 분석 (15개, 최소 8개 필수)
     6. 종합 페르소나 생성
     7. DB 저장
 
@@ -54,6 +54,7 @@ async def generate_persona(
     """
     # 1. 채널 정보 조회
     from app.models.youtube_channel import YouTubeChannel
+    from app.models.oauth import OAuthAccount
     stmt = select(YouTubeChannel).where(YouTubeChannel.channel_id == channel_id)
     result = await db.execute(stmt)
     channel = result.scalar_one_or_none()
@@ -61,6 +62,16 @@ async def generate_persona(
     if not channel:
         print(f"[Persona] Channel not found: {channel_id}")
         return None
+
+    # 1.5. 사용자의 OAuth 토큰 조회 (본인 채널 자막용)
+    access_token = None
+    if channel.user_id:
+        oauth_stmt = select(OAuthAccount).where(OAuthAccount.user_id == channel.user_id)
+        oauth_result = await db.execute(oauth_stmt)
+        oauth_account = oauth_result.scalar_one_or_none()
+        if oauth_account and oauth_account.access_token:
+            access_token = oauth_account.access_token
+            print(f"[Persona] OAuth 토큰 발견, YouTube API로 자막 추출")
 
     # 2. 영상 데이터 조회
     videos = await _get_channel_videos_with_stats(db, channel_id)
@@ -87,13 +98,14 @@ async def generate_persona(
         channel_title=channel.title or "",
     )
 
-    # 6. 영상 자막 분석 (30개 영상, 10개씩 배치)
+    # 6. 영상 자막 분석 (15개 영상, 5개씩 배치)
     video_analysis_summary = None
     try:
         video_analysis_summary = await analyze_channel_videos(
             db=db,
             channel_id=channel_id,
-            min_videos_required=15,
+            min_videos_required=8,
+            access_token=access_token,  # 본인 채널이면 YouTube API 사용
         )
         if video_analysis_summary:
             print(
@@ -119,6 +131,10 @@ async def generate_persona(
         persona_data["hit_patterns"] = video_analysis_summary.hit_patterns
         persona_data["low_patterns"] = video_analysis_summary.low_patterns
         persona_data["success_formula"] = video_analysis_summary.success_formula
+        # 댓글 기반 시청자 분석
+        persona_data["viewer_likes"] = video_analysis_summary.viewer_likes
+        persona_data["viewer_dislikes"] = video_analysis_summary.viewer_dislikes
+        persona_data["current_viewer_needs"] = video_analysis_summary.current_viewer_needs
 
     # 8. DB 저장 (upsert)
     persona = await _save_persona(db, channel_id, persona_data)
