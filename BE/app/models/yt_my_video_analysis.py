@@ -49,6 +49,13 @@ class YTMyVideoAnalysis(Base):
     performance_insight = Column(Text, nullable=True)    # "자극적 제목+실용적 내용이 높은 조회수로"
 
     # =========================================================================
+    # 시청자 반응 분석 (댓글 기반)
+    # =========================================================================
+    viewer_reactions = Column(JSONB, nullable=True)      # ["반응1", "반응2"]
+    viewer_needs = Column(JSONB, nullable=True)          # ["니즈1", "니즈2"]
+    performance_reason = Column(Text, nullable=True)     # "이 영상이 hit/low인 이유"
+
+    # =========================================================================
     # 자막 원본 (캐싱용)
     # =========================================================================
     transcript_text = Column(Text, nullable=True)
@@ -85,6 +92,9 @@ class YTMyVideoAnalysis(Base):
             "strengths": self.strengths,
             "weaknesses": self.weaknesses,
             "performance_insight": self.performance_insight,
+            "viewer_reactions": self.viewer_reactions,
+            "viewer_needs": self.viewer_needs,
+            "performance_reason": self.performance_reason,
             "transcript_text": self.transcript_text,
             "selection_reason": self.selection_reason,
             "analyzed_at": self.analyzed_at.isoformat() if self.analyzed_at else None,
