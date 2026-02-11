@@ -102,6 +102,13 @@ class ChannelPersona(Base):
     success_formula = Column(Text, nullable=True)        # "실용적 정보를 빠르게 전달"
 
     # =========================================================================
+    # 시청자 반응 분석 (댓글 기반)
+    # =========================================================================
+    viewer_likes = Column(JSONB, nullable=True)          # 히트 영상에서 시청자가 좋아하는 것
+    viewer_dislikes = Column(JSONB, nullable=True)       # 저조 영상에서 시청자가 싫어하는 것
+    current_viewer_needs = Column(JSONB, nullable=True)  # 최신 시청자 니즈 (최근 영상 가중)
+
+    # =========================================================================
     # 메타
     # =========================================================================
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
@@ -149,6 +156,9 @@ class ChannelPersona(Base):
             "hit_patterns": self.hit_patterns,
             "low_patterns": self.low_patterns,
             "success_formula": self.success_formula,
+            "viewer_likes": self.viewer_likes,
+            "viewer_dislikes": self.viewer_dislikes,
+            "current_viewer_needs": self.current_viewer_needs,
             "created_at": self.created_at.isoformat() if self.created_at else None,
             "updated_at": self.updated_at.isoformat() if self.updated_at else None,
         }
