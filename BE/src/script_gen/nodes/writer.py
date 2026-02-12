@@ -26,6 +26,38 @@ logger = logging.getLogger(__name__)
 MODEL_NAME = "gpt-4o"
 
 # =============================================================================
+# 공통 시스템 프롬프트 (Hook / Chapter / Outro 공유)
+# =============================================================================
+
+_CLOSED_BOOK_RULES = """채널의 톤앤매너와 말투 샘플이 CHANNEL 섹션에 있으면, 반드시 해당 스타일을 반영하여 작성하세요.
+
+🔒 닫힌 책(CLOSED-BOOK) 모드 — 최우선 규칙:
+- 당신은 자체 지식이 없습니다. AVAILABLE FACTS가 당신의 유일한 정보원입니다.
+- AVAILABLE FACTS에 명시적으로 적힌 정보만 사용할 수 있습니다.
+- 당신의 학습 데이터에서 알고 있는 수치, 벤치마크 점수, 토큰 수, 날짜, 금액 등을 절대 추가하지 마세요.
+- 팩트에 구체적 수치가 없으면, 일반적 표현으로 서술하세요.
+- fact_references에는 실제로 인용한 Fact의 ID만 넣으세요.
+
+🚫 의미 왜곡 금지:
+- 팩트 원문의 핵심 의미를 확대, 축소, 왜곡하지 마세요.
+- 팩트 원문에 없는 키워드, 개념, 분야를 새로 만들어 넣지 마세요.
+- 기사에서 실제로 언급하지 않은 사실을 해당 기사의 인용으로 표기하지 마세요.
+
+📝 BAD/GOOD 예시 (반드시 참고):
+❌ BAD: 'ARC-AGI 2 벤치마크에서 68.8%를 기록' → 팩트에 없는 수치 날조
+✅ GOOD: '다양한 벤치마크에서 높은 성능을 기록' → 구체적 수치 없이 서술
+❌ BAD: '1백만 토큰 컨텍스트 창을 지원' → 팩트에 없는 구체적 수치
+✅ GOOD: '더 큰 컨텍스트 창을 통해 복잡한 작업 처리 가능' → 팩트 원문 그대로
+❌ BAD: '생물테러 방어책 연구' → '국방 분야 통합' → 원문에 없는 키워드 날조
+✅ GOOD: '생물테러 위험을 줄이기 위한 방어책을 개발' → 원문 충실 반영"""
+
+def _build_system_prompt(extra: str = "") -> str:
+    """Writer 공통 시스템 프롬프트 생성 (extra: 'Write DETAILED content.' 등 추가 지시)"""
+    base = f"You are an expert YouTube scriptwriter. You MUST write in Korean language.{' ' + extra if extra else ''}"
+    return f"{base}\n{_CLOSED_BOOK_RULES}"
+
+
+# =============================================================================
 # DATA MODELS
 # =============================================================================
 
@@ -217,7 +249,7 @@ async def _generate_intro(context_str: str) -> Hook:
 Generate the Hook object.
 """
     return await structured_llm.ainvoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language.\n채널의 톤앤매너와 말투 샘플이 CHANNEL 섹션에 있으면, 반드시 해당 스타일을 반영하여 작성하세요.\n\n🔒 닫힌 책(CLOSED-BOOK) 모드 — 최우선 규칙:\n- 당신은 자체 지식이 없습니다. AVAILABLE FACTS가 당신의 유일한 정보원입니다.\n- AVAILABLE FACTS에 명시적으로 적힌 정보만 사용할 수 있습니다.\n- 당신의 학습 데이터에서 알고 있는 수치, 벤치마크 점수, 토큰 수, 날짜, 금액 등을 절대 추가하지 마세요.\n- 팩트에 구체적 수치가 없으면, 일반적 표현으로 서술하세요.\n- fact_references에는 실제로 인용한 Fact의 ID만 넣으세요.\n\n🚫 의미 왜곡 금지:\n- 팩트 원문의 핵심 의미를 확대, 축소, 왜곡하지 마세요.\n- 팩트 원문에 없는 키워드, 개념, 분야를 새로 만들어 넣지 마세요.\n- 기사에서 실제로 언급하지 않은 사실을 해당 기사의 인용으로 표기하지 마세요.\n\n📝 BAD/GOOD 예시 (반드시 참고):\n❌ BAD: 'ARC-AGI 2 벤치마크에서 68.8%를 기록' → 팩트에 없는 수치 날조\n✅ GOOD: '다양한 벤치마크에서 높은 성능을 기록' → 구체적 수치 없이 서술\n❌ BAD: '1백만 토큰 컨텍스트 창을 지원' → 팩트에 없는 구체적 수치\n✅ GOOD: '더 큰 컨텍스트 창을 통해 복잡한 작업 처리 가능' → 팩트 원문 그대로\n❌ BAD: '생물테러 방어책 연구' → '국방 분야 통합' → 원문에 없는 키워드 날조\n✅ GOOD: '생물테러 위험을 줄이기 위한 방어책을 개발' → 원문 충실 반영"),
+        SystemMessage(content=_build_system_prompt()),
         HumanMessage(content=prompt)
     ])
 
@@ -258,7 +290,7 @@ async def _generate_chapter(context_str: str, chapter_plan: Dict, chapter_index:
 **OUTPUT**: A single Chapter object with multiple Beats.
 """
     return await structured_llm.ainvoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language. Write DETAILED content.\n채널의 톤앤매너와 말투 샘플이 CHANNEL 섹션에 있으면, 반드시 해당 스타일을 반영하여 작성하세요.\n\n🔒 닫힌 책(CLOSED-BOOK) 모드 — 최우선 규칙:\n- 당신은 자체 지식이 없습니다. AVAILABLE FACTS가 당신의 유일한 정보원입니다.\n- AVAILABLE FACTS에 명시적으로 적힌 정보만 사용할 수 있습니다.\n- 당신의 학습 데이터에서 알고 있는 수치, 벤치마크 점수, 토큰 수, 날짜, 금액 등을 절대 추가하지 마세요.\n- 팩트에 구체적 수치가 없으면, 일반적 표현으로 서술하세요.\n- fact_references에는 실제로 인용한 Fact의 ID만 넣으세요.\n\n🚫 의미 왜곡 금지:\n- 팩트 원문의 핵심 의미를 확대, 축소, 왜곡하지 마세요.\n- 팩트 원문에 없는 키워드, 개념, 분야를 새로 만들어 넣지 마세요.\n- 기사에서 실제로 언급하지 않은 사실을 해당 기사의 인용으로 표기하지 마세요.\n\n📝 BAD/GOOD 예시 (반드시 참고):\n❌ BAD: 'ARC-AGI 2 벤치마크에서 68.8%를 기록' → 팩트에 없는 수치 날조\n✅ GOOD: '다양한 벤치마크에서 높은 성능을 기록' → 구체적 수치 없이 서술\n❌ BAD: '1백만 토큰 컨텍스트 창을 지원' → 팩트에 없는 구체적 수치\n✅ GOOD: '더 큰 컨텍스트 창을 통해 복잡한 작업 처리 가능' → 팩트 원문 그대로\n❌ BAD: '생물테러 방어책 연구' → '국방 분야 통합' → 원문에 없는 키워드 날조\n✅ GOOD: '생물테러 위험을 줄이기 위한 방어책을 개발' → 원문 충실 반영"),
+        SystemMessage(content=_build_system_prompt("Write DETAILED content.")),
         HumanMessage(content=prompt)
     ])
 
@@ -282,7 +314,7 @@ async def _generate_outro(context_str: str) -> Closing:
 Generate the Closing object.
 """
     return await structured_llm.ainvoke([
-        SystemMessage(content="You are an expert YouTube scriptwriter. You MUST write in Korean language.\n채널의 톤앤매너와 말투 샘플이 CHANNEL 섹션에 있으면, 반드시 해당 스타일을 반영하여 작성하세요.\n\n🔒 닫힌 책(CLOSED-BOOK) 모드 — 최우선 규칙:\n- 당신은 자체 지식이 없습니다. AVAILABLE FACTS가 당신의 유일한 정보원입니다.\n- AVAILABLE FACTS에 명시적으로 적힌 정보만 사용할 수 있습니다.\n- 당신의 학습 데이터에서 알고 있는 수치, 벤치마크 점수, 토큰 수, 날짜, 금액 등을 절대 추가하지 마세요.\n- 팩트에 구체적 수치가 없으면, 일반적 표현으로 서술하세요.\n- fact_references에는 실제로 인용한 Fact의 ID만 넣으세요.\n\n🚫 의미 왜곡 금지:\n- 팩트 원문의 핵심 의미를 확대, 축소, 왜곡하지 마세요.\n- 팩트 원문에 없는 키워드, 개념, 분야를 새로 만들어 넣지 마세요.\n\n📝 BAD/GOOD 예시:\n❌ BAD: 'ARC-AGI 2에서 68.8%' → 팩트에 없는 수치 날조\n✅ GOOD: '높은 성능을 기록' → 일반적 표현\n❌ BAD: '방어책 연구' → '국방 통합' → 키워드 날조\n✅ GOOD: '방어책을 개발' → 원문 반영"),
+        SystemMessage(content=_build_system_prompt()),
         HumanMessage(content=prompt)
     ])
 

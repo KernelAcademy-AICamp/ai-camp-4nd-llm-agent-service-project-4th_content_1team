@@ -78,7 +78,8 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     structured_facts = []
     for i, art in enumerate(full_articles):
         art_facts = art.get("analysis", {}).get("facts", [])
-        source_name = art.get("source", "Unknown")
+        # URL 기반 출처명 우선 (GPT가 "The Information (기사 인용본)" 등으로 잘못 정하는 문제 방지)
+        source_name = _extract_source_from_url(art.get("url", "")) or art.get("source", "Unknown")
         article_id = art.get("id", "")
         article_url = art.get("url", "")
         for fact_text in art_facts:
@@ -316,13 +317,20 @@ SOURCE_DOMAIN_MAP = {
     "nytimes.com": "NYT", "wsj.com": "WSJ",
     "techcrunch.com": "TechCrunch", "theverge.com": "The Verge",
     "cnbc.com": "CNBC", "ft.com": "FT",
+    "fortunekorea.co.kr": "포춘코리아", "venturesquare.net": "벤처스퀘어",
+    "newspim.com": "뉴스핌", "theinformation.com": "The Information",
+    "inews24.com": "아이뉴스24", "zdnet.com": "ZDNet",
 }
 
 def _extract_source_from_url(url: str) -> str:
     """URL 도메인에서 언론사명을 추출합니다."""
     try:
         from urllib.parse import urlparse
-        domain = urlparse(url).netloc.lower().replace("www.", "").replace("view.", "").replace("news.", "")
+        domain = urlparse(url).netloc.lower()
+        # 공통 서브도메인 제거
+        for prefix in ("www.", "view.", "news.", "m.", "mobile."):
+            if domain.startswith(prefix):
+                domain = domain[len(prefix):]
         # 정확한 매칭
         if domain in SOURCE_DOMAIN_MAP:
             return SOURCE_DOMAIN_MAP[domain]
@@ -331,7 +339,7 @@ def _extract_source_from_url(url: str) -> str:
             if key in domain:
                 return name
         return ""
-    except:
+    except Exception:
         return ""
 
 
@@ -626,6 +634,16 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
                 # [ID 생성] URL 해시 기반 고유 ID 부여 (Verifier 연결용)
                 item["id"] = hashlib.md5(item["url"].encode()).hexdigest()
 
+                # [출처명 자동 추출] og:site_name 메타태그에서 언론사명 가져오기
+                try:
+                    from bs4 import BeautifulSoup
+                    soup = BeautifulSoup(content_html, "html.parser")
+                    og_tag = soup.find("meta", property="og:site_name")
+                    if og_tag and og_tag.get("content", "").strip():
+                        item["og_source"] = og_tag["content"].strip()
+                except Exception:
+                    pass
+
                 # 이미지 추출 (Lazy Loading 지원 + Aggressive Mode)
                 # data-src, data-original, data-url 우선 확인
                 images_found = []
@@ -906,14 +924,17 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
                         try:
                             data = json.loads(content)
                             gpt_source = data.get("source", "")
-                            # GPT가 출처를 못 잡으면 URL 기반 출처 사용
-                            pre_source = item.get("source", "")
-                            if gpt_source and gpt_source not in ("Unknown", "미상", "출처불명", "출처 미상", "기사(출처 미상)", ""):
+                            # 출처명 결정 우선순위: URL 맵 → og:site_name → GPT
+                            url_source = _extract_source_from_url(item.get("url", ""))
+                            og_source = item.get("og_source", "")
+                            if url_source:
+                                item["source"] = url_source
+                            elif og_source:
+                                item["source"] = og_source
+                            elif gpt_source and gpt_source not in ("Unknown", "미상", "출처불명", "출처 미상", "기사(출처 미상)", "기사(제공된 본문)", ""):
                                 item["source"] = gpt_source
-                            elif pre_source:
-                                item["source"] = pre_source
                             else:
-                                item["source"] = gpt_source or "Unknown"
+                                item["source"] = og_source or gpt_source or "Unknown"
                             item["summary_short"] = data.get("summary_short", "")
                             item["analysis"] = data.get("analysis", {"facts": [], "opinions": []})
                             

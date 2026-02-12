@@ -297,10 +297,11 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 })
             
             # 스크립트에 실제 사용된 마커만 필터링
+            # all_citations의 모든 마커를 검사 (①~⑳ 뿐 아니라 [21] 등 대괄호 형식도 포함)
             used_markers = set()
-            for cn in CIRCLE_NUMBERS:
-                if cn in script_full_text:
-                    used_markers.add(cn)
+            for c in all_citations:
+                if c["marker"] in script_full_text:
+                    used_markers.add(c["marker"])
             
             if used_markers:
                 citations = [c for c in all_citations if c["marker"] in used_markers]

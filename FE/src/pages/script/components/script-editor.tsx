@@ -15,12 +15,46 @@ interface ScriptEditorProps {
   onCitationClick?: (sourceUrl: string) => void;
 }
 
+/**
+ * 전체 보기 텍스트를 ## 마커 기준으로 intro/body/outro로 분리
+ * - intro: 첫 번째 ## 이전
+ * - body: ## 챕터들 (마지막 챕터의 내용 1블록 포함)
+ * - outro: 마지막 챕터 이후 나머지
+ */
+function parseFullScript(text: string): { intro: string; body: string; outro: string } {
+  const blocks = text.split('\n\n')
+  const firstIdx = blocks.findIndex(b => b.startsWith('## '))
+
+  if (firstIdx === -1) {
+    return { intro: text, body: '', outro: '' }
+  }
+
+  const parsedIntro = blocks.slice(0, firstIdx).join('\n\n')
+
+  // 마지막 ## 블록 찾기
+  let lastIdx = firstIdx
+  for (let i = blocks.length - 1; i >= firstIdx; i--) {
+    if (blocks[i].startsWith('## ')) {
+      lastIdx = i
+      break
+    }
+  }
+
+  // 마지막 ## 헤더 + 내용 1블록까지 = body
+  const bodyEnd = Math.min(lastIdx + 2, blocks.length)
+  const parsedBody = blocks.slice(firstIdx, bodyEnd).join('\n\n')
+  const parsedOutro = blocks.slice(bodyEnd).join('\n\n')
+
+  return { intro: parsedIntro, body: parsedBody, outro: parsedOutro }
+}
+
 export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, citations = [], onCitationClick }: ScriptEditorProps = {}) {
   const [intro, setIntro] = useState("")
   const [body, setBody] = useState("")
   const [outro, setOutro] = useState("")
   const [copied, setCopied] = useState(false)
   const [fullViewOverride, setFullViewOverride] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState("full")
 
   // API 데이터가 있으면 사용
   useEffect(() => {
@@ -52,6 +86,18 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
       onRegenerate();
     }
   }
+
+  // 탭 전환 시 전체 보기 → 섹션별 편집 동기화
+  const handleTabChange = useCallback((value: string) => {
+    if (value === "sections" && fullViewOverride !== null) {
+      const parsed = parseFullScript(fullViewOverride)
+      setIntro(parsed.intro)
+      setBody(parsed.body)
+      setOutro(parsed.outro)
+      setFullViewOverride(null)
+    }
+    setActiveTab(value)
+  }, [fullViewOverride])
 
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur h-full flex flex-col">
@@ -108,7 +154,7 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
           </div>
         ) : (
           // 실제 컨텐츠
-          <Tabs defaultValue="full" className="h-full flex flex-col">
+          <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
             <TabsList className="grid w-full grid-cols-2 mb-4">
               <TabsTrigger value="sections">섹션별 편집</TabsTrigger>
               <TabsTrigger value="full">전체 보기</TabsTrigger>
