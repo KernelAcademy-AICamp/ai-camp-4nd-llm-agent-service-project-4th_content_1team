@@ -6,6 +6,7 @@
 """
 import logging
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 import asyncio
 import json
@@ -36,8 +37,10 @@ class VideoForAnalysis:
     title: str
     view_count: int
     like_count: int
+    comment_count: int         # 댓글 수 (performance score 계산용)
     duration_seconds: int
-    selection_reason: str      # "hit" | "low" | "latest"
+    days_since_upload: int     # 업로드 후 경과 일수 (score 계산용)
+    selection_reason: str = "" # "hit" | "low" | "latest"
 
 
 @dataclass
@@ -83,6 +86,44 @@ class ChannelVideoSummary:
 
 
 # ============================================================================
+# Performance Score 계산
+# ============================================================================
+
+def calculate_performance_score(
+    view_count: int,
+    like_count: int,
+    comment_count: int,
+    days_since_upload: int,
+) -> float:
+    """
+    영상 성과 점수 계산.
+
+    공식:
+    - View Velocity (60%): view_count / days_since_upload
+    - Engagement Rate (40%): (likes + comments×2) / views
+
+    두 지표를 정규화 없이 가중 합산 (상대적 순위만 중요)
+    """
+    days = max(days_since_upload, 1)  # 0일 방지
+
+    # 1. View Velocity (가중치 0.6)
+    velocity = view_count / days
+
+    # 2. Engagement Rate (가중치 0.4)
+    if view_count > 0:
+        engagement = (like_count + comment_count * 2) / view_count
+    else:
+        engagement = 0
+
+    # Velocity가 훨씬 큰 값이므로, engagement를 스케일업
+    # engagement는 보통 0.01~0.1 범위, velocity는 수천~수만
+    # engagement에 velocity 스케일을 곱해서 비슷한 범위로 맞춤
+    score = velocity * 0.6 + (engagement * velocity) * 0.4
+
+    return score
+
+
+# ============================================================================
 # 영상 선정
 # ============================================================================
 
@@ -96,9 +137,14 @@ async def select_videos_for_analysis(
     """
     분석할 영상 15개 선정.
 
-    - 히트 영상: 조회수 상위 5개
-    - 저조 영상: 조회수 하위 5개
-    - 최신 영상: 최근 업로드 5개 (히트/저조와 중복 제외)
+    Performance Score 기반 선정:
+    - 히트 영상: score 상위 5개
+    - 저조 영상: score 하위 5개
+    - 최신 영상: hit/low 제외 후 최신순 5개
+
+    Score = View Velocity × 0.6 + Engagement Rate × 0.4
+    - View Velocity: view_count / days_since_upload
+    - Engagement Rate: (likes + comments×2) / views
 
     Returns:
         List[VideoForAnalysis]: 분석 대상 영상 목록
@@ -113,7 +159,7 @@ async def select_videos_for_analysis(
         .subquery()
     )
 
-    # 채널 영상 + 최신 통계 조회
+    # 채널 영상 + 최신 통계 조회 (최신순 정렬 유지)
     stmt = (
         select(YTChannelVideo, YTVideoStats)
         .where(YTChannelVideo.channel_id == channel_id)
@@ -136,36 +182,71 @@ async def select_videos_for_analysis(
         logger.warning(f"[VideoAnalyzer] 채널에 영상 없음: {channel_id}")
         return []
 
-    # VideoForAnalysis로 변환
+    # 방어 코드: 영상 부족 시 분석 중단
+    min_required = hit_count + low_count  # 최소 10개 필요
+    if len(rows) < min_required:
+        logger.warning(
+            f"[VideoAnalyzer] 영상 부족으로 분석 중단: "
+            f"{len(rows)}개 < 최소 {min_required}개 필요 (채널: {channel_id})"
+        )
+        return []
+
+    now = datetime.now(timezone.utc)
+
+    # VideoForAnalysis로 변환 (최신순 유지)
     all_videos = []
     for video, stats in rows:
+        # 업로드 후 경과 일수 계산
+        if video.published_at:
+            published = video.published_at
+            if published.tzinfo is None:
+                published = published.replace(tzinfo=timezone.utc)
+            days_since = (now - published).days
+        else:
+            days_since = 30  # 기본값
+
+        view_count = stats.view_count if stats else 0
+        like_count = stats.like_count if stats else 0
+        comment_count = stats.comment_count if stats else 0
+
         all_videos.append(VideoForAnalysis(
             id=str(video.id),
             youtube_video_id=video.video_id,
             title=video.title,
-            view_count=stats.view_count if stats else 0,
-            like_count=stats.like_count if stats else 0,
+            view_count=view_count,
+            like_count=like_count,
+            comment_count=comment_count,
             duration_seconds=video.duration_seconds or 0,
-            selection_reason="",  # 나중에 설정
+            days_since_upload=days_since,
+            selection_reason="",
         ))
 
-    # 조회수 기준 정렬
-    sorted_by_views = sorted(all_videos, key=lambda v: v.view_count, reverse=True)
+    # Performance Score 계산 및 정렬
+    def get_score(v: VideoForAnalysis) -> float:
+        return calculate_performance_score(
+            view_count=v.view_count,
+            like_count=v.like_count,
+            comment_count=v.comment_count,
+            days_since_upload=v.days_since_upload,
+        )
 
-    # 히트 영상 (상위 N개)
-    hit_videos = sorted_by_views[:hit_count]
+    # Score 기준 정렬
+    sorted_by_score = sorted(all_videos, key=get_score, reverse=True)
+
+    # 히트 영상 (score 상위 N개)
+    hit_videos = sorted_by_score[:hit_count]
     for v in hit_videos:
         v.selection_reason = "hit"
 
-    # 저조 영상 (하위 N개)
-    low_videos = sorted_by_views[-low_count:]
+    # 저조 영상 (score 하위 N개)
+    low_videos = sorted_by_score[-low_count:]
     for v in low_videos:
         v.selection_reason = "low"
 
     # 히트/저조 ID 집합
     selected_ids = {v.id for v in hit_videos + low_videos}
 
-    # 최신 영상 (중복 제외)
+    # 최신 영상: all_videos는 이미 최신순이므로, hit/low 제외 후 앞에서 N개
     latest_candidates = [v for v in all_videos if v.id not in selected_ids]
     latest_videos = latest_candidates[:latest_count]
     for v in latest_videos:
@@ -175,7 +256,7 @@ async def select_videos_for_analysis(
     selected = hit_videos + low_videos + latest_videos
 
     logger.info(
-        f"[VideoAnalyzer] 영상 선정 완료: "
+        f"[VideoAnalyzer] 영상 선정 완료 (Performance Score 기반): "
         f"hit={len(hit_videos)}, low={len(low_videos)}, latest={len(latest_videos)}, "
         f"total={len(selected)}"
     )
@@ -542,10 +623,10 @@ async def _analyze_batch_with_llm(
 
     # 기본 프롬프트
     if batch_type == "hit":
-        batch_desc = "조회수가 높은 히트 영상들"
+        batch_desc = "성과가 좋은 히트 영상들 (조회수 속도 + 참여도 기준)"
         pattern_desc = "히트"
     elif batch_type == "low":
-        batch_desc = "조회수가 낮은 저조 영상들"
+        batch_desc = "성과가 저조한 영상들 (조회수 속도 + 참여도 기준)"
         pattern_desc = "저조"
     else:
         batch_desc = "최신 영상들"
@@ -896,7 +977,11 @@ async def save_analysis_results(
     results: List[VideoAnalysisResult],
     transcripts: dict,  # video_id (str) → transcript
 ) -> None:
-    """분석 결과를 DB에 저장."""
+    """
+    분석 결과를 DB에 저장.
+
+    N+1 문제 해결: 기존 레코드를 한 번에 조회 (15번 → 1번 쿼리)
+    """
     import uuid as uuid_module
 
     # video_id → result 매핑
@@ -905,26 +990,41 @@ async def save_analysis_results(
     # video_id → VideoForAnalysis 매핑
     video_map = {v.id: v for v in videos}
 
+    # string → UUID 변환 (유효한 것만)
+    video_id_uuids = []
+    video_id_str_to_uuid = {}
+    for video_id_str in result_map.keys():
+        try:
+            video_id_uuid = uuid_module.UUID(video_id_str)
+            video_id_uuids.append(video_id_uuid)
+            video_id_str_to_uuid[video_id_str] = video_id_uuid
+        except ValueError:
+            logger.warning(f"[VideoAnalyzer] 잘못된 video_id: {video_id_str}")
+
+    # 기존 레코드 한 번에 조회 (N+1 → 1번 쿼리)
+    existing_map = {}
+    if video_id_uuids:
+        stmt = select(YTMyVideoAnalysis).where(
+            YTMyVideoAnalysis.video_id.in_(video_id_uuids)
+        )
+        existing_results = await db.execute(stmt)
+        for record in existing_results.scalars().all():
+            existing_map[str(record.video_id)] = record
+
     saved_count = 0
     for video_id_str, result in result_map.items():
         video = video_map.get(video_id_str)
         if not video:
             continue
 
-        transcript = transcripts.get(video_id_str, "")
-
-        # string → UUID 변환
-        try:
-            video_id_uuid = uuid_module.UUID(video_id_str)
-        except ValueError:
-            logger.warning(f"[VideoAnalyzer] 잘못된 video_id: {video_id_str}")
+        video_id_uuid = video_id_str_to_uuid.get(video_id_str)
+        if not video_id_uuid:
             continue
 
-        # 기존 레코드 확인
-        stmt = select(YTMyVideoAnalysis).where(
-            YTMyVideoAnalysis.video_id == video_id_uuid
-        )
-        existing = (await db.execute(stmt)).scalar_one_or_none()
+        transcript = transcripts.get(video_id_str, "")
+
+        # 기존 레코드 확인 (이미 조회한 맵에서 가져옴)
+        existing = existing_map.get(video_id_str)
 
         if existing:
             # 업데이트
