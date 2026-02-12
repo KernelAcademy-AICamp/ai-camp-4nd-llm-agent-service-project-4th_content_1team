@@ -89,38 +89,54 @@ class ChannelVideoSummary:
 # Performance Score 계산
 # ============================================================================
 
-def calculate_performance_score(
-    view_count: int,
-    like_count: int,
-    comment_count: int,
-    days_since_upload: int,
-) -> float:
+def calculate_performance_scores(
+    videos: List["VideoForAnalysis"],
+) -> List[float]:
     """
-    영상 성과 점수 계산.
+    영상 리스트의 성과 점수 계산 (Min-Max 정규화 적용).
 
     공식:
     - View Velocity (60%): view_count / days_since_upload
     - Engagement Rate (40%): (likes + comments×2) / views
 
-    두 지표를 정규화 없이 가중 합산 (상대적 순위만 중요)
+    각 지표를 0~1 범위로 정규화한 후 가중 합산하여
+    실제 60/40 비율이 적용되도록 함.
     """
-    days = max(days_since_upload, 1)  # 0일 방지
+    if not videos:
+        return []
 
-    # 1. View Velocity (가중치 0.6)
-    velocity = view_count / days
+    # 1. 각 영상의 velocity, engagement 계산
+    velocities = []
+    engagements = []
 
-    # 2. Engagement Rate (가중치 0.4)
-    if view_count > 0:
-        engagement = (like_count + comment_count * 2) / view_count
-    else:
-        engagement = 0
+    for v in videos:
+        days = max(v.days_since_upload, 1)
+        velocity = v.view_count / days
+        velocities.append(velocity)
 
-    # Velocity가 훨씬 큰 값이므로, engagement를 스케일업
-    # engagement는 보통 0.01~0.1 범위, velocity는 수천~수만
-    # engagement에 velocity 스케일을 곱해서 비슷한 범위로 맞춤
-    score = velocity * 0.6 + (engagement * velocity) * 0.4
+        if v.view_count > 0:
+            engagement = (v.like_count + v.comment_count * 2) / v.view_count
+        else:
+            engagement = 0
+        engagements.append(engagement)
 
-    return score
+    # 2. Min-Max 정규화 (0~1 범위)
+    vel_min, vel_max = min(velocities), max(velocities)
+    eng_min, eng_max = min(engagements), max(engagements)
+
+    # 모든 값이 동일한 경우 대비 (0으로 나누기 방지)
+    vel_range = vel_max - vel_min if vel_max != vel_min else 1
+    eng_range = eng_max - eng_min if eng_max != eng_min else 1
+
+    # 3. 정규화된 점수로 가중 합산
+    scores = []
+    for vel, eng in zip(velocities, engagements):
+        norm_vel = (vel - vel_min) / vel_range
+        norm_eng = (eng - eng_min) / eng_range
+        score = norm_vel * 0.6 + norm_eng * 0.4  # 진짜 60/40 비율
+        scores.append(score)
+
+    return scores
 
 
 # ============================================================================
@@ -221,17 +237,13 @@ async def select_videos_for_analysis(
             selection_reason="",
         ))
 
-    # Performance Score 계산 및 정렬
-    def get_score(v: VideoForAnalysis) -> float:
-        return calculate_performance_score(
-            view_count=v.view_count,
-            like_count=v.like_count,
-            comment_count=v.comment_count,
-            days_since_upload=v.days_since_upload,
-        )
+    # Performance Score 계산 (Min-Max 정규화로 실제 60/40 비율 적용)
+    scores = calculate_performance_scores(all_videos)
 
-    # Score 기준 정렬
-    sorted_by_score = sorted(all_videos, key=get_score, reverse=True)
+    # (video, score) 튜플로 만들어서 score 기준 정렬
+    videos_with_scores = list(zip(all_videos, scores))
+    videos_with_scores.sort(key=lambda x: x[1], reverse=True)
+    sorted_by_score = [v for v, _ in videos_with_scores]
 
     # 히트 영상 (score 상위 N개)
     hit_videos = sorted_by_score[:hit_count]
