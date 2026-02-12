@@ -193,6 +193,29 @@ def _build_channel_profile(
     if persona.title_patterns:
         profile["title_patterns"] = persona.title_patterns
     
+    # 톤/말투 필드 (자막 분석 기반 — video_analyzer에서 생성)
+    if persona.tone_manner:
+        profile["tone_manner"] = persona.tone_manner
+    
+    if persona.tone_samples:
+        profile["tone_samples"] = persona.tone_samples
+    
+    # 영상 분석 결과 필드 (히트/저조 패턴, 영상 유형 등)
+    if persona.video_types:
+        profile["video_types"] = persona.video_types
+    
+    if persona.content_structures:
+        profile["content_structures"] = persona.content_structures
+    
+    if persona.hit_patterns:
+        profile["hit_patterns"] = persona.hit_patterns
+    
+    if persona.low_patterns:
+        profile["low_patterns"] = persona.low_patterns
+    
+    if persona.success_formula:
+        profile["success_formula"] = persona.success_formula
+    
     return profile
 
 

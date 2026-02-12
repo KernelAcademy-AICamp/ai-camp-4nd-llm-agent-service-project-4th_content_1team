@@ -259,6 +259,19 @@ def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competit
 - Target: {channel.get('target_audience', 'General Public')}
 - Tone: {channel.get('tone', 'Informative')}
 """
+    # 추가 페르소나 정보 (있을 때만)
+    if channel.get("one_liner"):
+        c_str += f"- Identity: {channel['one_liner']}\n"
+    if channel.get("persona_summary"):
+        c_str += f"- Channel Summary: {channel['persona_summary']}\n"
+    if channel.get("content_style"):
+        c_str += f"- Content Style: {channel['content_style']}\n"
+    if channel.get("differentiator"):
+        c_str += f"- Differentiator: {channel['differentiator']}\n"
+    if channel.get("audience_needs"):
+        c_str += f"- Audience Needs: {channel['audience_needs']}\n"
+    if channel.get("main_topics"):
+        c_str += f"- Main Topics: {', '.join(channel['main_topics'])}\n"
 
     # 2. Facts (상위 15개로 제한 - Context 폭발 방지)
     f_str = "\n## B. FACT PACK (Available Evidence)\n"

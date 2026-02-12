@@ -8,16 +8,18 @@ import { RelatedResources } from "./components/related-resources"
 import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
 import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
-import type { GeneratedScript, ReferenceArticle } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle, Citation } from "../../lib/api/services"
 
 function ScriptPageContent() {
-  const [searchParams] = useSearchParams()
+  const [searchParams, setSearchParams] = useSearchParams()
   const topic = searchParams.get("topic") || "2026 게임 트렌드 예측"
   const topicId = searchParams.get("topicId") || undefined
 
   const [isGenerating, setIsGenerating] = useState(false)
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
+  const [citations, setCitations] = useState<Citation[]>([])
+  const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
 
   // 페이지 로드 시 DB에서 이전 결과 불러오기
   useEffect(() => {
@@ -30,6 +32,7 @@ function ScriptPageContent() {
             console.log("[FE] 이전 결과 복원 (by ID):", result.topic_title)
             setScriptData(result.script)
             setReferences(result.references || [])
+            setCitations(result.citations || [])
           }
         } else {
           // topicId 없으면 최근 이력에서 복원
@@ -40,6 +43,7 @@ function ScriptPageContent() {
               console.log("[FE] 이전 결과 복원 (최근):", latest.topic_title)
               setScriptData(latest.script)
               setReferences(latest.references || [])
+              setCitations(latest.citations || [])
             }
           }
         }
@@ -65,6 +69,15 @@ function ScriptPageContent() {
         console.log("[FE] 생성 완료!", result)
         setScriptData(result.script)
         setReferences(result.references || [])
+        setCitations(result.citations || [])
+
+        // 새로고침 시 복원을 위해 topicId를 URL에 반영
+        if (result.topic_request_id) {
+          const newParams = new URLSearchParams(searchParams)
+          newParams.set("topicId", result.topic_request_id)
+          setSearchParams(newParams, { replace: true })
+          console.log("[FE] URL에 topicId 반영:", result.topic_request_id)
+        }
       } else {
         console.error("[FE] 생성 실패:", result.error)
         alert(`생성 실패: ${result.error}`)
@@ -93,13 +106,15 @@ function ScriptPageContent() {
               apiData={scriptData}
               isGenerating={isGenerating}
               onRegenerate={handleGenerate}
+              citations={citations}
+              onCitationClick={(url) => setActiveCitationUrl(url)}
             />
           </div>
 
           {/* Right Panel - Resources & Analysis */}
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
-              <RelatedResources apiReferences={references} />
+              <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
               <CompetitorAnalysis />
             </div>
           </div>

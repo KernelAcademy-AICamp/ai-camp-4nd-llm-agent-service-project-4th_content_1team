@@ -67,7 +67,7 @@ interface RelatedResourcesProps {
     title: string;
     summary: string;
     source: string;
-    date?: string;  // optional - 백엔드에서 null일 수 있음
+    date?: string;
     url: string;
     analysis?: {
       facts: string[];
@@ -79,9 +79,23 @@ interface RelatedResourcesProps {
       is_chart?: boolean;
     }>;
   }>;
+  activeCitationUrl?: string | null;
 }
 
-export function RelatedResources({ apiReferences }: RelatedResourcesProps = {}) {
+// URL 비교 헬퍼: 쿼리 파라미터 등 차이 무시, 도메인+경로 기준
+function urlsMatch(url1?: string | null, url2?: string | null): boolean {
+  if (!url1 || !url2) return false
+  try {
+    const u1 = new URL(url1)
+    const u2 = new URL(url2)
+    return u1.origin + u1.pathname === u2.origin + u2.pathname
+  } catch {
+    // URL 파싱 실패 시 문자열 포함 비교
+    return url1.includes(url2) || url2.includes(url1)
+  }
+}
+
+export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedResourcesProps = {}) {
   const [selectedSource, setSelectedSource] = useState<string>("all")
   const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
   const [displaySources, setDisplaySources] = useState<SourceData[]>([])
@@ -224,6 +238,7 @@ export function RelatedResources({ apiReferences }: RelatedResourcesProps = {}) 
                                 <ArticleCard
                                   key={article.id}
                                   article={article}
+                                  isHighlighted={urlsMatch(activeCitationUrl, article.url)}
                                   onViewDetail={() => setSelectedArticle(article)}
                                 />
                               ))}
@@ -237,6 +252,7 @@ export function RelatedResources({ apiReferences }: RelatedResourcesProps = {}) 
                               key={article.id}
                               article={article}
                               showSource
+                              isHighlighted={urlsMatch(activeCitationUrl, article.url)}
                               onViewDetail={() => setSelectedArticle(article)}
                             />
                           ))}
@@ -395,20 +411,41 @@ export function RelatedResources({ apiReferences }: RelatedResourcesProps = {}) 
 function ArticleCard({
   article,
   showSource = false,
+  isHighlighted = false,
   onViewDetail
 }: {
   article: ArticleData
   showSource?: boolean
+  isHighlighted?: boolean
   onViewDetail?: () => void
 }) {
   return (
     <div
-      className="block p-3 rounded-lg bg-muted/30 hover:bg-muted/50 transition-colors group relative border border-transparent hover:border-border/50"
+      className={`block p-3 rounded-lg transition-colors group relative ${isHighlighted
+        ? "bg-primary/10 border-primary/50 border ring-1 ring-primary/30"
+        : "bg-muted/30 hover:bg-muted/50 border border-transparent hover:border-border/50"
+        }`}
     >
       <div className="flex items-start justify-between gap-2">
-        <h4 className="font-medium text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1">
+        <h4
+          className="font-medium text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1 cursor-pointer"
+          onClick={() => article.url && window.open(article.url, "_blank", "noopener,noreferrer")}
+          title={article.url || "URL 없음"}
+        >
           {article.title}
         </h4>
+        {article.url && (
+          <a
+            href={article.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex-shrink-0 text-muted-foreground hover:text-primary transition-colors"
+            onClick={(e) => e.stopPropagation()}
+            title="원본 기사 열기"
+          >
+            <ExternalLink className="w-3.5 h-3.5" />
+          </a>
+        )}
       </div>
 
       {/* Short Summary instead of excerpt */}

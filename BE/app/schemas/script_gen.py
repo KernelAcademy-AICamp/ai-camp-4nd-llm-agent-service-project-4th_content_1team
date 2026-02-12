@@ -172,6 +172,8 @@ class ScriptGenExecuteResponse(BaseModel):
     script: Optional[ScriptResponse] = None
     references: Optional[List[ReferenceResponse]] = None
     competitor_videos: Optional[List[CompetitorVideoResponse]] = None  # 경쟁 영상 분석
+    citations: Optional[List[Dict[str, Any]]] = None  # ①②③ 인라인 출처 매핑
+    topic_request_id: Optional[str] = None  # 새로고침 시 복원용
     error: Optional[str] = None
 
 

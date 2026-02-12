@@ -12,6 +12,17 @@ export interface GeneratedScript {
     outro: string;
 }
 
+export interface Citation {
+    marker: string;
+    number: number;
+    fact_id: string;
+    content: string;
+    category: string;
+    source: string;
+    source_title: string;
+    source_url: string;
+}
+
 export interface ReferenceArticle {
     title: string;
     summary: string;
@@ -35,7 +46,9 @@ export interface ScriptGenResult {
     script?: GeneratedScript;
     references?: ReferenceArticle[];
     competitor_videos?: any[];
+    citations?: Citation[];
     error?: string;
+    topic_request_id?: string;
 }
 
 export interface TaskStatusResponse {
@@ -94,6 +107,7 @@ export interface ScriptHistoryItem {
     script: GeneratedScript | null;
     references: ReferenceArticle[] | null;
     competitor_videos: any[] | null;
+    citations: Citation[] | null;
 }
 
 export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistoryItem[]> => {

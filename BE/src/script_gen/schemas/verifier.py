@@ -46,7 +46,7 @@ class SourceInfo(BaseModel):
 class VerificationIssue(BaseModel):
     """검증 중 발견된 문제"""
     beat_id: str
-    issue_type: Literal["missing_fact", "invalid_fact_id", "suspicious_claim", "no_source"]
+    issue_type: Literal["missing_fact", "invalid_fact_id", "suspicious_claim", "no_source", "unverified_number", "semantic_distortion"]
     description: str
     severity: Literal["critical", "warning", "info"]
     suggested_action: VerificationAction
