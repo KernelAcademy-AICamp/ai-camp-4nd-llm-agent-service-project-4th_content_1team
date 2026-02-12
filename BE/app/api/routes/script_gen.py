@@ -394,6 +394,7 @@ async def get_script_history(
                 source_map = verified.source_map_json or {}
                 item["references"] = source_map.get("references", [])
                 item["competitor_videos"] = source_map.get("competitor_videos", [])
+                item["citations"] = source_map.get("citations", [])
             results.append(item)
 
         return {"success": True, "results": results}
@@ -452,6 +453,7 @@ async def get_script_by_id(
             source_map = verified.source_map_json or {}
             result["references"] = source_map.get("references", [])
             result["competitor_videos"] = source_map.get("competitor_videos", [])
+            result["citations"] = source_map.get("citations", [])
 
         return result
 
