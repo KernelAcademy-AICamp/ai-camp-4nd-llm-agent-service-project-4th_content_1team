@@ -67,7 +67,10 @@ class ScriptGenState(TypedDict, total=False):
     """
     콘텐츠 기획안
     
+    Planner가 영상 유형 → 구조 설계 → 키워드 역산 순서로 생성.
+    
     구조:
+        - videoType: 영상 유형 (비교형/정보형/주장형/리뷰형/전망형/복합형)
         - workingTitleCandidates: 제목 후보 (3-5개)
         - coreQuestions: 핵심 질문
         - narrative: 내러티브 구조
@@ -76,6 +79,8 @@ class ScriptGenState(TypedDict, total=False):
             - chapters: 챕터 리스트 (정확히 5개)
         - researchPlan: 리서치 계획
             - newsQuery: 뉴스 검색 키워드 (6개 이상)
+                ※ 챕터 구조에서 역산하여 생성됨 (제목 단어 추출 아님)
+                ※ news_research_node가 이 키워드를 직접 사용함
             - competitorQuery: 경쟁사 검색 키워드 (4개 이상)
             - freshnessDays: 신선도 기준 (7-365일)
     """

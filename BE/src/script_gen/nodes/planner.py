@@ -240,9 +240,9 @@ def _build_planner_prompt(
         if topic_context_data.get('recommendation_reason'):
             topic_context += f"- Why This Fits Your Channel: {topic_context_data.get('recommendation_reason')}\n"
         
-        # channel_topics/trend_topics에서 가져온 검색 키워드 (newsQuery 생성 시 참고)
+        # channel_topics/trend_topics에서 가져온 검색 키워드 (참고용, newsQuery는 구조에서 역산)
         if topic_context_data.get('search_keywords'):
-            topic_context += "- Pre-researched Keywords (USE these as base for newsQuery):\n"
+            topic_context += "- Pre-researched Keywords (Reference only):\n"
             for kw in topic_context_data.get('search_keywords', []):
                 topic_context += f"  • {kw}\n"
     
@@ -301,20 +301,28 @@ def _build_planner_prompt(
 
 {news_context}{topic_context}{personalization_context}
 
-**STRATEGIC INSTRUCTION (Critical for High Views)**:
-1. **Leverage AI Recommendation Context**: If 'AI RECOMMENDATION CONTEXT' is provided above:
-   - Use the Trend Basis to understand WHY this topic is hot right now
-   - Respect the Urgency level (URGENT = focus on timeliness, NORMAL = evergreen approach)
-   - Consider the Suggested Angles as starting points for your narrative structure
-   - Align with the channel's unique positioning mentioned in "Why This Fits Your Channel"
+**STRATEGIC INSTRUCTION — MANDATORY THINKING ORDER (Follow this EXACTLY)**:
 
-2. **Channel-Specific Customization**:
-   - Review the Channel Personalization section carefully
-   - If Past Hit Topics are provided, identify patterns and replicate successful formats
-   - Match the Content Style in your title candidates and chapter goals
-   - Address the Audience Needs directly in your core questions
+**STEP 1: Determine Video Type** (MUST do this FIRST)
+   - Analyze the Topic, AI Recommendation Context, and Channel Personalization together
+   - Classify: 비교형(comparison) / 정보형(informational) / 주장형(opinion) / 리뷰형(review) / 전망형(forecast) / 복합형(hybrid)
+   - Use Trend Basis, Suggested Angles, and Recommendation Reason to decide
+   - Respect Urgency level (URGENT = focus on timeliness, NORMAL = evergreen approach)
 
-3. **Fact + Opinion Structure**:
+**STEP 2: Design Chapter Structure** (Based on the video type from Step 1)
+   - Design 5 chapters that fit the identified video type
+   - If Past Hit Topics are provided, replicate successful formats
+   - Match the Content Style and address Audience Needs
+   - Each chapter must have a clear, distinct purpose aligned with the video type
+
+**STEP 3: Reverse-Engineer newsQuery FROM the Structure** (CRITICAL)
+   - For EACH chapter, ask: "What real-world data/articles do I need to write this chapter?"
+   - newsQuery must be DERIVED from what each chapter needs, NOT from extracting words from the title
+   - Include the topic title keywords too, but the primary source must be chapter needs
+   - BAD example: title="AI 코딩 인터페이스" → newsQuery=["AI 코딩", "인터페이스"] (just extracting title words)
+   - GOOD example: chapter goal="커서 vs 안티그래비티 비교" → newsQuery=["커서 안티그래비티 UI 비교 2026"]
+
+4. **Fact + Opinion Structure**:
    - Don't just list facts. Use facts to back up a strong opinion or counter-intuitive insight.
    - Example: Instead of "Apple released Vision Pro", use "Why Vision Pro might FAIL (despite the specs)".
 
