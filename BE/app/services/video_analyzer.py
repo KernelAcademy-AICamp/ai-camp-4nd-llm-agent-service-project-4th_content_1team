@@ -1014,10 +1014,12 @@ async def save_analysis_results(
             logger.warning(f"[VideoAnalyzer] 잘못된 video_id: {video_id_str}")
 
     # 기존 레코드 한 번에 조회 (N+1 → 1번 쿼리)
+    # channel_id 필터 추가: 현재 채널의 레코드만 조회 (데이터 무결성)
     existing_map = {}
     if video_id_uuids:
         stmt = select(YTMyVideoAnalysis).where(
-            YTMyVideoAnalysis.video_id.in_(video_id_uuids)
+            YTMyVideoAnalysis.channel_id == channel_id,
+            YTMyVideoAnalysis.video_id.in_(video_id_uuids),
         )
         existing_results = await db.execute(stmt)
         for record in existing_results.scalars().all():
