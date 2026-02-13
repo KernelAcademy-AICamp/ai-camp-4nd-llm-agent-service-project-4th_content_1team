@@ -128,9 +128,15 @@ async def generate_thumbnail_image(prompt: str) -> Optional[str]:
             logger.error("[Thumbnail] 응답에 이미지 데이터 없음")
             return None
 
-        # 이미지 저장
+        # 이미지 저장 (MIME 타입에 맞는 확장자 매핑)
         file_id = str(uuid.uuid4())[:8]
-        ext = "png" if "png" in mime_type else "jpg"
+        mime_to_ext = {
+            "image/png": "png",
+            "image/jpeg": "jpg",
+            "image/webp": "webp",
+            "image/gif": "gif",
+        }
+        ext = mime_to_ext.get(mime_type, "png")
         filename = f"{file_id}.{ext}"
         filepath = THUMBNAIL_DIR / filename
 
@@ -141,7 +147,7 @@ async def generate_thumbnail_image(prompt: str) -> Optional[str]:
         return f"/thumbnails/{filename}"
 
     except Exception as e:
-        logger.error(f"[Thumbnail] 이미지 생성 실패: {e}")
+        logger.exception(f"[Thumbnail] 이미지 생성 실패: {e}")
         return None
 
 

@@ -62,7 +62,7 @@ async def main():
             for f in facts:
                 src = f.get("source_name", "Unknown")
                 source_counts[src] = source_counts.get(src, 0) + 1
-            print(f"\n📰 기사별 팩트 분포:")
+            print("\n📰 기사별 팩트 분포:")
             for src, cnt in source_counts.items():
                 print(f"   - {src}: {cnt}개")
 
@@ -77,7 +77,7 @@ async def main():
             hook_text = script.get("hook", {}).get("text", "")
             hook_refs = script.get("hook", {}).get("fact_references", [])
             hook_circles = re.findall(r"[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]", hook_text)
-            print(f"\n📝 Hook:")
+            print("\n📝 Hook:")
             print(f"   - 텍스트 길이: {len(hook_text)}자")
             print(f"   - fact_references: {len(hook_refs)}개")
             print(f"   - 인라인 인용(①②③): {len(hook_circles)}개 → {hook_circles}")
