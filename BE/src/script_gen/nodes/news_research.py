@@ -39,12 +39,21 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     logger.info("News Research Node (Advanced) 시작")
     
     # 1. 입력 데이터
-    # channel_topics/trend_topics에서 가져온 search_keywords를 검색 쿼리로 사용
-    channel_profile = state.get("channel_profile", {})
-    topic_context = channel_profile.get("topic_context", {})
-    base_queries = topic_context.get("search_keywords", []) if topic_context else []
+    # [개선] Planner가 영상 구조에서 역산한 newsQuery를 우선 사용
+    # 왜? 기존 search_keywords는 제목에서 단어만 뽑은 거라 영상 의도와 안 맞음
+    # Planner가 챕터 구조를 먼저 설계하고 필요한 자료를 역산해서 만든 키워드가 정확함
+    content_brief = state.get("content_brief", {})
+    research_plan = content_brief.get("researchPlan", {}) if content_brief else {}
+    base_queries = research_plan.get("newsQuery", [])
     
-    logger.info(f"검색 쿼리 (Recommender): {base_queries}")
+    # fallback: Planner newsQuery가 없으면 기존 search_keywords 사용
+    if not base_queries:
+        channel_profile = state.get("channel_profile", {})
+        topic_context = channel_profile.get("topic_context", {})
+        base_queries = topic_context.get("search_keywords", []) if topic_context else []
+        logger.info(f"검색 쿼리 (Fallback - Recommender): {base_queries}")
+    else:
+        logger.info(f"검색 쿼리 (Planner 역산): {base_queries}")
     
     if not base_queries:
         return {"news_data": {"articles": []}}

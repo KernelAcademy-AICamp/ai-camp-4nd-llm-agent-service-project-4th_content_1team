@@ -21,9 +21,14 @@ function ScriptPageContent() {
   const [citations, setCitations] = useState<Citation[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
 
-  // 페이지 로드 시 DB에서 이전 결과 불러오기
+  // 자동 생성 트리거 방지 플래그
+  const [autoGenTriggered, setAutoGenTriggered] = useState(false)
+
+  // 페이지 로드 시 DB에서 이전 결과 불러오기 → 없으면 자동 생성
   useEffect(() => {
-    const loadHistory = async () => {
+    const loadHistoryOrGenerate = async () => {
+      let hasExistingData = false
+
       try {
         if (topicId) {
           // topicId가 있으면 해당 결과만 조회
@@ -33,6 +38,7 @@ function ScriptPageContent() {
             setScriptData(result.script)
             setReferences(result.references || [])
             setCitations(result.citations || [])
+            hasExistingData = true
           }
         } else {
           // topicId 없으면 최근 이력에서 복원
@@ -44,14 +50,22 @@ function ScriptPageContent() {
               setScriptData(latest.script)
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
+              hasExistingData = true
             }
           }
         }
       } catch (error) {
         console.log("[FE] 이력 조회 실패 (첫 방문이면 정상):", error)
       }
+
+      // DB에 이전 결과가 없으면 자동으로 스크립트 + 참고자료 생성
+      if (!hasExistingData && !autoGenTriggered) {
+        console.log("[FE] 이전 결과 없음 → 자동 생성 시작")
+        setAutoGenTriggered(true)
+        handleGenerate()
+      }
     }
-    loadHistory()
+    loadHistoryOrGenerate()
   }, [topicId])
 
   const handleGenerate = async () => {
