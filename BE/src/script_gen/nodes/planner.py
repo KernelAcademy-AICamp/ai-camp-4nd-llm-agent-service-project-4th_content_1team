@@ -41,9 +41,10 @@ async def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
     """
     
     # --- 1. 입력 데이터 추출 ---
-    # state에서 topic과 channel_profile을 가져옴
+    # state에서 topic, channel_profile, intent_analysis를 가져옴
     topic = state.get("topic")
     channel_profile = state.get("channel_profile", {})
+    intent_analysis = state.get("intent_analysis") or {}
     
     if not topic:
         raise ValueError("Topic is required in state")
@@ -67,11 +68,12 @@ async def planner_node(state: Dict[str, Any]) -> Dict[str, Any]:
             # 첫 시도: 기본 프롬프트 (+ 최신 뉴스 포함)
             # 재시도: 이전 실패 이유를 포함한 피드백 프롬프트
             prompt = _build_planner_prompt(
-                topic, 
-                channel_profile, 
-                attempt, 
+                topic,
+                channel_profile,
+                attempt,
                 last_error,
-                recent_news  # News RAG 결과 전달
+                recent_news,      # News RAG 결과 전달
+                intent_analysis,  # Intent Analyzer 결과 전달
             )
             
             
@@ -188,15 +190,16 @@ async def _fetch_recent_news(topic: str, max_results: int = 5) -> List[Dict[str,
 
 
 def _build_planner_prompt(
-    topic: str, 
-    channel_profile: Dict, 
+    topic: str,
+    channel_profile: Dict,
     attempt: int = 0,
     last_error: Optional[str] = None,
-    recent_news: Optional[List[Dict[str, str]]] = None
+    recent_news: Optional[List[Dict[str, str]]] = None,
+    intent_analysis: Optional[Dict] = None,
 ) -> str:
     """
     Planner용 프롬프트를 생성하는 헬퍼 함수
-    레이아웃: 기본 정보 -> 뉴스 RAG -> 주제 컨텍스트(AI 추천) -> 개인화
+    레이아웃: 기본 정보 -> Reader Intent -> 뉴스 RAG -> 주제 컨텍스트(AI 추천) -> 개인화
     """
     
     # --- 기본 프롬프트 (영어로 작성) ---
@@ -219,6 +222,29 @@ def _build_planner_prompt(
         news_context = "\n\n**Recent News Context** (Use this for factual accuracy):\n"
         for i, news in enumerate(recent_news, 1):
             news_context += f"{i}. {news['title']}\n   {news['snippet']}\n"
+
+    # [Reader Intent] Intent Analyzer 결과 컨텍스트
+    intent_context = ""
+    if intent_analysis:
+        intent_mix = intent_analysis.get("intent_mix", {})
+        sub_topics = intent_analysis.get("sub_topics", [])
+        intent_context = "\n\n**READER INTENT ANALYSIS** (Pre-analyzed reader intent):\n"
+        intent_context += f"- Core Question: {intent_analysis.get('core_question', '')}\n"
+        intent_context += f"- Reader Pain Point: {intent_analysis.get('reader_pain_point', '')}\n"
+        intent_context += f"- Reader Desire: {intent_analysis.get('reader_desire', '')}\n"
+        intent_context += (
+            f"- Intent Mix: Informational {intent_mix.get('informational', 0)}% / "
+            f"Emotional {intent_mix.get('emotional', 0)}% / "
+            f"Actionable {intent_mix.get('actionable', 0)}%\n"
+        )
+        intent_context += f"- Content Angle: {intent_analysis.get('content_angle', '')}\n"
+        if sub_topics:
+            intent_context += "- Sub Topics to Cover:\n"
+            for st in sub_topics:
+                intent_context += (
+                    f"  • {st.get('topic', '')} — {st.get('reason', '')} "
+                    f"(search_hint: {st.get('search_hint', '')})\n"
+                )
 
     # [Topic Context] AI 추천 주제 컨텍스트 (NEW!)
     topic_context = ""
@@ -299,7 +325,7 @@ def _build_planner_prompt(
 **Target Audience**: {target_audience}
 **Language**: Korean (ALL output must be in Korean)
 
-{news_context}{topic_context}{personalization_context}
+{intent_context}{news_context}{topic_context}{personalization_context}
 
 **STRATEGIC INSTRUCTION — MANDATORY THINKING ORDER (Follow this EXACTLY)**:
 
