@@ -5,9 +5,8 @@ import { useSearchParams } from "react-router-dom"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
-import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
-import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
+import { runIntentOnly, executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle, Citation } from "../../lib/api/services"
 
 function ScriptPageContent() {
@@ -69,39 +68,52 @@ function ScriptPageContent() {
   }, [topicId])
 
   const handleGenerate = async () => {
+    // -----------------------------------------------------------------------
+    // [TEST] Intent Analyzer 단독 테스트
+    // 결과는 백엔드(Celery worker) 터미널에 출력됩니다.
+    // 테스트 완료 후 아래 블록을 제거하고 원래 코드로 복원하세요.
+    // -----------------------------------------------------------------------
     setIsGenerating(true)
     try {
-      console.log("[FE] 스크립트 생성 요청:", topic)
-      const { task_id } = await executeScriptGen(topic, topicId)
-      console.log("[FE] Task ID:", task_id)
-
-      const result = await pollScriptGenResult(task_id, (status) => {
-        console.log("[FE] 상태:", status)
-      })
-
-      if (result.success && result.script) {
-        console.log("[FE] 생성 완료!", result)
-        setScriptData(result.script)
-        setReferences(result.references || [])
-        setCitations(result.citations || [])
-
-        // 새로고침 시 복원을 위해 topicId를 URL에 반영
-        if (result.topic_request_id) {
-          const newParams = new URLSearchParams(searchParams)
-          newParams.set("topicId", result.topic_request_id)
-          setSearchParams(newParams, { replace: true })
-          console.log("[FE] URL에 topicId 반영:", result.topic_request_id)
-        }
-      } else {
-        console.error("[FE] 생성 실패:", result.error)
-        alert(`생성 실패: ${result.error}`)
-      }
+      console.log("[FE][TEST] Intent 분석 요청:", topic)
+      const result = await runIntentOnly(
+        topic,
+        topicId,
+      )
+      console.log("[FE][TEST] Intent 분석 결과:", JSON.stringify(result.intent_analysis, null, 2))
+      alert("[TEST] Intent 분석 완료! 백엔드 터미널(Celery worker)에서 결과를 확인하세요.")
     } catch (error) {
-      console.error("[FE] API 오류:", error)
+      console.error("[FE][TEST] API 오류:", error)
       alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
     } finally {
       setIsGenerating(false)
     }
+    // -----------------------------------------------------------------------
+    // [ORIGINAL] 아래는 원래 풀 파이프라인 코드 (테스트 후 복원)
+    // -----------------------------------------------------------------------
+    // setIsGenerating(true)
+    // try {
+    //   const { task_id } = await executeScriptGen(topic, topicId)
+    //   const result = await pollScriptGenResult(task_id, (status) => {
+    //     console.log("[FE] 상태:", status)
+    //   })
+    //   if (result.success && result.script) {
+    //     setScriptData(result.script)
+    //     setReferences(result.references || [])
+    //     setCitations(result.citations || [])
+    //     if (result.topic_request_id) {
+    //       const newParams = new URLSearchParams(searchParams)
+    //       newParams.set("topicId", result.topic_request_id)
+    //       setSearchParams(newParams, { replace: true })
+    //     }
+    //   } else {
+    //     alert(`생성 실패: ${result.error}`)
+    //   }
+    // } catch (error) {
+    //   alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
+    // } finally {
+    //   setIsGenerating(false)
+    // }
   }
 
   return (
@@ -129,7 +141,6 @@ function ScriptPageContent() {
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
               <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
-              <CompetitorAnalysis />
             </div>
           </div>
         </div>

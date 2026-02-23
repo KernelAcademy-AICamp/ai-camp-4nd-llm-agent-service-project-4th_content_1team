@@ -16,6 +16,7 @@ class ScriptGenState(TypedDict, total=False):
     
     Workflow:
         User Input (topic + channel_profile)
+        → Intent Analyzer (intent_analysis)
         → Planner (content_brief)
         → News Research (news_data) + YT Fetcher (youtube_data)
         → Competitor Analyzer (competitor_data)
@@ -60,6 +61,22 @@ class ScriptGenState(TypedDict, total=False):
             - recommendation_reason: 추천 이유
     """
     
+    # ==========================================================================
+    # 1.5. Intent Analyzer 노드 결과 (Planner 이전)
+    # ==========================================================================
+    intent_analysis: Dict[str, Any]
+    """
+    독자 의도 분석 결과 (Intent Analyzer가 생성, Planner가 활용)
+
+    구조:
+        - core_question: 시청자가 진짜 원하는 핵심 질문
+        - reader_pain_point: 시청자의 고민/불편함
+        - reader_desire: 시청자가 원하는 결과
+        - intent_mix: 의도 비율 {"informational": int, "emotional": int, "actionable": int}
+        - content_angle: 콘텐츠 접근 각도
+        - sub_topics: 다뤄야 할 하위 주제 [{"topic": str, "reason": str, "search_hint": str}]
+    """
+
     # ==========================================================================
     # 2. Planner 노드 결과 (태윤)
     # ==========================================================================

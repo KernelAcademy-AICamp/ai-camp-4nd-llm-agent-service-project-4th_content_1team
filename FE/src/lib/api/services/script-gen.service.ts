@@ -58,8 +58,35 @@ export interface TaskStatusResponse {
 }
 
 // 스크립트 생성 시작
-export const executeScriptGen = async (topic: string, topicRecommendationId?: string): Promise<TaskStatusResponse> => {
+export const executeScriptGen = async (
+    topic: string,
+    topicRecommendationId?: string,
+): Promise<TaskStatusResponse> => {
     const response = await api.post('/script-gen/execute', {
+        topic,
+        topic_recommendation_id: topicRecommendationId,
+    });
+    return response.data;
+};
+
+// [테스트용] Intent Analyzer 단독 실행 (결과는 백엔드 터미널에 출력됨)
+export interface IntentAnalysis {
+    core_question: string;
+    reader_pain_point: string;
+    reader_desire: string;
+    intent_mix: { informational: number; emotional: number; actionable: number };
+    content_angle: string;
+    sub_topics: Array<{ topic: string; reason: string; search_hint: string }>;
+}
+export interface IntentOnlyResult {
+    success: boolean;
+    intent_analysis: IntentAnalysis;
+}
+export const runIntentOnly = async (
+    topic: string,
+    topicRecommendationId?: string,
+): Promise<IntentOnlyResult> => {
+    const response = await api.post('/script-gen/intent', {
         topic,
         topic_recommendation_id: topicRecommendationId,
     });

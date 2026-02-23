@@ -64,14 +64,14 @@ async def execute_pipeline_async(
     logger.info(f"Queueing async pipeline for: {request.topic}")
     
     try:
-        # 1. Planner Input 빌드 (DB 조회 등은 여기서 수행)
+        # 1. Planner Input 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         # 2. topic_context를 channel_profile에 병합
         # (Planner가 channel_profile.topic_context에서 추천 컨텍스트를 읽음)
         channel_profile = planner_input["channel_profile"].copy()
@@ -152,14 +152,14 @@ async def run_complete_pipeline(
     logger.info(f"Starting full pipeline execution for: {request.topic}")
     
     try:
-        # 1. Planner Input 빌드 (채널 프로필 등 가져오기)
+        # 1. Planner Input 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         # 2. 비동기 파이프라인 실행
         # generate_script는 async 함수이므로 직접 await
         result_dict = await generate_script(
@@ -243,14 +243,14 @@ async def start_script_generation(
     """
     
     try:
-        # Planner 입력 생성
+        # Planner 입력 생성 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         logger.info(
             f"Planner input built for user {current_user.id}, "
             f"topic: {request.topic}"
@@ -297,14 +297,14 @@ async def run_planner(
     """
     
     try:
-        # 1. Planner 입력 생성
+        # 1. Planner 입력 생성 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         logger.info(f"Running planner for topic: {request.topic}")
         
         # 2. Planner 노드 실행
@@ -345,6 +345,42 @@ async def run_planner(
             message="콘텐츠 기획안 생성에 실패했습니다.",
             content_brief=None,
             error=str(e),
+        )
+
+
+# =============================================================================
+# Test Endpoint: Intent Analyzer Only
+# =============================================================================
+
+@router.post("/intent", response_model=None)
+async def run_intent_only(
+    request: ScriptGenStartRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    [테스트용] Intent Analyzer 노드만 실행하고 결과 반환.
+    Planner 이후 노드는 실행되지 않습니다.
+    """
+    try:
+        planner_input = await build_planner_input(
+            db=db,
+            topic=request.topic,
+            user_id=str(current_user.id),
+            topic_recommendation_id=request.topic_recommendation_id,
+        )
+        result = await generate_script(
+            topic=planner_input["topic"],
+            channel_profile=planner_input["channel_profile"],
+            intent_only=True,
+        )
+        return {"success": True, "intent_analysis": result.get("intent_analysis", {})}
+
+    except Exception as e:
+        logger.error(f"Intent-only test failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e),
         )
 
 
