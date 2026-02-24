@@ -17,7 +17,6 @@ import os
 import hashlib
 import re
 import uuid
-import difflib  # 유사도 비교용
 from datetime import datetime
 from playwright.sync_api import sync_playwright
 from langchain_openai import ChatOpenAI
@@ -36,58 +35,60 @@ SIMILARITY_THRESHOLD = 0.6  # 제목 유사도 기준 (0.6 이상이면 같은 �
 
 
 def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    logger.info("News Research Node (Advanced) 시작")
-    
-    # 1. 입력 데이터
-    # [개선] Planner가 영상 구조에서 역산한 newsQuery를 우선 사용
-    # 왜? 기존 search_keywords는 제목에서 단어만 뽑은 거라 영상 의도와 안 맞음
-    # Planner가 챕터 구조를 먼저 설계하고 필요한 자료를 역산해서 만든 키워드가 정확함
+    """각 키워드당 제일 관련성 높은 기사 1개씩 검색합니다."""
+    logger.info("News Research Node (Per-Keyword) 시작")
+
+    # 1. 입력 데이터 - Planner의 research_plan 키워드 우선 사용
     content_brief = state.get("content_brief", {})
     research_plan = content_brief.get("researchPlan", {}) if content_brief else {}
     base_queries = research_plan.get("newsQuery", [])
-    
+
     # fallback: Planner newsQuery가 없으면 기존 search_keywords 사용
     if not base_queries:
         channel_profile = state.get("channel_profile", {})
         topic_context = channel_profile.get("topic_context", {})
         base_queries = topic_context.get("search_keywords", []) if topic_context else []
-        logger.info(f"검색 쿼리 (Fallback - Recommender): {base_queries}")
+        logger.info(f"검색 쿼리 (Fallback): {base_queries}")
     else:
         logger.info(f"검색 쿼리 (Planner 역산): {base_queries}")
-    
+
     if not base_queries:
         return {"news_data": {"articles": []}}
-    
-    # 2. 뉴스 대량 수집 (Deep Fetch)
-    # 쿼리당 15개씩 수집 -> 후보군 확보
+
     topic = state.get("topic", "")
-    logger.info(f"뉴스 후보군 수집 시작: 쿼리당 15개")
-    raw_articles = _fetch_naver_news_bulk(base_queries)
-    logger.info(f"뉴스 후보군 확보: {len(raw_articles)}개")
-    
-    # 3. GPT 관련도 필터 (Chain-of-Thought: 핵심 대상 추출 → 관련 기사 선별)
-    relevant_articles = _filter_relevant_articles(raw_articles, topic, search_keywords=base_queries)
-    logger.info(f"관련도 필터 후: {len(relevant_articles)}개 (원본 {len(raw_articles)}개)")
-    
-    # 4. 중복 제거 및 대표 기사 선정 (Smart Dedup)
-    # 비슷한 기사는 묶어서 버리고, 서로 다른 주제의 알짜 기사만 남김
-    unique_articles = _deduplicate_articles(relevant_articles)
-    logger.info(f"중복 제거 후 선별된 Top 기사: {len(unique_articles)}개")
-    
-    # 5. 본문 및 이미지 정밀 크롤링 (Crawling & AI Analysis)
-    # 선별된 Top 기사들에 대해서만 정밀 분석 수행 (비용 절감)
-    full_articles = _crawl_and_analyze(unique_articles, topic=topic)
-    
-    # 6. 기사 정렬 (차트 있는 기사 우선) — 팩트 수집 전에 먼저 정렬해야 source_index가 일치함
+    logger.info(f"키워드별 기사 검색 시작: {len(base_queries)}개 키워드 → 각 1개 기사")
+
+    # 2. 각 키워드당 제일 관련성 높은 기사 1개씩 선택
+    selected_articles = _fetch_one_per_keyword(base_queries, topic)
+    logger.info(f"선택된 기사: {len(selected_articles)}개")
+
+    # 3. 본문 및 이미지 정밀 크롤링 + AI 분석
+    full_articles = _crawl_and_analyze(selected_articles, topic=topic)
+    logger.info(f"크롤링 완료: {len(full_articles)}개 (선택 {len(selected_articles)}개 중)")
+
+    # 크롤링에 실패한 기사는 Naver 기본 정보(제목/URL/설명)로 폴백
+    crawled_urls = {art["url"] for art in full_articles}
+    import hashlib
+    for art in selected_articles:
+        if art["url"] not in crawled_urls:
+            logger.info(f"크롤링 실패 폴백: {art['title'][:40]}")
+            full_articles.append({
+                **art,
+                "id": hashlib.md5(art["url"].encode()).hexdigest(),
+                "summary_short": art.get("desc", ""),
+                "summary": art.get("desc", ""),
+                "analysis": {"facts": [], "opinions": []},
+                "images": [],
+                "charts": [],
+            })
+
+    # 4. 기사 정렬 (차트 있는 기사 우선)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
-    
-    # 7. [Fact Extractor] 기사별 analysis.facts에서 확정 인덱스로 팩트 수집
-    # 기존 _structure_facts()는 GPT가 source_indices를 추측하여 매핑 오류가 발생했음.
-    # 개선: 정렬 후 순서 기준으로 확정 인덱스(i)를 각 fact에 하드코딩.
+
+    # 5. [Fact Extractor] 기사별 확정 인덱스로 팩트 수집
     structured_facts = []
     for i, art in enumerate(full_articles):
         art_facts = art.get("analysis", {}).get("facts", [])
-        # URL 기반 출처명 우선 (GPT가 "The Information (기사 인용본)" 등으로 잘못 정하는 문제 방지)
         source_name = _extract_source_from_url(art.get("url", "")) or art.get("source", "Unknown")
         article_id = art.get("id", "")
         article_url = art.get("url", "")
@@ -95,22 +96,21 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
             structured_facts.append({
                 "id": f"fact-{uuid.uuid4().hex[:12]}",
                 "content": fact_text,
-                "source_index": i,           # 확정된 기사 인덱스 (정렬 후 순서)
-                "source_name": source_name,   # 출처명 (Bloomberg, 아시아경제, ...)
-                "source_indices": [i],        # 기존 Writer 호환용
+                "source_index": i,
+                "source_name": source_name,
+                "source_indices": [i],
                 "article_id": article_id,
                 "article_url": article_url,
                 "category": "Fact",
                 "visual_proposal": "None",
             })
-    logger.info(f"[Fact Extractor] 기사별 확정 인덱스 팩트 수집: {len(structured_facts)}개 (기사 {len(full_articles)}개)")
-    
-    # [NEW] Writer에게 전달할 Opinions 모음 (모든 기사의 오피니언 통합)
+    logger.info(f"[Fact Extractor] 팩트 수집: {len(structured_facts)}개 (기사 {len(full_articles)}개)")
+
+    # 6. Opinions 모음
     structured_opinions = []
     for art in full_articles:
         ops = art.get("analysis", {}).get("opinions", [])
         if ops:
-            # 출처(Source)를 앞에 붙여서 구체화 (예: "[매일경제] [전문가] ...")
             source = art.get("source", "Unknown")
             for op in ops:
                 structured_opinions.append(f"[{source}] {op}")
@@ -118,196 +118,176 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "news_data": {
             "articles": full_articles,
-            "structured_facts": structured_facts, # 구조화된 팩트 리스트
-            "structured_opinions": structured_opinions, # [NEW] 구조화된 오피니언 리스트
+            "structured_facts": structured_facts,
+            "structured_opinions": structured_opinions,
             "queries_used": base_queries,
             "collected_at": datetime.now().isoformat()
         }
     }
 
 
-
-def _filter_relevant_articles(articles: List[Dict], topic: str, search_keywords: List[str] = None) -> List[Dict]:
+def _search_naver(endpoint: str, keyword: str, headers: dict, display: int = 10) -> List[Dict]:
     """
-    GPT-4o-mini로 기사 제목+설명을 한 번에 보내서
-    주제와 관련 있는 기사만 필터링합니다.
-    
-    비용: ~$0.01 (제목+설명만 전송)
-    시간: 2~3초
+    Naver 검색 API 호출 공통 함수.
+    endpoint: "blog", "news", "cafearticle" 등
     """
-    if not articles or not topic:
-        return articles
-    
+    url = f"https://openapi.naver.com/v1/search/{endpoint}.json"
     try:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key:
-            logger.warning("OPENAI_API_KEY 없음 → 필터 스킵")
-            return articles
-        
-        # 기사 목록 텍스트 생성
-        article_list = ""
-        for i, art in enumerate(articles):
-            article_list += f"{i+1}. [{art.get('title', '')}] {art.get('desc', '')}\n"
-        
-        keywords_str = ", ".join(search_keywords) if search_keywords else "없음"
-        
-        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0)
-        
-        prompt = f"""당신은 YouTube 스크립트 작성을 위한 뉴스 기사 선별 전문가입니다.
+        params = {"query": keyword, "display": display, "sort": "sim"}
+        res = requests.get(url, headers=headers, params=params, timeout=5)
+        if res.status_code != 200:
+            logger.warning(f"Naver {endpoint} API 오류 ({keyword}): {res.status_code}")
+            return []
+        items = res.json().get("items", [])
+        results = []
+        for item in items:
+            link = item.get("originallink") or item.get("link") or item.get("bloggerlink", "")
+            if not link:
+                continue
+            clean_title = re.sub('<[^<]+?>', '', item.get("title", ""))
+            clean_desc = re.sub('<[^<]+?>', '', item.get("description", ""))
+            results.append({
+                "title": clean_title,
+                "url": link,
+                "desc": clean_desc,
+                "pub_date": item.get("pubDate") or item.get("postdate"),
+                "query": keyword,
+                "source": _extract_source_from_url(link),
+                "_search_type": endpoint,
+            })
+        return results
+    except Exception as e:
+        logger.warning(f"Naver {endpoint} 검색 오류 ({keyword}): {e}")
+        return []
+
+
+def _fetch_one_per_keyword(keywords: List[str], topic: str) -> List[Dict]:
+    """
+    각 키워드당 제일 관련성 높은 기사/포스트 1개씩 선별합니다.
+
+    검색 우선순위:
+      1순위) Naver Blog  — 실사용 리뷰, 튜토리얼, 비교 글 (how-to 키워드에 최적)
+      2순위) Naver News  — 언론사 기사 (업계 동향, 통계, 사건 중심)
+    각 소스에서 GPT가 "관련없음" 판단 시 다음 소스로 넘어갑니다.
+    """
+    results = []
+    seen_urls: set = set()
+
+    client_id = os.getenv("NAVER_CLIENT_ID")
+    client_secret = os.getenv("NAVER_CLIENT_SECRET")
+    if not client_id or not client_secret:
+        logger.error("NAVER API Key Missing")
+        return []
+
+    api_key = os.getenv("OPENAI_API_KEY")
+    llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0) if api_key else None
+
+    headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
+
+    for raw_keyword in keywords:
+        # 쉼표로 이어진 복합 키워드를 분리하여 첫 번째 유효한 결과 사용
+        sub_keywords = [k.strip() for k in raw_keyword.split(",") if k.strip()]
+        if not sub_keywords:
+            continue
+
+        found = False
+        for keyword in sub_keywords:
+            if found:
+                break
+
+            # 1순위: Naver Blog (실사용 리뷰/튜토리얼 중심)
+            blog_candidates = [
+                c for c in _search_naver("blog", keyword, headers, display=10)
+                if c["url"] not in seen_urls
+            ]
+            if blog_candidates:
+                best = _pick_best_article(blog_candidates, keyword, topic, llm)
+                if best:
+                    seen_urls.add(best["url"])
+                    results.append(best)
+                    logger.info(f"키워드 '{keyword}' [블로그]: '{best['title'][:50]}' 선택")
+                    found = True
+                    continue
+                else:
+                    logger.info(f"키워드 '{keyword}' [블로그]: GPT 관련없음 판단 → 뉴스로 전환")
+
+            # 2순위: Naver News (언론사 기사)
+            news_candidates = [
+                c for c in _search_naver("news", keyword, headers, display=10)
+                if c["url"] not in seen_urls
+            ]
+            if news_candidates:
+                best = _pick_best_article(news_candidates, keyword, topic, llm)
+                if best:
+                    seen_urls.add(best["url"])
+                    results.append(best)
+                    logger.info(f"키워드 '{keyword}' [뉴스]: '{best['title'][:50]}' 선택")
+                    found = True
+                    continue
+                else:
+                    logger.warning(f"키워드 '{keyword}' [뉴스]: GPT 관련없음 판단 → 기사 없음 처리")
+
+    return results
+
+
+def _pick_best_article(candidates: List[Dict], keyword: str, topic: str, llm) -> Optional[Dict]:
+    """
+    주어진 키워드와 영상 주제에 가장 관련성 높은 글 1개를 GPT로 선택합니다.
+    모든 후보가 관련없다고 판단되면 None을 반환합니다 (거부 가능).
+    """
+    if not candidates:
+        return None
+    if not llm:
+        return candidates[0]
+
+    try:
+        article_list = "\n".join(
+            f"{i+1}. {art['title']} — {art['desc'][:150]}"
+            for i, art in enumerate(candidates)
+        )
+
+        prompt = f"""유튜브 스크립트 리서치를 위해 가장 적합한 글 1개를 선택하세요.
 
 [영상 주제]
 "{topic}"
 
 [검색 키워드]
-{keywords_str}
+"{keyword}"
 
-[판단 프로세스 - 반드시 이 순서대로 수행]
-
-Step 1. 핵심 키워드 그룹 추출 (2개 그룹)
-영상 주제를 분석하여 **독립적인 키워드 그룹**을 추출하세요.
-
-그룹A - 고유명사: 제품명, 인물명, 기업명, 기술명 (예: Claude, Anthropic, GPT)
-그룹B - 핵심 개념: 주제의 구체적 테마 (예: AI 윤리, AI 편향성, 저작권 침해)
-
-⚠️ "AI", "기술", "인공지능", "시장", "트렌드" 같은 범용 단어는 어느 그룹에도 넣지 마세요.
-⚠️ 그룹B는 주제에 명시된 구체적 개념만 포함합니다.
-
-예) "Claude 3 출시와 AI의 윤리적 문제 심층 분석"
-→ 그룹A: Claude 3, Claude, Anthropic, 앤트로픽
-→ 그룹B: AI 윤리, AI 편향, AI 규제, 책임 AI, AI 안전
-
-예) "엔비디아 주가 전망과 반도체 시장 분석"
-→ 그룹A: 엔비디아, NVIDIA, 젠슨황
-→ 그룹B: 반도체 시장, GPU 수요, AI 칩
-
-Step 2. 기사별 판단
-각 기사에 대해 이 질문에 답하세요:
-"영상 스크립트를 쓰는 사람이 이 기사를 열었을 때, 스크립트에 직접 인용할 내용을 찾을 수 있는가?"
-
-포함 (O) - 아래 중 하나라도 해당하면 포함:
-- 그룹A의 고유명사가 기사의 주요 주제인 경우
-- 그룹B의 핵심 개념을 직접 다루는 기사 (전문가 의견, 데이터, 사례 포함)
-- 그룹A + 그룹B 모두 관련된 기사 (최우선 선택)
-
-제외 (X) - 아래 하나라도 해당하면 무조건 제외:
-- 그룹A, 그룹B 어디에도 해당하지 않는 기사
-- 다른 분야 기사에서 핵심 대상을 도구/사례로 잠깐 언급하는 기사
-- 제목에 핵심 대상이 없고 설명에서만 잠깐 언급되는 기사
-
-[기사 목록]
+[후보 글]
 {article_list}
 
-[응답 형식 - 반드시 이 형식으로]
-그룹A: (고유명사 나열)
-그룹B: (핵심 개념 나열)
-A+B기사: (그룹A와 그룹B 모두 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
-A기사: (그룹A만 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
-B기사: (그룹B만 관련된 기사 번호, 쉼표 구분. 없으면 "없음")
+선택 기준:
+- 검색 키워드 "{keyword}"의 핵심 내용을 직접 다루는 글
+- 유튜브 스크립트에 인용할 수 있는 구체적인 수치, 사실, 사례, 사용 경험이 있는 글
+- 실사용 리뷰, 튜토리얼, 비교 글 우선
+- 광고성·홍보성 글 제외
 
-예시:
-그룹A: Claude, Anthropic, 앤트로픽
-그룹B: AI 윤리, AI 규제
-A+B기사: 1,3
-A기사: 5,7
-B기사: 2,8"""
-        
+⚠️ 중요: 후보 글 중 키워드 "{keyword}"와 직접 관련된 글이 하나도 없다면 반드시 "0"을 답하세요.
+예를 들어 "Copilot 사용법" 키워드인데 도로공사나 주식 기사만 있다면 → 0
+
+숫자만 응답하세요. 관련 없으면 0, 관련 있으면 해당 번호 (예: 3)"""
+
         response = llm.invoke(prompt)
-        content = response.content.strip()
-        
-        # 카테고리별 응답 파싱
-        lines = content.strip().split("\n")
-        group_a_line = ""
-        group_b_line = ""
-        ab_line = ""
-        a_only_line = ""
-        b_only_line = ""
-        legacy_articles_line = ""  # 이전 형식 호환
-        
-        for line in lines:
-            line_stripped = line.strip()
-            if line_stripped.startswith("그룹A:"):
-                group_a_line = line_stripped.replace("그룹A:", "").strip()
-            elif line_stripped.startswith("그룹B:"):
-                group_b_line = line_stripped.replace("그룹B:", "").strip()
-            elif line_stripped.startswith("핵심대상:"):
-                group_a_line = line_stripped.replace("핵심대상:", "").strip()
-            elif line_stripped.startswith("A+B기사:"):
-                ab_line = line_stripped.replace("A+B기사:", "").strip()
-            elif line_stripped.startswith("A기사:"):
-                a_only_line = line_stripped.replace("A기사:", "").strip()
-            elif line_stripped.startswith("B기사:"):
-                b_only_line = line_stripped.replace("B기사:", "").strip()
-            elif line_stripped.startswith("관련기사:"):
-                legacy_articles_line = line_stripped.replace("관련기사:", "").strip()
-        
-        logger.info(f"GPT 그룹A(고유명사): {group_a_line}")
-        logger.info(f"GPT 그룹B(핵심개념): {group_b_line}")
-        logger.info(f"GPT A+B기사: {ab_line}, A기사: {a_only_line}, B기사: {b_only_line}")
-        
-        # 번호 파싱 헬퍼
-        def parse_indices(line_str):
-            if not line_str or line_str == "없음":
-                return []
-            return [int(x.strip()) - 1 for x in line_str.split(",") if x.strip().isdigit()]
-        
-        try:
-            # 이전 형식 호환: "관련기사:" 형식으로 응답한 경우
-            if not ab_line and not a_only_line and not b_only_line and legacy_articles_line:
-                logger.info("이전 형식 응답 감지 → 레거시 파싱")
-                relevant_indices = parse_indices(legacy_articles_line)
-                filtered = [articles[i] for i in relevant_indices if 0 <= i < len(articles)]
-                return filtered if filtered else articles
-            
-            ab_indices = parse_indices(ab_line)
-            a_only_indices = parse_indices(a_only_line)
-            b_only_indices = parse_indices(b_only_line)
-            
-            # 전부 비어있으면 원본 유지
-            if not ab_indices and not a_only_indices and not b_only_indices:
-                logger.warning("GPT가 관련 기사 없음으로 판단 → 원본 유지")
-                return articles
-            
-            # 우선순위 정렬: A+B 먼저, 나머지 슬롯은 A/B 균등 배분
-            MAX_ARTICLES = 7  # 중복 제거 후 5개 확보를 위해 여유분 포함
-            result = []
-            
-            # 1순위: A+B 기사 (최대 5개)
-            for i in ab_indices:
-                if 0 <= i < len(articles) and len(result) < MAX_ARTICLES:
-                    result.append(articles[i])
-            
-            logger.info(f"A+B 기사 {len(result)}개 선택")
-            
-            # 남은 슬롯을 A/B 균등 배분
-            remaining = MAX_ARTICLES - len(result)
-            if remaining > 0:
-                a_articles = [articles[i] for i in a_only_indices if 0 <= i < len(articles)]
-                b_articles = [articles[i] for i in b_only_indices if 0 <= i < len(articles)]
-                
-                # 균등 배분: 각각 remaining // 2, 나머지는 A부터
-                a_count = (remaining + 1) // 2  # 홀수면 A가 1개 더
-                b_count = remaining // 2
-                
-                for art in a_articles[:a_count]:
-                    result.append(art)
-                for art in b_articles[:b_count]:
-                    result.append(art)
-                
-                logger.info(f"A기사 {min(len(a_articles), a_count)}개, B기사 {min(len(b_articles), b_count)}개 추가")
-            
-            if not result:
-                logger.warning("필터 결과 0개 → 원본 유지")
-                return articles
-            
-            logger.info(f"최종 선별: {len(result)}개 (A+B:{len([i for i in ab_indices if 0 <= i < len(articles)])}, A:{len(a_only_indices)}, B:{len(b_only_indices)})")
-            return result
-        except Exception as e:
-            logger.warning(f"GPT 응답 파싱 실패: {e} → 원본 유지")
-            return articles
-            
+        idx_str = response.content.strip()
+
+        # 숫자만 추출
+        digits = re.sub(r'[^\d]', '', idx_str)
+        if digits:
+            idx = int(digits) - 1
+            if idx == -1:
+                # GPT가 "0" 반환 = 관련없음 거부
+                logger.info(f"기사 선택: GPT가 '{keyword}' 관련 글 없음 판단 → None 반환")
+                return None
+            if 0 <= idx < len(candidates):
+                return candidates[idx]
+
+        return None  # 파싱 실패 시도 None (불확실한 결과 포함 안 함)
+
     except Exception as e:
-        logger.warning(f"관련도 필터 에러: {e} → 필터 스킵")
-        return articles
+        logger.warning(f"기사 선택 실패 ({keyword}): {e} → None 반환")
+        return None
+
 
 
 # 도메인 → 언론사명 매핑
@@ -332,14 +312,28 @@ SOURCE_DOMAIN_MAP = {
 }
 
 def _extract_source_from_url(url: str) -> str:
-    """URL 도메인에서 언론사명을 추출합니다."""
+    """URL 도메인에서 출처명을 추출합니다."""
     try:
         from urllib.parse import urlparse
-        domain = urlparse(url).netloc.lower()
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
         # 공통 서브도메인 제거
         for prefix in ("www.", "view.", "news.", "m.", "mobile."):
             if domain.startswith(prefix):
                 domain = domain[len(prefix):]
+
+        # 네이버 블로그/카페 특별 처리
+        if "blog.naver.com" in domain or "blog.me" in domain:
+            return "네이버 블로그"
+        if "cafe.naver.com" in domain:
+            return "네이버 카페"
+        if "tistory.com" in domain:
+            return "티스토리"
+        if "velog.io" in domain:
+            return "Velog"
+        if "brunch.co.kr" in domain:
+            return "브런치"
+
         # 정확한 매칭
         if domain in SOURCE_DOMAIN_MAP:
             return SOURCE_DOMAIN_MAP[domain]
@@ -350,121 +344,6 @@ def _extract_source_from_url(url: str) -> str:
         return ""
     except Exception:
         return ""
-
-
-def _fetch_naver_news_bulk(queries: List[str]) -> List[Dict]:
-    """네이버 뉴스 검색결과를 대량으로 가져옵니다 (쿼리당 15개)."""
-    articles = []
-    seen_links = set()
-    
-    client_id = os.getenv("NAVER_CLIENT_ID")
-    client_secret = os.getenv("NAVER_CLIENT_SECRET")
-    
-    if not client_id or not client_secret:
-        logger.error("NAVER API Key Missing")
-        return []
-
-    headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
-    url = "https://openapi.naver.com/v1/search/news.json"
-    
-    for query in queries:
-        try:
-            # 15개 수집 (display=15)
-            params = {"query": query, "display": 15, "sort": "sim"}
-            res = requests.get(url, headers=headers, params=params, timeout=5)
-            
-            if res.status_code == 200:
-                items = res.json().get("items", [])
-                for item in items:
-                    link = item.get("originallink") or item.get("link")
-                    if link and link not in seen_links:
-                        clean_title = re.sub('<[^<]+?>', '', item.get("title", ""))
-                        clean_desc = re.sub('<[^<]+?>', '', item.get("description", ""))
-                        
-                        articles.append({
-                            "title": clean_title,
-                            "url": link,
-                            "desc": clean_desc,
-                            "pub_date": item.get("pubDate"),
-                            "query": query,
-                            "source": _extract_source_from_url(link),
-                        })
-                        seen_links.add(link)
-        except Exception as e:
-            logger.warning(f"Naver Search Error ({query}): {e}")
-            
-    return articles
-
-
-def _deduplicate_articles(articles: List[Dict]) -> List[Dict]:
-    """
-    유사한 제목을 가진 기사들을 그룹화하고, 
-    각 그룹에서 가장 영양가 있는(설명이 길거나 키워드가 있는) 기사를 하나씩 뽑아냅니다.
-    최종적으로 Top 3~5개만 리턴합니다.
-    """
-    if not articles:
-        return []
-        
-    clusters = []
-    visited = [False] * len(articles)
-    
-    # 1. Clustering (유사도 기반 그룹핑)
-    for i in range(len(articles)):
-        if visited[i]:
-            continue
-            
-        current_cluster = [articles[i]]
-        visited[i] = True
-        
-        for j in range(i + 1, len(articles)):
-            if visited[j]:
-                continue
-                
-            # 문장 유사도 비교 (제목 OR 내용 OR 키워드) - 셋 중 하나라도 높으면 중복으로 간주
-            title_sim = difflib.SequenceMatcher(None, articles[i]["title"], articles[j]["title"]).ratio()
-            desc_sim = difflib.SequenceMatcher(None, articles[i]["desc"], articles[j]["desc"]).ratio()
-            
-            # 키워드 기반 유사도 (Jaccard Similarity)
-            # 제목을 단어로 분리하여 교집합 비율 계산
-            words_i = set(articles[i]["title"].split())
-            words_j = set(articles[j]["title"].split())
-            intersection = len(words_i & words_j)
-            union = len(words_i | words_j)
-            keyword_sim = intersection / union if union > 0 else 0
-            
-            # 제목 65% 이상 OR 내용 70% 이상 OR 키워드 60% 이상 비슷하면 같은 기사
-            if title_sim >= 0.65 or desc_sim >= 0.7 or keyword_sim >= 0.6:
-                current_cluster.append(articles[j])
-                visited[j] = True
-        
-        clusters.append(current_cluster)
-    
-    # 2. Representative Selection (대표 기사 선정)
-    final_articles = []
-    for cluster in clusters:
-        # 점수 계산: 설명 길이 + ('표'/'그래프' 키워드 가산점)
-        best_article = cluster[0]
-        max_score = -1
-        
-        for art in cluster:
-            score = len(art["desc"])  # 기본 점수: 설명이 자세할수록 좋음
-            
-            # 가산점: 표/그래프/종합/분석 같은 단어가 있으면 데이터가 많을 확률 높음
-            keywords = ["표", "그래프", "차트", "추이", "현황", "종합", "분석"]
-            if any(k in art["title"] for k in keywords):
-                score += 200
-            if any(k in art["desc"] for k in keywords):
-                score += 100
-            
-            if score > max_score:
-                max_score = score
-                best_article = art
-                
-        final_articles.append(best_article)
-        
-    # 최대 5개까지만 반환 (다양성 확보된 상태)
-    return final_articles[:5]
-
 
 
 import base64
@@ -988,104 +867,3 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
             if res: results.append(res)
             
     return results
-
-
-def _structure_facts(articles: List[Dict]) -> List[Dict]:
-    """
-    [Fact Extractor]
-    수집된 기사들의 핵심 문단(summary)을 종합 분석하여 구조화된 팩트 리스트를 생성합니다.
-    중복 제거, 출처 매핑, 시각화 제안(Visual Plan)을 포함합니다.
-    """
-    if not articles:
-        return []
-        
-    try:
-        api_key = os.getenv("OPENAI_API_KEY")
-        if not api_key: return []
-        
-        # 1. 기사 텍스트 모으기
-        combined_text = ""
-        for i, art in enumerate(articles):
-            summary = art.get("summary", "")
-            if len(summary) > 50: # 내용이 있는 경우만
-                combined_text += f"\n[Article {i}] Title: {art['title']}\n{summary}\n"
-        
-        if len(combined_text) < 100:
-            return []
-
-        # 2. GPT 로직
-        llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0.3)
-        
-        prompt = f"""
-        Analyze the following news articles and extract structured facts.
-        
-        [TASK]
-        1. **Extraction**: Extract key facts (Statistics, Quotes, Key Events).
-        2. **Deduplication**: Merge similar facts from different articles into one.
-        3. **Source Mapping**: Usage 'source_indices' list (e.g., [0, 2]) to track where the fact came from.
-        4. **Visual Proposal**: Suggest how to visualize this fact in a video.
-           - Options: "Chart" (for trends/comparisons), "Quote Card" (for sayings), "Text Overlay" (for key terms), "Timeline" (for dates), "None".
-        
-        [OUTPUT FORMAT]
-        Return a JSON list of objects:
-        [
-          {{
-            "category": "Statistic" | "Quote" | "Event" | "Fact",
-            "content": "Fact description (e.g., Sales increased by 50%)",
-            "value": "Key number/date if applicable (e.g., 50%)",
-            "source_indices": [0, 2],
-            "visual_proposal": "Chart" | "Quote Card" | "Text Overlay" | "Timeline" | "None"
-          }}
-        ]
-        
-        [ARTICLES]
-        {combined_text[:10000]} 
-        """
-        # 텍스트 길이 제한 (토큰 보호)
-        
-        msg = HumanMessage(content=prompt)
-        res = llm.invoke([msg])
-        
-        # JSON 파싱
-        content = res.content.replace("```json", "").replace("```", "").strip()
-        
-        # 가끔 배열이 아닌 객체로 오거나 텍스트가 섞일 수 있음 -> 파싱 시도
-        try:
-            facts = json.loads(content)
-            if isinstance(facts, list):
-                # [FIX] 각 팩트에 UUID 부여 및 Article ID 매핑 (Verifier 연결용)
-                for fact in facts:
-                    if "id" not in fact:
-                        fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
-                    
-                    # Source Indices([0, 2])를 -> 실제 article_id로 변환
-                    indices = fact.get("source_indices", [])
-                    if indices and isinstance(indices, list):
-                        # 첫 번째 출처를 대표 ID로 매핑
-                        first_idx = indices[0]
-                        if isinstance(first_idx, int) and 0 <= first_idx < len(articles):
-                            fact["article_id"] = articles[first_idx].get("id")
-
-                return facts
-            else:
-                return []
-        except:
-            # 파싱 실패 시 대괄호 찾아서 재시도
-            try:
-                start = content.find('[')
-                end = content.rfind(']')
-                if start != -1 and end != -1:
-                    parsed_facts = json.loads(content[start:end+1])
-                    # UUID 부여
-                    for fact in parsed_facts:
-                        if "id" not in fact:
-                            fact["id"] = f"fact-{uuid.uuid4().hex[:12]}"
-                    return parsed_facts
-            except:
-                pass
-                
-            return []
-            
-    except Exception as e:
-        logger.warning(f"Fact Structure Failed: {e}")
-        return []

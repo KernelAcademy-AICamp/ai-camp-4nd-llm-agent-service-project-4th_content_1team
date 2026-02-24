@@ -170,6 +170,152 @@ def _mock_youtube_search(query: str, max_results: int) -> List[Dict]:
 
 
 # =============================================================================
+# 헬퍼
+# =============================================================================
+
+def _parse_duration_seconds(duration: str) -> int:
+    """ISO 8601 duration (PT#H#M#S) → 초 단위 정수로 변환.
+    예) 'PT5M30S' → 330,  'PT1H2M3S' → 3723,  'PT45S' → 45
+    """
+    import re
+    if not duration:
+        return 0
+    m = re.match(r'PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?', duration)
+    if not m:
+        return 0
+    h = int(m.group(1) or 0)
+    mi = int(m.group(2) or 0)
+    s = int(m.group(3) or 0)
+    return h * 3600 + mi * 60 + s
+
+
+# =============================================================================
+# 키워드별 인기 영상 1개 선택 (research_only 모드용)
+# =============================================================================
+
+def search_top_video_per_keyword(keywords: List[str]) -> List[Dict]:
+    """
+    각 키워드당 기간 대비 조회수 증가율(view velocity)이 가장 높은 영상 1개씩 반환.
+
+    velocity = view_count / days_since_publish
+    """
+    import os
+    from datetime import datetime, timezone
+
+    api_key = os.getenv("YOUTUBE_API_KEY")
+    results: List[Dict] = []
+    seen_ids: set = set()
+
+    for keyword in keywords:
+        try:
+            if not api_key:
+                logger.warning(f"YOUTUBE_API_KEY 없음 - '{keyword}' 스킵")
+                continue
+
+            from googleapiclient.discovery import build
+            youtube = build("youtube", "v3", developerKey=api_key)
+
+            # relevance 순으로 15개 검색 (쇼츠 제외 후 후보 확보)
+            search_res = youtube.search().list(
+                q=keyword,
+                part="snippet",
+                maxResults=15,
+                type="video",
+                order="relevance",
+                relevanceLanguage="ko",
+                videoDuration="medium",   # 4~20분 (미드폼 우선)
+            ).execute()
+
+            # medium 결과 없으면 long 으로 보완
+            if not search_res.get("items"):
+                search_res = youtube.search().list(
+                    q=keyword,
+                    part="snippet",
+                    maxResults=15,
+                    type="video",
+                    order="relevance",
+                    relevanceLanguage="ko",
+                    videoDuration="long",
+                ).execute()
+
+            video_ids = [
+                item["id"]["videoId"]
+                for item in search_res.get("items", [])
+            ]
+            if not video_ids:
+                logger.warning(f"유튜브 '{keyword}': 검색 결과 없음")
+                continue
+
+            # 통계 + 영상 길이 일괄 조회
+            stats_res = youtube.videos().list(
+                part="statistics,contentDetails",
+                id=",".join(video_ids),
+            ).execute()
+            stats_map = {
+                item["id"]: {
+                    "statistics": item.get("statistics", {}),
+                    "duration": item.get("contentDetails", {}).get("duration", ""),
+                }
+                for item in stats_res.get("items", [])
+            }
+
+            candidates = []
+            for item in search_res.get("items", []):
+                vid = item["id"]["videoId"]
+                if vid in seen_ids:
+                    continue
+                snippet = item["snippet"]
+                item_data = stats_map.get(vid, {})
+                stats = item_data.get("statistics", {})
+
+                # 쇼츠·짧은 영상 제외: 3분(180초) 미만 스킵
+                duration_sec = _parse_duration_seconds(item_data.get("duration", ""))
+                if duration_sec < 180:
+                    logger.debug(f"쇼츠/짧은 영상 제외: {snippet['title'][:30]} ({duration_sec}s)")
+                    continue
+
+                view_count = int(stats.get("viewCount", 0))
+                published_at = snippet.get("publishedAt", "")
+
+                # 기간당 조회수 증가율 계산
+                velocity = 0.0
+                if published_at:
+                    pub_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                    days = max((datetime.now(timezone.utc) - pub_date).days, 1)
+                    velocity = view_count / days
+
+                candidates.append({
+                    "video_id": vid,
+                    "title": snippet["title"],
+                    "channel": snippet["channelTitle"],
+                    "url": f"https://www.youtube.com/watch?v={vid}",
+                    "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                    "view_count": view_count,
+                    "published_at": published_at,
+                    "view_velocity": round(velocity, 1),
+                    "search_keyword": keyword,
+                })
+
+            if not candidates:
+                continue
+
+            # 기간당 조회수 증가율 기준 정렬 후 1위 선택
+            candidates.sort(key=lambda x: x["view_velocity"], reverse=True)
+            best = candidates[0]
+            seen_ids.add(best["video_id"])
+            results.append(best)
+            logger.info(
+                f"유튜브 '{keyword}': '{best['title'][:40]}' "
+                f"(velocity: {best['view_velocity']:.0f} views/day)"
+            )
+
+        except Exception as e:
+            logger.warning(f"유튜브 검색 오류 ({keyword}): {e}")
+
+    return results
+
+
+# =============================================================================
 # 실제 YouTube API 연동 (Phase 2)
 # =============================================================================
 

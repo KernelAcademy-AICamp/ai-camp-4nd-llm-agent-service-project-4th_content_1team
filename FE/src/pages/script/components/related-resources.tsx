@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
-import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Check, Globe, Building2 } from "lucide-react"
+import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Check, Globe, Building2, Play, TrendingUp } from "lucide-react"
 import { ScrollArea } from "../../../components/ui/scroll-area"
 
 // --- Data Types ---
@@ -24,6 +24,7 @@ interface ArticleData {
   analysis?: AnalysisData
   sourceName?: string
   sourceIcon?: string
+  searchKeyword?: string
 }
 
 interface ImageData {
@@ -62,6 +63,18 @@ const getSourceIcon = (icon: string) => {
 
 // --- Main Component ---
 
+interface YoutubeVideoData {
+  video_id: string;
+  title: string;
+  channel: string;
+  url: string;
+  thumbnail: string;
+  view_count: number;
+  view_velocity: number;
+  search_keyword: string;
+  published_at?: string;
+}
+
 interface RelatedResourcesProps {
   apiReferences?: Array<{
     title: string;
@@ -69,6 +82,7 @@ interface RelatedResourcesProps {
     source: string;
     date?: string;
     url: string;
+    query?: string;
     analysis?: {
       facts: string[];
       opinions: string[];
@@ -79,6 +93,7 @@ interface RelatedResourcesProps {
       is_chart?: boolean;
     }>;
   }>;
+  youtubeVideos?: YoutubeVideoData[];
   activeCitationUrl?: string | null;
 }
 
@@ -95,7 +110,7 @@ function urlsMatch(url1?: string | null, url2?: string | null): boolean {
   }
 }
 
-export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedResourcesProps = {}) {
+export function RelatedResources({ apiReferences, youtubeVideos = [], activeCitationUrl }: RelatedResourcesProps = {}) {
   const [selectedSource, setSelectedSource] = useState<string>("all")
   const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
   const [displaySources, setDisplaySources] = useState<SourceData[]>([])
@@ -118,6 +133,7 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
           date: ref.date || new Date().toISOString().split('T')[0],
           summary_short: ref.summary,
           url: ref.url,
+          searchKeyword: ref.query,
           // 백엔드에서 온 analysis(facts, opinions)를 연동
           analysis: ref.analysis || { facts: [], opinions: [] }
         });
@@ -303,6 +319,21 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
               </Tabs>
             </>
           )}
+        {/* YouTube 영상 섹션 */}
+        {youtubeVideos.length > 0 && (
+          <div className="mt-4 flex-shrink-0">
+            <div className="flex items-center gap-2 mb-3">
+              <Play className="w-4 h-4 text-red-500" />
+              <span className="text-sm font-semibold text-foreground">YouTube 참고 영상</span>
+              <Badge variant="outline" className="text-[10px]">{youtubeVideos.length}개</Badge>
+            </div>
+            <div className="space-y-2">
+              {youtubeVideos.map((video) => (
+                <YoutubeVideoCard key={video.video_id} video={video} />
+              ))}
+            </div>
+          </div>
+        )}
         </CardContent>
       </Card>
 
@@ -426,6 +457,13 @@ function ArticleCard({
         : "bg-muted/30 hover:bg-muted/50 border border-transparent hover:border-border/50"
         }`}
     >
+      {article.searchKeyword && (
+        <div className="mb-1.5">
+          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+            🔍 {article.searchKeyword}
+          </span>
+        </div>
+      )}
       <div className="flex items-start justify-between gap-2">
         <h4
           className="font-medium text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1 cursor-pointer"
@@ -482,6 +520,67 @@ function ArticleCard({
         </Button>
       </div>
     </div>
+  )
+}
+
+function YoutubeVideoCard({ video }: { video: YoutubeVideoData }) {
+  const formatViews = (n: number) => {
+    if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}억`
+    if (n >= 10_000) return `${(n / 10_000).toFixed(1)}만`
+    return n.toLocaleString()
+  }
+
+  const formatVelocity = (v: number) => {
+    if (v >= 10_000) return `${(v / 10_000).toFixed(1)}만/일`
+    if (v >= 1_000) return `${(v / 1_000).toFixed(1)}천/일`
+    return `${Math.round(v)}/일`
+  }
+
+  return (
+    <a
+      href={video.url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="flex gap-3 p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 border border-transparent hover:border-border/50 transition-colors group"
+    >
+      {/* 썸네일 */}
+      <div className="relative flex-shrink-0 w-28 h-16 rounded-md overflow-hidden bg-muted">
+        <img
+          src={video.thumbnail}
+          alt={video.title}
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+        />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
+          <Play className="w-6 h-6 text-white fill-white" />
+        </div>
+      </div>
+
+      {/* 정보 */}
+      <div className="flex-1 min-w-0 flex flex-col justify-between">
+        <div>
+          {video.search_keyword && (
+            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 font-medium mb-1">
+              🔍 {video.search_keyword}
+            </span>
+          )}
+          <p className="text-xs font-medium text-foreground line-clamp-2 leading-snug">
+            {video.title}
+          </p>
+        </div>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[10px] text-muted-foreground truncate">{video.channel}</span>
+          <span className="text-[10px] text-muted-foreground">·</span>
+          <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+            <Eye className="w-2.5 h-2.5" /> {formatViews(video.view_count)}
+          </span>
+          <span className="text-[10px] text-muted-foreground">·</span>
+          <span className="text-[10px] text-green-600 flex items-center gap-0.5 font-medium">
+            <TrendingUp className="w-2.5 h-2.5" /> {formatVelocity(video.view_velocity)}
+          </span>
+        </div>
+      </div>
+    </a>
   )
 }
 

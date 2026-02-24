@@ -107,7 +107,7 @@ class ContentBriefResponse(BaseModel):
 
 class ScriptGenPlannerResponse(BaseModel):
     """Planner 완료 응답"""
-    
+
     success: bool
     message: str
     content_brief: Optional[ContentBriefResponse] = None
@@ -125,8 +125,20 @@ class ReferenceResponse(BaseModel):
     source: str
     date: Optional[str] = None
     url: str
+    query: Optional[str] = None  # 검색에 사용된 키워드
     analysis: Optional[Dict[str, Any]] = None  # facts, opinions
     images: Optional[List[Dict[str, Any]]] = None  # Base64 이미지
+
+
+class ScriptGenResearchResponse(BaseModel):
+    """Planner + News Research + YouTube 완료 응답"""
+
+    success: bool
+    message: str
+    content_brief: Optional[ContentBriefResponse] = None
+    references: Optional[List[ReferenceResponse]] = None
+    youtube_videos: Optional[List[Dict[str, Any]]] = None
+    error: Optional[str] = None
 
 
 class CompetitorVideoResponse(BaseModel):

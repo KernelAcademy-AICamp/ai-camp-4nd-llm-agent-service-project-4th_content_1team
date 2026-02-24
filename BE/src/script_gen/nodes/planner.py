@@ -21,7 +21,7 @@ import asyncio
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 3
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-4o"
 
 
 class ValidationError(Exception):
@@ -223,6 +223,7 @@ def _build_planner_prompt(
 - 디벨롭된 앵글에 맞게 **추가 키워드 보완 가능**
 - 각 소스의 `how_to_use`: 영상에서 **어느 섹션에서 어떤 방식으로** 쓸지 구체적으로
 - 최소 3개, 권장 5~7개
+- ⚠️ `keyword`는 **단일 검색어**만 사용 — 쉼표(,) 절대 금지, 짧고 명확하게 (예: "Claude Code 활용법", "AI 코딩 도구 비교")
 
 **research_plan.youtube_keywords:**
 - 정확히 2개
