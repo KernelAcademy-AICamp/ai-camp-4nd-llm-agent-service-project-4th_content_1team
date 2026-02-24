@@ -6,8 +6,8 @@ import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
-import { runIntentOnly, executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
-import type { GeneratedScript, ReferenceArticle, Citation } from "../../lib/api/services"
+import { runResearchOnly, executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle, Citation, YoutubeVideo } from "../../lib/api/services"
 
 function ScriptPageContent() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -18,6 +18,7 @@ function ScriptPageContent() {
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
   const [citations, setCitations] = useState<Citation[]>([])
+  const [youtubeVideos, setYoutubeVideos] = useState<YoutubeVideo[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
 
   // 자동 생성 트리거 방지 플래그
@@ -69,19 +70,53 @@ function ScriptPageContent() {
 
   const handleGenerate = async () => {
     // -----------------------------------------------------------------------
-    // [TEST] Intent Analyzer 단독 테스트
-    // 결과는 백엔드(Celery worker) 터미널에 출력됩니다.
-    // 테스트 완료 후 아래 블록을 제거하고 원래 코드로 복원하세요.
+    // [TEST] Intent Analyzer → Planner → News Research 순서 실행
+    // 각 키워드당 1개 기사를 선별하여 참고자료 패널에 표시합니다.
     // -----------------------------------------------------------------------
     setIsGenerating(true)
     try {
-      console.log("[FE][TEST] Intent 분석 요청:", topic)
-      const result = await runIntentOnly(
-        topic,
-        topicId,
-      )
-      console.log("[FE][TEST] Intent 분석 결과:", JSON.stringify(result.intent_analysis, null, 2))
-      alert("[TEST] Intent 분석 완료! 백엔드 터미널(Celery worker)에서 결과를 확인하세요.")
+      console.log("[FE][TEST] Intent → Planner → Research 실행 요청:", topic)
+      const result = await runResearchOnly(topic, topicId)
+
+      // 참고자료 표시
+      if (result.references && result.references.length > 0) {
+        setReferences(result.references)
+        console.log(`[FE][TEST] 참고자료 ${result.references.length}개 수집 완료`)
+      }
+
+      // YouTube 영상 표시
+      if (result.youtube_videos && result.youtube_videos.length > 0) {
+        setYoutubeVideos(result.youtube_videos)
+        console.log(`[FE][TEST] YouTube 영상 ${result.youtube_videos.length}개 수집 완료`)
+      }
+
+      // Planner 결과 콘솔 출력
+      if (result.content_brief) {
+        const { content_angle, research_plan } = result.content_brief
+        console.group("[FE][TEST] Planner 결과 (content_brief)")
+
+        console.group("콘텐츠 앵글")
+        console.log("앵글:  ", content_angle.angle)
+        console.log("설명:  ", content_angle.description)
+        console.log("훅:    ", content_angle.hook)
+        console.groupEnd()
+
+        console.group(`리서치 플랜 (${research_plan.sources.length}개 소스)`)
+        research_plan.sources.forEach((s, i) => {
+          console.log(`  ${i + 1}. "${s.keyword}"`)
+          console.log(`     활용: ${s.how_to_use}`)
+        })
+        console.log("유튜브 검색 키워드:", research_plan.youtube_keywords)
+        console.groupEnd()
+
+        console.log("--- 전체 JSON ---")
+        console.log(JSON.stringify(result.content_brief, null, 2))
+        console.groupEnd()
+      } else {
+        console.warn("[FE][TEST] content_brief 없음:", result)
+      }
+
+      alert(`[TEST] Research 완료! 참고자료 ${result.references?.length || 0}개 수집. 브라우저 콘솔(F12)에서 Planner 결과를 확인하세요.`)
     } catch (error) {
       console.error("[FE][TEST] API 오류:", error)
       alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
@@ -140,7 +175,7 @@ function ScriptPageContent() {
           {/* Right Panel - Resources & Analysis */}
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
-              <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
+              <RelatedResources apiReferences={references} youtubeVideos={youtubeVideos} activeCitationUrl={activeCitationUrl} />
             </div>
           </div>
         </div>

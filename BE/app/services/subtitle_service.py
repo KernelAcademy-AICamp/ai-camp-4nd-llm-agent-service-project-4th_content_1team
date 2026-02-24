@@ -34,12 +34,8 @@ class SubtitleService:
 
     @staticmethod
     def _get_proxy_pool() -> list[str]:
-        """ENV에서 프록시 풀 파싱."""
-        import re
-        raw = (settings.youtube_proxy_url or "").strip()
-        if not raw:
-            return []
-        return [p.strip() for p in re.split(r"[,\n;]+", raw) if p.strip()]
+        """프록시 미사용 - 직접 연결(본인 IP) 사용."""
+        return []
 
     @staticmethod
     def _pick_proxy() -> Optional[str]:
@@ -186,15 +182,15 @@ class SubtitleService:
         """
         url = f"https://www.youtube.com/watch?v={video_id}"
         # yt-dlp 옵션 (메타데이터만 추출, 다운로드 안 함)
+        # format: worst = 최저화질 (거의 항상 존재). 자막만 필요하므로 실제 다운로드는 안 함
         ydl_opts = {
+            'ignoreconfig': True, 
             'quiet': True,
             'no_warnings': True,
             'extract_flat': False,  # 전체 메타데이터 추출
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web', 'mweb'],
-                },
-            },
+            "skip_download": True,   
+            # 'format': 'worst',  # strict -f 대신 항상 있는 최저화질 지정
+             "format": "bestaudio/best",
             'http_headers': {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
             },
@@ -225,7 +221,7 @@ class SubtitleService:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 # extract_info(download=False) → 자막 URL만 가져오기
                 info = ydl.extract_info(url, download=False)
-            
+            logger.info(f"[SUBTITLE] formats_count={len((info or {}).get('formats') or [])}")
             if not info:
                 return {
                     "video_id": video_id,

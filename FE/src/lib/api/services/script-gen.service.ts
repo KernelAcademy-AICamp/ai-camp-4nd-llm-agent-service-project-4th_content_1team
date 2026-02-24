@@ -29,6 +29,7 @@ export interface ReferenceArticle {
     source: string;
     date?: string;  // optional - 백엔드에서 null일 수 있음
     url: string;
+    query?: string; // 검색에 사용된 키워드
     analysis?: {
         facts: string[];
         opinions: string[];
@@ -69,7 +70,7 @@ export const executeScriptGen = async (
     return response.data;
 };
 
-// [테스트용] Intent Analyzer 단독 실행 (결과는 백엔드 터미널에 출력됨)
+// [테스트용] Intent Analyzer 단독 실행
 export interface IntentAnalysis {
     core_question: string;
     reader_pain_point: string;
@@ -87,6 +88,72 @@ export const runIntentOnly = async (
     topicRecommendationId?: string,
 ): Promise<IntentOnlyResult> => {
     const response = await api.post('/script-gen/intent', {
+        topic,
+        topic_recommendation_id: topicRecommendationId,
+    });
+    return response.data;
+};
+
+// [테스트용] Intent Analyzer → Planner 순서 실행
+export interface ContentAngle {
+    angle: string;
+    description: string;
+    hook: string;
+}
+export interface ResearchSource {
+    keyword: string;
+    how_to_use: string;
+}
+export interface ContentBrief {
+    content_angle: ContentAngle;   // 단일 앵글 (Intent Analyzer 앵글 디벨롭)
+    research_plan: {
+        sources: ResearchSource[];
+        youtube_keywords: string[];
+    };
+}
+export interface PlannerResult {
+    success: boolean;
+    message: string;
+    content_brief?: ContentBrief;
+    error?: string;
+}
+export const runPlannerOnly = async (
+    topic: string,
+    topicRecommendationId?: string,
+): Promise<PlannerResult> => {
+    const response = await api.post('/script-gen/planner', {
+        topic,
+        topic_recommendation_id: topicRecommendationId,
+    });
+    return response.data;
+};
+
+// [테스트용] Intent Analyzer → Planner → News Research 순서 실행
+export interface YoutubeVideo {
+    video_id: string;
+    title: string;
+    channel: string;
+    url: string;
+    thumbnail: string;
+    view_count: number;
+    view_velocity: number;   // 하루 평균 조회수
+    search_keyword: string;
+    published_at?: string;
+}
+
+export interface ResearchResult {
+    success: boolean;
+    message: string;
+    content_brief?: ContentBrief;
+    references?: ReferenceArticle[];
+    youtube_videos?: YoutubeVideo[];
+    error?: string;
+}
+export const runResearchOnly = async (
+    topic: string,
+    topicRecommendationId?: string,
+): Promise<ResearchResult> => {
+    const response = await api.post('/script-gen/research', {
         topic,
         topic_recommendation_id: topicRecommendationId,
     });
@@ -145,6 +212,26 @@ export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistor
 // 특정 topic_request_id로 스크립트 결과 조회
 export const getScriptById = async (topicRequestId: string): Promise<ScriptHistoryItem> => {
     const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
+    return response.data;
+};
+
+// 참고 영상 상세 분석 (자막+댓글 → 장단점, 시청자 반응, 적용 포인트)
+export interface ReferenceVideoAnalyzeResult {
+    video_id: string;
+    analysis_strengths: string[];
+    analysis_weaknesses: string[];
+    applicable_points: string[];
+    comment_insights: { reactions: string[]; needs: string[] };
+    analyzed_at: string;
+}
+export const analyzeReferenceVideo = async (
+    youtubeVideoId: string,
+    title: string = '',
+): Promise<ReferenceVideoAnalyzeResult> => {
+    const response = await api.post('/script-gen/analyze-reference-video', {
+        youtube_video_id: youtubeVideoId,
+        title: title || '제목 없음',
+    });
     return response.data;
 };
 

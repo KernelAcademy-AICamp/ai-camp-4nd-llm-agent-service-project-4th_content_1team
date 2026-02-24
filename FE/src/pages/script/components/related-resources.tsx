@@ -1,12 +1,13 @@
 "use client"
 
-import { useState, useEffect } from "react"
+import { useState, useEffect, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
-import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Check, Globe, Building2, Play, TrendingUp } from "lucide-react"
+import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Check, Globe, Building2, Play, TrendingUp, Loader2, CheckCircle2, AlertTriangle, Lightbulb } from "lucide-react"
 import { ScrollArea } from "../../../components/ui/scroll-area"
+import { analyzeReferenceVideo, type ReferenceVideoAnalyzeResult } from "../../../lib/api/services"
 
 // --- Data Types ---
 
@@ -110,10 +111,41 @@ function urlsMatch(url1?: string | null, url2?: string | null): boolean {
   }
 }
 
+type VideoAnalysisStatus = 'idle' | 'loading' | 'success' | 'error'
+interface VideoAnalysisState {
+  status: VideoAnalysisStatus
+  data?: ReferenceVideoAnalyzeResult
+  error?: string
+}
+
 export function RelatedResources({ apiReferences, youtubeVideos = [], activeCitationUrl }: RelatedResourcesProps = {}) {
   const [selectedSource, setSelectedSource] = useState<string>("all")
   const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
   const [displaySources, setDisplaySources] = useState<SourceData[]>([])
+  const [analysisMap, setAnalysisMap] = useState<Record<string, VideoAnalysisState>>({})
+  const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)
+
+  const runAnalysis = useCallback(async (video: YoutubeVideoData) => {
+    const vid = video.video_id
+    setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'loading' } }))
+    try {
+      const data = await analyzeReferenceVideo(vid, video.title)
+      setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'success', data } }))
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : '분석 실패'
+      setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'error', error: msg } }))
+    }
+  }, [])
+
+  // 영상 2개 로드되면 자동으로 분석 시작 (최초 1회만, 실패 시 버튼으로 재시도)
+  useEffect(() => {
+    const toAnalyze = youtubeVideos.slice(0, 2)
+    toAnalyze.forEach(video => {
+      const vid = video.video_id
+      const state = analysisMap[vid]
+      if (!state) runAnalysis(video)
+    })
+  }, [youtubeVideos.map(v => v.video_id).join(','), runAnalysis])
 
   // API 데이터가 있으면 변환해서 사용
   useEffect(() => {
@@ -329,7 +361,14 @@ export function RelatedResources({ apiReferences, youtubeVideos = [], activeCita
             </div>
             <div className="space-y-2">
               {youtubeVideos.map((video) => (
-                <YoutubeVideoCard key={video.video_id} video={video} />
+                <YoutubeVideoCard
+                  key={video.video_id}
+                  video={video}
+                  analysisState={analysisMap[video.video_id]}
+                  expanded={expandedVideoId === video.video_id}
+                  onToggle={() => setExpandedVideoId(prev => prev === video.video_id ? null : video.video_id)}
+                  onRetry={() => runAnalysis(video)}
+                />
               ))}
             </div>
           </div>
@@ -523,7 +562,93 @@ function ArticleCard({
   )
 }
 
-function YoutubeVideoCard({ video }: { video: YoutubeVideoData }) {
+function VideoAnalysisContent({ data }: { data: ReferenceVideoAnalyzeResult }) {
+  return (
+    <div className="mt-3 space-y-3 border-t border-border/50 pt-3">
+      {data.analysis_strengths?.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
+            <span className="text-xs font-semibold text-green-600">성공이유</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {data.analysis_strengths.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.analysis_weaknesses?.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />
+            <span className="text-xs font-semibold text-orange-600">부족한점</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {data.analysis_weaknesses.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {data.comment_insights && (data.comment_insights.reactions?.length > 0 || data.comment_insights.needs?.length > 0) && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-1.5">
+            <MessageSquare className="w-3.5 h-3.5 text-purple-500" />
+            <span className="text-xs font-semibold text-purple-600">유저 반응</span>
+          </div>
+          {data.comment_insights.reactions?.length > 0 && (
+            <div className="space-y-1 pl-5">
+              <span className="text-xs font-medium text-muted-foreground">주요 반응</span>
+              <ul className="space-y-1">
+                {data.comment_insights.reactions.map((item, idx) => (
+                  <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {data.comment_insights.needs?.length > 0 && (
+            <div className="space-y-1 pl-5">
+              <span className="text-xs font-medium text-muted-foreground">시청자가 원하는 콘텐츠</span>
+              <ul className="space-y-1">
+                {data.comment_insights.needs.map((item, idx) => (
+                  <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+      {data.applicable_points?.length > 0 && (
+        <div className="space-y-1.5">
+          <div className="flex items-center gap-1.5">
+            <Lightbulb className="w-3.5 h-3.5 text-blue-500" />
+            <span className="text-xs font-semibold text-blue-600">내 채널에 적용할 포인트</span>
+          </div>
+          <ul className="space-y-1 pl-5">
+            {data.applicable_points.map((item, idx) => (
+              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function YoutubeVideoCard({
+  video,
+  analysisState,
+  expanded,
+  onToggle,
+  onRetry,
+}: {
+  video: YoutubeVideoData
+  analysisState?: VideoAnalysisState
+  expanded: boolean
+  onToggle: () => void
+  onRetry: () => void
+}) {
   const formatViews = (n: number) => {
     if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}억`
     if (n >= 10_000) return `${(n / 10_000).toFixed(1)}만`
@@ -536,51 +661,74 @@ function YoutubeVideoCard({ video }: { video: YoutubeVideoData }) {
     return `${Math.round(v)}/일`
   }
 
-  return (
-    <a
-      href={video.url}
-      target="_blank"
-      rel="noopener noreferrer"
-      className="flex gap-3 p-2.5 rounded-lg bg-muted/30 hover:bg-muted/50 border border-transparent hover:border-border/50 transition-colors group"
-    >
-      {/* 썸네일 */}
-      <div className="relative flex-shrink-0 w-28 h-16 rounded-md overflow-hidden bg-muted">
-        <img
-          src={video.thumbnail}
-          alt={video.title}
-          className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-          onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-        />
-        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
-          <Play className="w-6 h-6 text-white fill-white" />
-        </div>
-      </div>
+  const status = analysisState?.status ?? 'idle'
 
-      {/* 정보 */}
-      <div className="flex-1 min-w-0 flex flex-col justify-between">
-        <div>
-          {video.search_keyword && (
-            <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 font-medium mb-1">
-              🔍 {video.search_keyword}
+  return (
+    <div className="rounded-lg bg-muted/30 border border-transparent hover:border-border/50 transition-colors overflow-hidden">
+      <a
+        href={video.url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex gap-3 p-2.5 group"
+      >
+        <div className="relative flex-shrink-0 w-28 h-16 rounded-md overflow-hidden bg-muted">
+          <img
+            src={video.thumbnail}
+            alt={video.title}
+            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+          />
+          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
+            <Play className="w-6 h-6 text-white fill-white" />
+          </div>
+        </div>
+        <div className="flex-1 min-w-0 flex flex-col justify-between">
+          <div>
+            {video.search_keyword && (
+              <span className="inline-flex gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 font-medium mb-1">
+                🔍 {video.search_keyword}
+              </span>
+            )}
+            <p className="text-xs font-medium text-foreground line-clamp-2 leading-snug">
+              {video.title}
+            </p>
+          </div>
+          <div className="flex items-center gap-2 mt-1">
+            <span className="text-[10px] text-muted-foreground truncate">{video.channel}</span>
+            <span className="text-[10px] text-muted-foreground">·</span>
+            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
+              <Eye className="w-2.5 h-2.5" /> {formatViews(video.view_count)}
             </span>
-          )}
-          <p className="text-xs font-medium text-foreground line-clamp-2 leading-snug">
-            {video.title}
-          </p>
+            <span className="text-[10px] text-muted-foreground">·</span>
+            <span className="text-[10px] text-green-600 flex items-center gap-0.5 font-medium">
+              <TrendingUp className="w-2.5 h-2.5" /> {formatVelocity(video.view_velocity)}
+            </span>
+          </div>
         </div>
-        <div className="flex items-center gap-2 mt-1">
-          <span className="text-[10px] text-muted-foreground truncate">{video.channel}</span>
-          <span className="text-[10px] text-muted-foreground">·</span>
-          <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-            <Eye className="w-2.5 h-2.5" /> {formatViews(video.view_count)}
-          </span>
-          <span className="text-[10px] text-muted-foreground">·</span>
-          <span className="text-[10px] text-green-600 flex items-center gap-0.5 font-medium">
-            <TrendingUp className="w-2.5 h-2.5" /> {formatVelocity(video.view_velocity)}
-          </span>
-        </div>
+      </a>
+
+      <div className="px-2.5 pb-2.5">
+        <Button
+          variant="outline"
+          size="sm"
+          className="w-full h-8 text-xs gap-1.5"
+          onClick={() => {
+            if (status === 'error' || status === 'idle') onRetry()
+            else if (status === 'success') onToggle()
+          }}
+          disabled={status === 'loading'}
+        >
+          {status === 'loading' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+          {status === 'loading' && <span>분석 중...</span>}
+          {status === 'success' && <span>{expanded ? '분석 결과 접기' : '상세분석 보기'}</span>}
+          {status === 'error' && <span>다시 시도</span>}
+          {status === 'idle' && <span>상세분석 보기</span>}
+        </Button>
+        {expanded && status === 'success' && analysisState?.data && (
+          <VideoAnalysisContent data={analysisState.data} />
+        )}
       </div>
-    </a>
+    </div>
   )
 }
 

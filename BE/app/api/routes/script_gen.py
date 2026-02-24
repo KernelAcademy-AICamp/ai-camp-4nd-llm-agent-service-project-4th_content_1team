@@ -444,6 +444,49 @@ async def run_research(
 
 
 # =============================================================================
+# 참고 영상 분석
+# =============================================================================
+
+from pydantic import BaseModel, Field
+from app.services.competitor_channel_service import CompetitorChannelService
+from app.schemas.competitor_channel import RecentVideoAnalyzeResponse
+
+
+class AnalyzeReferenceVideoRequest(BaseModel):
+    """참고 영상 분석 요청"""
+    youtube_video_id: str = Field(..., description="YouTube 영상 ID")
+    title: str = Field("", description="영상 제목 (선택)")
+
+
+@router.post("/analyze-reference-video", response_model=RecentVideoAnalyzeResponse)
+async def analyze_reference_video(
+    request: AnalyzeReferenceVideoRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    참고 영상 AI 분석 (자막 + 댓글 → 장단점, 시청자 반응, 적용 포인트).
+    경쟁 유튜버 분석과 동일한 출력 형식.
+    """
+    try:
+        result = await CompetitorChannelService.analyze_reference_video(
+            db=db,
+            youtube_video_id=request.youtube_video_id,
+            title=request.title or "제목 없음",
+            user_id=current_user.id,
+        )
+        return result
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"참고 영상 분석 실패: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"영상 분석 실패: {str(e)}",
+        )
+
+
+# =============================================================================
 # Test Endpoint: Intent Analyzer Only
 # =============================================================================
 
