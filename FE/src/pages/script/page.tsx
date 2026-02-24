@@ -1,6 +1,6 @@
 "use client"
 
-import { Suspense, useState, useEffect } from "react"
+import { Suspense, useState, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
@@ -21,8 +21,8 @@ function ScriptPageContent() {
   const [citations, setCitations] = useState<Citation[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
 
-  // 자동 생성 트리거 방지 플래그
-  const [autoGenTriggered, setAutoGenTriggered] = useState(false)
+  // 자동 생성 트리거 방지 플래그 (useRef: 동기적 즉시 반영 → StrictMode 중복 방지)
+  const autoGenRef = useRef(false)
 
   // 페이지 로드 시 DB에서 이전 결과 불러오기 → 없으면 자동 생성
   useEffect(() => {
@@ -59,9 +59,9 @@ function ScriptPageContent() {
       }
 
       // DB에 이전 결과가 없으면 자동으로 스크립트 + 참고자료 생성
-      if (!hasExistingData && !autoGenTriggered) {
+      if (!hasExistingData && !autoGenRef.current) {
         console.log("[FE] 이전 결과 없음 → 자동 생성 시작")
-        setAutoGenTriggered(true)
+        autoGenRef.current = true
         handleGenerate()
       }
     }
