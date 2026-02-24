@@ -80,40 +80,29 @@ class ScriptGenStartResponse(BaseModel):
 # Content Brief Response (Planner 출력)
 # =============================================================================
 
-class TitleCandidate(BaseModel):
-    """제목 후보"""
-    title: str
+class ContentAngle(BaseModel):
+    """콘텐츠 앵글"""
     angle: str
+    description: str
+    hook: str
 
 
-class Chapter(BaseModel):
-    """챕터"""
-    id: str
-    goal: str
-    expectedAssets: List[str]
-
-
-class Narrative(BaseModel):
-    """내러티브 구조"""
-    hookGoal: str
-    structure: List[str]
-    chapters: List[Chapter]
+class ResearchSource(BaseModel):
+    """리서치 소스 항목"""
+    keyword: str
+    how_to_use: str
 
 
 class ResearchPlan(BaseModel):
-    """리서치 계획"""
-    newsQuery: List[str]
-    competitorQuery: List[str]
-    freshnessDays: int
+    """리서치 플랜"""
+    sources: List[ResearchSource]
+    youtube_keywords: List[str]
 
 
 class ContentBriefResponse(BaseModel):
     """콘텐츠 기획안 (Planner 출력)"""
-    
-    workingTitleCandidates: List[TitleCandidate]
-    coreQuestions: List[str]
-    narrative: Narrative
-    researchPlan: ResearchPlan
+    content_angle: ContentAngle   # 단일 앵글 (Intent Analyzer 앵글을 디벨롭)
+    research_plan: ResearchPlan
 
 
 class ScriptGenPlannerResponse(BaseModel):

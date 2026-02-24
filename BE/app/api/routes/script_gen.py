@@ -27,8 +27,7 @@ from src.script_gen.utils.input_builder import (
     build_planner_input,
     PlannerInputBuildError,
 )
-from src.script_gen.nodes.planner import planner_node
-from src.script_gen.graph import generate_script  # Import generate_script
+from src.script_gen.graph import generate_script
 
 logger = logging.getLogger(__name__)
 
@@ -297,7 +296,7 @@ async def run_planner(
     """
     
     try:
-        # 1. Planner 입력 생성 (Redis SharedState에서 채널/페르소나 캐시 조회)
+        # 1. Planner 입력 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
@@ -305,39 +304,35 @@ async def run_planner(
             topic_recommendation_id=request.topic_recommendation_id,
         )
 
-        logger.info(f"Running planner for topic: {request.topic}")
-        
-        # 2. Planner 노드 실행
-        # State 구성 (Planner가 필요로 하는 최소 state)
-        # topic_context를 channel_profile에 병합
-        channel_profile_with_context = planner_input["channel_profile"].copy()
+        # 2. topic_context를 channel_profile에 병합
+        channel_profile = planner_input["channel_profile"].copy()
         if planner_input.get("topic_context"):
-            channel_profile_with_context["topic_context"] = planner_input["topic_context"]
-        
-        state = {
-            "topic": planner_input["topic"],
-            "channel_profile": channel_profile_with_context,
-            "trend_analysis": None,  # Trend Scout 없이 실행
-        }
-        
-        # Planner 실행
-        result = planner_node(state)
-        
-        logger.info("Planner execution completed successfully")
-        
+            channel_profile["topic_context"] = planner_input["topic_context"]
+
+        logger.info(f"[Planner] intent_analyzer → planner 실행: {request.topic!r}")
+
+        # 3. intent_analyzer → planner 파이프라인 실행
+        result = await generate_script(
+            topic=planner_input["topic"],
+            channel_profile=channel_profile,
+            planner_only=True,
+        )
+
+        logger.info("[Planner] 완료")
+
         return ScriptGenPlannerResponse(
             success=True,
             message="콘텐츠 기획안이 생성되었습니다.",
             content_brief=result.get("content_brief"),
             error=None,
         )
-    
+
     except PlannerInputBuildError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
         )
-    
+
     except Exception as e:
         logger.error(f"Error in run_planner: {e}", exc_info=True)
         return ScriptGenPlannerResponse(

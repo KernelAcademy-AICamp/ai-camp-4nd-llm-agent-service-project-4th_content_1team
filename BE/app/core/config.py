@@ -66,6 +66,9 @@ class Settings(BaseSettings):
 
     # Nano Banana API (for image generation)
     nano_banana_api_key: Optional[str] = None
+
+    # Redis (Celery broker 겸 SharedState 캐시)
+    redis_url: str = "redis://localhost:6379/0"
     
     @property
     def cors_origins_list(self) -> list[str]:

@@ -82,24 +82,23 @@ class ScriptGenState(TypedDict, total=False):
     # ==========================================================================
     content_brief: Dict[str, Any]
     """
-    콘텐츠 기획안
-    
-    Planner가 영상 유형 → 구조 설계 → 키워드 역산 순서로 생성.
-    
+    콘텐츠 기획안 (Planner 출력)
+
     구조:
-        - videoType: 영상 유형 (비교형/정보형/주장형/리뷰형/전망형/복합형)
-        - workingTitleCandidates: 제목 후보 (3-5개)
-        - coreQuestions: 핵심 질문
-        - narrative: 내러티브 구조
-            - hookGoal: 훅 전략
-            - structure: 구조
-            - chapters: 챕터 리스트 (정확히 5개)
-        - researchPlan: 리서치 계획
-            - newsQuery: 뉴스 검색 키워드 (6개 이상)
-                ※ 챕터 구조에서 역산하여 생성됨 (제목 단어 추출 아님)
-                ※ news_research_node가 이 키워드를 직접 사용함
-            - competitorQuery: 경쟁사 검색 키워드 (4개 이상)
-            - freshnessDays: 신선도 기준 (7-365일)
+        - content_angles: 콘텐츠 앵글 3개
+            - angle: 앵글 이름 (예: "반박형 - 예상을 뒤집는 관점")
+            - description: 앵글 설명
+            - hook: 훅 문장
+        - research_plan: 리서치 플랜
+            - sources: 소스 목록 (최소 5개)
+                - keyword: 검색 키워드
+                - source_type: 소스 유형 (뉴스 기사 / 통계·보고서 / 공식 발표 / 커뮤니티 반응 / 사례 연구 / 학술·전문 자료)
+                - how_to_use: 영상에서 활용 방법
+            - youtube_keywords: 유사 유튜브 영상 검색 키워드 2개
+
+    파생 필드 (downstream 호환용 — Planner가 자동 생성):
+        - researchPlan.newsQuery: sources[].keyword 추출 → news_research_node 사용
+        - search_queries: youtube_keywords → yt_fetcher_node 사용
     """
     
     # ==========================================================================
