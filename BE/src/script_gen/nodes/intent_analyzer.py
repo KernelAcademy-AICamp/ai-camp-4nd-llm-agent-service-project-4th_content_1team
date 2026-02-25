@@ -11,7 +11,7 @@ import re
 
 logger = logging.getLogger(__name__)
 
-OPENAI_MODEL = "gpt-4o-mini"
+OPENAI_MODEL = "gpt-4o"
 
 SYSTEM_PROMPT = """당신은 콘텐츠 전략가입니다.
 주어진 유튜브 주제에 대해 시청자의 실제 의도를 분석하고,
@@ -59,7 +59,7 @@ async def intent_node(state: Dict[str, Any]) -> Dict[str, Any]:
         logger.warning("[IntentAnalyzer] topic이 없어 분석을 건너뜁니다.")
         return {"intent_analysis": {}}
 
-    print(f'[IntentAnalyzer] 주제: "{topic}"', flush=True)
+    logger.info(f'[IntentAnalyzer] 주제: "{topic}"')
 
     user_prompt = f'주제: "{topic}" → 위 형식의 JSON을 반환하세요.'
 
@@ -112,20 +112,17 @@ def _log_result(topic: str, result: Dict[str, Any]) -> None:
     sub_topics = result.get("sub_topics", [])
 
     lines = [
-        f'[IntentAnalyzer] 결과:',
-        f'  core_question    : {result.get("core_question", "-")}',
-        f'  reader_pain_point: {result.get("reader_pain_point", "-")}',
-        f'  reader_desire    : {result.get("reader_desire", "-")}',
-        f'  intent_mix       : informational={intent_mix.get("informational", 0)} / '
-        f'emotional={intent_mix.get("emotional", 0)} / '
-        f'actionable={intent_mix.get("actionable", 0)}',
-        f'  content_angle    : {result.get("content_angle", "-")}',
-        f'  sub_topics       :',
+        "[IntentAnalyzer] 결과:",
+        f"  core_question    : {result.get('core_question', '-')}",
+        f"  reader_pain_point: {result.get('reader_pain_point', '-')}",
+        f"  reader_desire    : {result.get('reader_desire', '-')}",
+        f"  intent_mix       : informational={intent_mix.get('informational', 0)} / "
+        f"emotional={intent_mix.get('emotional', 0)} / actionable={intent_mix.get('actionable', 0)}",
+        f"  content_angle    : {result.get('content_angle', '-')}",
+        "  sub_topics       :",
     ]
     for idx, st in enumerate(sub_topics, 1):
         lines.append(
-            f'    {idx}. [{st.get("topic", "")}] — {st.get("reason", "")} '
-            f'(hint: {st.get("search_hint", "")})'
+            f"    {idx}. [{st.get('topic', '')}] — {st.get('reason', '')} (hint: {st.get('search_hint', '')})"
         )
-
-    print("\n".join(lines), flush=True)
+    logger.info("\n".join(lines))

@@ -1,19 +1,25 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
-import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Check, Globe, Building2, Play, TrendingUp, Loader2, CheckCircle2, AlertTriangle, Lightbulb } from "lucide-react"
+import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Lightbulb, Globe, Building2 } from "lucide-react"
 import { ScrollArea } from "../../../components/ui/scroll-area"
-import { analyzeReferenceVideo, type ReferenceVideoAnalyzeResult } from "../../../lib/api/services"
 
 // --- Data Types ---
+
+interface ArticleImage {
+  url: string
+  caption?: string
+  is_chart?: boolean
+}
 
 interface AnalysisData {
   facts: string[]
   opinions: string[]
+  key_points?: string[]
 }
 
 interface ArticleData {
@@ -23,6 +29,7 @@ interface ArticleData {
   summary_short: string
   url: string
   analysis?: AnalysisData
+  images?: ArticleImage[]
   sourceName?: string
   sourceIcon?: string
   searchKeyword?: string
@@ -64,18 +71,6 @@ const getSourceIcon = (icon: string) => {
 
 // --- Main Component ---
 
-interface YoutubeVideoData {
-  video_id: string;
-  title: string;
-  channel: string;
-  url: string;
-  thumbnail: string;
-  view_count: number;
-  view_velocity: number;
-  search_keyword: string;
-  published_at?: string;
-}
-
 interface RelatedResourcesProps {
   apiReferences?: Array<{
     title: string;
@@ -87,6 +82,7 @@ interface RelatedResourcesProps {
     analysis?: {
       facts: string[];
       opinions: string[];
+      key_points?: string[];
     };
     images?: Array<{
       url: string;
@@ -94,7 +90,6 @@ interface RelatedResourcesProps {
       is_chart?: boolean;
     }>;
   }>;
-  youtubeVideos?: YoutubeVideoData[];
   activeCitationUrl?: string | null;
 }
 
@@ -106,48 +101,15 @@ function urlsMatch(url1?: string | null, url2?: string | null): boolean {
     const u2 = new URL(url2)
     return u1.origin + u1.pathname === u2.origin + u2.pathname
   } catch {
-    // URL 파싱 실패 시 문자열 포함 비교
     return url1.includes(url2) || url2.includes(url1)
   }
 }
 
-type VideoAnalysisStatus = 'idle' | 'loading' | 'success' | 'error'
-interface VideoAnalysisState {
-  status: VideoAnalysisStatus
-  data?: ReferenceVideoAnalyzeResult
-  error?: string
-}
-
-export function RelatedResources({ apiReferences, youtubeVideos = [], activeCitationUrl }: RelatedResourcesProps = {}) {
+export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedResourcesProps = {}) {
   const [selectedSource, setSelectedSource] = useState<string>("all")
   const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
   const [displaySources, setDisplaySources] = useState<SourceData[]>([])
-  const [analysisMap, setAnalysisMap] = useState<Record<string, VideoAnalysisState>>({})
-  const [expandedVideoId, setExpandedVideoId] = useState<string | null>(null)
 
-  const runAnalysis = useCallback(async (video: YoutubeVideoData) => {
-    const vid = video.video_id
-    setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'loading' } }))
-    try {
-      const data = await analyzeReferenceVideo(vid, video.title)
-      setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'success', data } }))
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : '분석 실패'
-      setAnalysisMap(prev => ({ ...prev, [vid]: { status: 'error', error: msg } }))
-    }
-  }, [])
-
-  // 영상 2개 로드되면 자동으로 분석 시작 (최초 1회만, 실패 시 버튼으로 재시도)
-  useEffect(() => {
-    const toAnalyze = youtubeVideos.slice(0, 2)
-    toAnalyze.forEach(video => {
-      const vid = video.video_id
-      const state = analysisMap[vid]
-      if (!state) runAnalysis(video)
-    })
-  }, [youtubeVideos.map(v => v.video_id).join(','), runAnalysis])
-
-  // API 데이터가 있으면 변환해서 사용
   useEffect(() => {
     if (apiReferences && apiReferences.length > 0) {
       const grouped: Record<string, { articles: ArticleData[], images: ImageData[] }> = {};
@@ -158,7 +120,7 @@ export function RelatedResources({ apiReferences, youtubeVideos = [], activeCita
           grouped[sourceName] = { articles: [], images: [] };
         }
 
-        // Article 추가
+        // Article에 images, key_points 포함
         grouped[sourceName].articles.push({
           id: idx,
           title: ref.title,
@@ -166,18 +128,19 @@ export function RelatedResources({ apiReferences, youtubeVideos = [], activeCita
           summary_short: ref.summary,
           url: ref.url,
           searchKeyword: ref.query,
-          // 백엔드에서 온 analysis(facts, opinions)를 연동
-          analysis: ref.analysis || { facts: [], opinions: [] }
+          analysis: ref.analysis || { facts: [], opinions: [], key_points: [] },
+          // 기사 이미지를 ArticleData에도 보존 (팝업용)
+          images: ref.images || [],
         });
 
-        // Images 추가
+        // Images 탭용 (소스별 이미지 목록)
         if (ref.images && Array.isArray(ref.images)) {
           ref.images.forEach((img, imgIdx) => {
             grouped[sourceName].images.push({
-              id: idx * 100 + imgIdx, // 고유 ID 생성
+              id: idx * 100 + imgIdx,
               title: img.caption || ref.title,
               type: img.is_chart ? "Chart" : "Scene",
-              thumbnail: img.url, // 백엔드의 url을 UI의 thumbnail로 매핑
+              thumbnail: img.url,
             });
           });
         }
@@ -214,7 +177,6 @@ export function RelatedResources({ apiReferences, youtubeVideos = [], activeCita
         </CardHeader>
         <CardContent className="flex-1 min-h-0 flex flex-col">
           {displaySources.length === 0 ? (
-            // Empty State
             <div className="h-full flex items-center justify-center">
               <div className="text-center space-y-3 p-8">
                 <div className="text-4xl">📰</div>
@@ -351,132 +313,213 @@ export function RelatedResources({ apiReferences, youtubeVideos = [], activeCita
               </Tabs>
             </>
           )}
-        {/* YouTube 영상 섹션 */}
-        {youtubeVideos.length > 0 && (
-          <div className="mt-4 flex-shrink-0">
-            <div className="flex items-center gap-2 mb-3">
-              <Play className="w-4 h-4 text-red-500" />
-              <span className="text-sm font-semibold text-foreground">YouTube 참고 영상</span>
-              <Badge variant="outline" className="text-[10px]">{youtubeVideos.length}개</Badge>
-            </div>
-            <div className="space-y-2">
-              {youtubeVideos.map((video) => (
-                <YoutubeVideoCard
-                  key={video.video_id}
-                  video={video}
-                  analysisState={analysisMap[video.video_id]}
-                  expanded={expandedVideoId === video.video_id}
-                  onToggle={() => setExpandedVideoId(prev => prev === video.video_id ? null : video.video_id)}
-                  onRetry={() => runAnalysis(video)}
-                />
-              ))}
-            </div>
-          </div>
-        )}
         </CardContent>
       </Card>
 
-      {/* --- Detail View Overlay (Modal) --- */}
+      {/* --- Detail View Modal --- */}
       {selectedArticle && (
-        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <Card className="w-full max-w-lg h-full max-h-[600px] flex flex-col shadow-2xl border-primary/20 bg-card">
-            <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2 border-b">
-              <div className="space-y-1 pr-4">
-                <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1">
-                  <Badge variant="outline" className="text-[10px]">{selectedArticle.sourceName || "News"}</Badge>
-                  <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {selectedArticle.date}</span>
-                </div>
-                <CardTitle className="text-base font-bold leading-tight">
-                  <a href={selectedArticle.url} target="_blank" rel="noreferrer" className="hover:underline hover:text-primary transition-colors flex items-center gap-1">
-                    {selectedArticle.title}
-                    <ExternalLink className="w-3 h-3 opacity-50" />
-                  </a>
-                </CardTitle>
-              </div>
-              <Button size="icon" variant="ghost" className="h-6 w-6 -mr-2" onClick={() => setSelectedArticle(null)}>
-                <X className="w-4 h-4" />
-              </Button>
-            </CardHeader>
-            <CardContent className="flex-1 overflow-hidden p-0">
-              <ScrollArea className="h-full p-4">
-                {/* Summary Short */}
-                <div className="mb-6 bg-muted/30 p-3 rounded-md border border-border/50">
-                  <h4 className="text-xs font-semibold text-muted-foreground mb-1">핵심 요약</h4>
-                  <p className="text-sm font-medium leading-relaxed">{selectedArticle.summary_short}</p>
-                </div>
-
-                {/* 2-Column Analysis */}
-                <div className="grid grid-cols-1 gap-4">
-                  {/* Facts Column */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-blue-500 font-semibold text-sm border-b pb-1 border-blue-500/20">
-                      <Target className="w-4 h-4" />
-                      <span>팩트 (Facts)</span>
-                    </div>
-                    <div className="bg-blue-500/5 rounded-md p-3 space-y-2">
-                      {selectedArticle.analysis?.facts && selectedArticle.analysis.facts.length > 0 ? (
-                        selectedArticle.analysis.facts.map((fact, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
-                            <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
-                            <span className="leading-snug">{fact}</span>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-xs text-muted-foreground">추출된 팩트가 없습니다.</p>
-                      )}
-                    </div>
-                  </div>
-
-                  {/* Opinions Column */}
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2 text-amber-500 font-semibold text-sm border-b pb-1 border-amber-500/20">
-                      <MessageSquare className="w-4 h-4" />
-                      <span>전망 및 해석 (Insights)</span>
-                    </div>
-                    <div className="bg-amber-500/5 rounded-md p-3 space-y-2">
-                      {selectedArticle.analysis?.opinions && selectedArticle.analysis.opinions.length > 0 ? (
-                        selectedArticle.analysis.opinions.slice(0, 5).map((op, idx) => (
-                          <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
-                            <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
-                            <span className="leading-snug">
-                              {/* 태그 강조 (간단한 파싱) */}
-                              {op.startsWith('[') && op.includes(']') ? (
-                                <>
-                                  <span className="font-bold text-amber-600 mr-1">{op.split(']')[0] + ']'}</span>
-                                  {op.split(']').slice(1).join(']')}
-                                </>
-                              ) : (
-                                op
-                              )}
-                            </span>
-                          </div>
-                        ))
-                      ) : (
-                        <p className="text-xs text-muted-foreground">관련 전문가 의견이나 분석이 없습니다.</p>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </ScrollArea>
-            </CardContent>
-
-            {/* Footer Actions */}
-            <div className="p-3 border-t bg-muted/20 flex gap-2 justify-end">
-              <Button variant="outline" size="sm" className="h-8 text-xs gap-1">
-                <Copy className="w-3 h-3" />
-                팩트 복사
-              </Button>
-              <Button variant="default" size="sm" className="h-8 text-xs gap-1 bg-blue-600 hover:bg-blue-700">
-                <Check className="w-3 h-3" />
-                대본 반영
-              </Button>
-            </div>
-          </Card>
-        </div>
+        <ArticleDetailModal
+          article={selectedArticle}
+          onClose={() => setSelectedArticle(null)}
+        />
       )}
     </div>
   )
 }
+
+// --- Article Detail Modal ---
+
+function ArticleDetailModal({
+  article,
+  onClose,
+}: {
+  article: ArticleData
+  onClose: () => void
+}) {
+  const keyPoints = article.analysis?.key_points ?? []
+  const facts = article.analysis?.facts ?? []
+  const opinions = article.analysis?.opinions ?? []
+  const images = (article.images ?? []).filter(
+    img => img.url && (img.url.startsWith("data:image") || img.url.startsWith("http") || img.url.startsWith("/"))
+  )
+  const charts = images.filter(img => img.is_chart)
+  const photos = images.filter(img => !img.is_chart)
+
+  const handleCopyFacts = () => {
+    const text = facts.map((f, i) => `${i + 1}. ${f}`).join("\n")
+    navigator.clipboard.writeText(text).catch(() => {})
+  }
+
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+      <Card className="w-full max-w-lg h-full max-h-[680px] flex flex-col shadow-2xl border-primary/20 bg-card">
+        {/* Header */}
+        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2 border-b flex-shrink-0">
+          <div className="space-y-1 pr-4">
+            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 flex-wrap">
+              <Badge variant="outline" className="text-[10px]">{article.sourceName || "News"}</Badge>
+              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {article.date}</span>
+              {article.searchKeyword && (
+                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                  🔍 {article.searchKeyword}
+                </span>
+              )}
+            </div>
+            <CardTitle className="text-base font-bold leading-tight">
+              <a href={article.url} target="_blank" rel="noreferrer" className="hover:underline hover:text-primary transition-colors flex items-center gap-1">
+                {article.title}
+                <ExternalLink className="w-3 h-3 opacity-50 flex-shrink-0" />
+              </a>
+            </CardTitle>
+          </div>
+          <Button size="icon" variant="ghost" className="h-6 w-6 -mr-2 flex-shrink-0" onClick={onClose}>
+            <X className="w-4 h-4" />
+          </Button>
+        </CardHeader>
+
+        {/* Scrollable Body */}
+        <CardContent className="flex-1 overflow-hidden p-0">
+          <ScrollArea className="h-full p-4">
+            <div className="space-y-5">
+
+              {/* 핵심 요약 */}
+              <div className="bg-muted/30 p-3 rounded-md border border-border/50">
+                <h4 className="text-xs font-semibold text-muted-foreground mb-1">핵심 요약</h4>
+                <p className="text-sm font-medium leading-relaxed">{article.summary_short}</p>
+              </div>
+
+              {/* 이미지 & 차트 (있을 때만) */}
+              {images.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    <ImageIcon className="w-3.5 h-3.5" />
+                    기사 이미지 / 차트 ({images.length})
+                  </h4>
+                  <div className="grid grid-cols-3 gap-2">
+                    {images.slice(0, 6).map((img, idx) => (
+                      <div key={idx} className="relative aspect-video rounded-md overflow-hidden bg-muted/40 group cursor-pointer">
+                        <img
+                          src={img.url}
+                          alt={img.caption || `이미지 ${idx + 1}`}
+                          className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                          onError={(e) => {
+                            (e.target as HTMLImageElement).style.display = "none"
+                          }}
+                        />
+                        {img.is_chart && (
+                          <div className="absolute top-1 left-1">
+                            <Badge className="text-[9px] px-1 py-0 bg-emerald-500/90 text-white">차트</Badge>
+                          </div>
+                        )}
+                        {img.caption && (
+                          <div className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1">
+                            <p className="text-[10px] text-foreground leading-tight line-clamp-2">{img.caption}</p>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {images.length > 6 && (
+                    <p className="text-[10px] text-muted-foreground text-right">+{images.length - 6}개 더 있음</p>
+                  )}
+                </div>
+              )}
+
+              {/* 핵심 포인트 (Key Points) */}
+              {keyPoints.length > 0 && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-violet-500 font-semibold text-sm border-b pb-1 border-violet-500/20">
+                    <Lightbulb className="w-4 h-4" />
+                    <span>핵심 포인트</span>
+                  </div>
+                  <div className="bg-violet-500/5 rounded-md p-3 space-y-2">
+                    {keyPoints.map((point, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-600 text-[10px] font-bold flex items-center justify-center mt-0.5">
+                          {idx + 1}
+                        </span>
+                        <span className="leading-snug">{point}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* 팩트 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-blue-500 font-semibold text-sm border-b pb-1 border-blue-500/20">
+                  <Target className="w-4 h-4" />
+                  <span>팩트 (Facts)</span>
+                </div>
+                <div className="bg-blue-500/5 rounded-md p-3 space-y-2">
+                  {facts.length > 0 ? (
+                    facts.map((fact, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
+                        <span className="leading-snug">{fact}</span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-foreground">추출된 팩트가 없습니다.</p>
+                  )}
+                </div>
+              </div>
+
+              {/* 전망 및 해석 */}
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-amber-500 font-semibold text-sm border-b pb-1 border-amber-500/20">
+                  <MessageSquare className="w-4 h-4" />
+                  <span>전망 및 해석 (Insights)</span>
+                </div>
+                <div className="bg-amber-500/5 rounded-md p-3 space-y-2">
+                  {opinions.length > 0 ? (
+                    opinions.slice(0, 5).map((op, idx) => (
+                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
+                        <span className="leading-snug">
+                          {op.startsWith('[') && op.includes(']') ? (
+                            <>
+                              <span className="font-bold text-amber-600 mr-1">{op.split(']')[0] + ']'}</span>
+                              {op.split(']').slice(1).join(']')}
+                            </>
+                          ) : (
+                            op
+                          )}
+                        </span>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-xs text-muted-foreground">관련 전문가 의견이나 분석이 없습니다.</p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+          </ScrollArea>
+        </CardContent>
+
+        {/* Footer */}
+        <div className="p-3 border-t bg-muted/20 flex gap-2 justify-end flex-shrink-0">
+          <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={handleCopyFacts}>
+            <Copy className="w-3 h-3" />
+            팩트 복사
+          </Button>
+          <Button
+            variant="default"
+            size="sm"
+            className="h-8 text-xs gap-1"
+            onClick={() => window.open(article.url, "_blank", "noopener,noreferrer")}
+          >
+            <ExternalLink className="w-3 h-3" />
+            원문 보기
+          </Button>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
+// --- Article Card ---
 
 function ArticleCard({
   article,
@@ -489,6 +532,10 @@ function ArticleCard({
   isHighlighted?: boolean
   onViewDetail?: () => void
 }) {
+  const hasAnalysis = (article.analysis?.facts?.length ?? 0) > 0 ||
+    (article.analysis?.key_points?.length ?? 0) > 0
+  const imageCount = article.images?.length ?? 0
+
   return (
     <div
       className={`block p-3 rounded-lg transition-colors group relative ${isHighlighted
@@ -496,13 +543,11 @@ function ArticleCard({
         : "bg-muted/30 hover:bg-muted/50 border border-transparent hover:border-border/50"
         }`}
     >
-      {article.searchKeyword && (
-        <div className="mb-1.5">
-          <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-            🔍 {article.searchKeyword}
-          </span>
-        </div>
-      )}
+      <div className="mb-1.5">
+        <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+          🔍 검색 키워드: {article.searchKeyword || "미상"}
+        </span>
+      </div>
       <div className="flex items-start justify-between gap-2">
         <h4
           className="font-medium text-sm text-foreground group-hover:text-primary transition-colors line-clamp-1 cursor-pointer"
@@ -525,12 +570,28 @@ function ArticleCard({
         )}
       </div>
 
-      {/* Short Summary instead of excerpt */}
       <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2 leading-relaxed">
         {article.summary_short}
       </p>
 
-      <div className="flex items-center justify-between mt-3">
+      {/* 분석 뱃지 */}
+      {(hasAnalysis || imageCount > 0) && (
+        <div className="flex items-center gap-1.5 mt-2">
+          {hasAnalysis && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-500/10 text-blue-600 font-medium">
+              분석 완료
+            </span>
+          )}
+          {imageCount > 0 && (
+            <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-emerald-500/10 text-emerald-600 font-medium flex items-center gap-0.5">
+              <ImageIcon className="w-2.5 h-2.5" />
+              이미지 {imageCount}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div className="flex items-center justify-between mt-2">
         <div className="flex items-center gap-2 text-xs text-muted-foreground">
           {showSource && article.sourceName && (
             <>
@@ -544,11 +605,10 @@ function ArticleCard({
           </div>
         </div>
 
-        {/* View Details Button */}
         <Button
           variant="secondary"
           size="sm"
-          className="h-6 text-[10px] px-2 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-6 text-[10px] px-2"
           onClick={(e) => {
             e.stopPropagation()
             onViewDetail?.()
@@ -562,176 +622,6 @@ function ArticleCard({
   )
 }
 
-function VideoAnalysisContent({ data }: { data: ReferenceVideoAnalyzeResult }) {
-  return (
-    <div className="mt-3 space-y-3 border-t border-border/50 pt-3">
-      {data.analysis_strengths?.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5 text-green-500" />
-            <span className="text-xs font-semibold text-green-600">성공이유</span>
-          </div>
-          <ul className="space-y-1 pl-5">
-            {data.analysis_strengths.map((item, idx) => (
-              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {data.analysis_weaknesses?.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5 text-orange-500" />
-            <span className="text-xs font-semibold text-orange-600">부족한점</span>
-          </div>
-          <ul className="space-y-1 pl-5">
-            {data.analysis_weaknesses.map((item, idx) => (
-              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-      {data.comment_insights && (data.comment_insights.reactions?.length > 0 || data.comment_insights.needs?.length > 0) && (
-        <div className="space-y-2">
-          <div className="flex items-center gap-1.5">
-            <MessageSquare className="w-3.5 h-3.5 text-purple-500" />
-            <span className="text-xs font-semibold text-purple-600">유저 반응</span>
-          </div>
-          {data.comment_insights.reactions?.length > 0 && (
-            <div className="space-y-1 pl-5">
-              <span className="text-xs font-medium text-muted-foreground">주요 반응</span>
-              <ul className="space-y-1">
-                {data.comment_insights.reactions.map((item, idx) => (
-                  <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {data.comment_insights.needs?.length > 0 && (
-            <div className="space-y-1 pl-5">
-              <span className="text-xs font-medium text-muted-foreground">시청자가 원하는 콘텐츠</span>
-              <ul className="space-y-1">
-                {data.comment_insights.needs.map((item, idx) => (
-                  <li key={idx} className="text-xs text-muted-foreground list-disc ml-4">{item}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
-      {data.applicable_points?.length > 0 && (
-        <div className="space-y-1.5">
-          <div className="flex items-center gap-1.5">
-            <Lightbulb className="w-3.5 h-3.5 text-blue-500" />
-            <span className="text-xs font-semibold text-blue-600">내 채널에 적용할 포인트</span>
-          </div>
-          <ul className="space-y-1 pl-5">
-            {data.applicable_points.map((item, idx) => (
-              <li key={idx} className="text-xs text-muted-foreground list-disc">{item}</li>
-            ))}
-          </ul>
-        </div>
-      )}
-    </div>
-  )
-}
-
-function YoutubeVideoCard({
-  video,
-  analysisState,
-  expanded,
-  onToggle,
-  onRetry,
-}: {
-  video: YoutubeVideoData
-  analysisState?: VideoAnalysisState
-  expanded: boolean
-  onToggle: () => void
-  onRetry: () => void
-}) {
-  const formatViews = (n: number) => {
-    if (n >= 100_000_000) return `${(n / 100_000_000).toFixed(1)}억`
-    if (n >= 10_000) return `${(n / 10_000).toFixed(1)}만`
-    return n.toLocaleString()
-  }
-
-  const formatVelocity = (v: number) => {
-    if (v >= 10_000) return `${(v / 10_000).toFixed(1)}만/일`
-    if (v >= 1_000) return `${(v / 1_000).toFixed(1)}천/일`
-    return `${Math.round(v)}/일`
-  }
-
-  const status = analysisState?.status ?? 'idle'
-
-  return (
-    <div className="rounded-lg bg-muted/30 border border-transparent hover:border-border/50 transition-colors overflow-hidden">
-      <a
-        href={video.url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="flex gap-3 p-2.5 group"
-      >
-        <div className="relative flex-shrink-0 w-28 h-16 rounded-md overflow-hidden bg-muted">
-          <img
-            src={video.thumbnail}
-            alt={video.title}
-            className="w-full h-full object-cover group-hover:scale-105 transition-transform"
-            onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-          />
-          <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/40">
-            <Play className="w-6 h-6 text-white fill-white" />
-          </div>
-        </div>
-        <div className="flex-1 min-w-0 flex flex-col justify-between">
-          <div>
-            {video.search_keyword && (
-              <span className="inline-flex gap-1 text-[10px] px-1.5 py-0.5 rounded bg-red-500/10 text-red-500 font-medium mb-1">
-                🔍 {video.search_keyword}
-              </span>
-            )}
-            <p className="text-xs font-medium text-foreground line-clamp-2 leading-snug">
-              {video.title}
-            </p>
-          </div>
-          <div className="flex items-center gap-2 mt-1">
-            <span className="text-[10px] text-muted-foreground truncate">{video.channel}</span>
-            <span className="text-[10px] text-muted-foreground">·</span>
-            <span className="text-[10px] text-muted-foreground flex items-center gap-0.5">
-              <Eye className="w-2.5 h-2.5" /> {formatViews(video.view_count)}
-            </span>
-            <span className="text-[10px] text-muted-foreground">·</span>
-            <span className="text-[10px] text-green-600 flex items-center gap-0.5 font-medium">
-              <TrendingUp className="w-2.5 h-2.5" /> {formatVelocity(video.view_velocity)}
-            </span>
-          </div>
-        </div>
-      </a>
-
-      <div className="px-2.5 pb-2.5">
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-full h-8 text-xs gap-1.5"
-          onClick={() => {
-            if (status === 'error' || status === 'idle') onRetry()
-            else if (status === 'success') onToggle()
-          }}
-          disabled={status === 'loading'}
-        >
-          {status === 'loading' && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
-          {status === 'loading' && <span>분석 중...</span>}
-          {status === 'success' && <span>{expanded ? '분석 결과 접기' : '상세분석 보기'}</span>}
-          {status === 'error' && <span>다시 시도</span>}
-          {status === 'idle' && <span>상세분석 보기</span>}
-        </Button>
-        {expanded && status === 'success' && analysisState?.data && (
-          <VideoAnalysisContent data={analysisState.data} />
-        )}
-      </div>
-    </div>
-  )
-}
-
 function ImageCard({
   image
 }: {
@@ -739,7 +629,8 @@ function ImageCard({
 }) {
   const hasValidImage = image.thumbnail && (
     image.thumbnail.startsWith('data:image') ||
-    image.thumbnail.startsWith('http')
+    image.thumbnail.startsWith('http') ||
+    image.thumbnail.startsWith('/')
   )
 
   return (

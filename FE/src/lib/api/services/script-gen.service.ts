@@ -33,6 +33,7 @@ export interface ReferenceArticle {
     analysis?: {
         facts: string[];
         opinions: string[];
+        key_points?: string[]; // 핵심 포인트 (article_analyzer 추출)
     };
     images?: Array<{
         url: string;
@@ -70,18 +71,6 @@ export const executeScriptGen = async (
     return response.data;
 };
 
-export interface YoutubeVideo {
-    video_id: string;
-    title: string;
-    channel: string;
-    url: string;
-    thumbnail: string;
-    view_count: number;
-    view_velocity: number;
-    search_keyword: string;
-    published_at?: string;
-}
-
 // 작업 상태 조회
 export const checkScriptGenStatus = async (taskId: string): Promise<TaskStatusResponse> => {
     const response = await api.get(`/script-gen/status/${taskId}`);
@@ -89,10 +78,12 @@ export const checkScriptGenStatus = async (taskId: string): Promise<TaskStatusRe
 };
 
 // 폴링 헬퍼 (완료될 때까지 대기)
+// 첫 시도 실패 완화: Celery worker cold start를 위해 최초 2초 대기 후 폴링 시작
 export const pollScriptGenResult = async (
     taskId: string,
     onStatusChange?: (status: string) => void
 ): Promise<ScriptGenResult> => {
+    await new Promise((r) => setTimeout(r, 2000));
     return new Promise((resolve, reject) => {
         const interval = setInterval(async () => {
             try {
@@ -104,7 +95,7 @@ export const pollScriptGenResult = async (
                     resolve(statusData.result);
                 } else if (statusData.status === 'FAILURE') {
                     clearInterval(interval);
-                    reject(new Error(statusData.result?.error || 'Task Failed'));
+                    reject(new Error(statusData.result?.error || statusData.result?.message || 'Task Failed'));
                 }
             } catch (error) {
                 clearInterval(interval);
@@ -136,24 +127,3 @@ export const getScriptById = async (topicRequestId: string): Promise<ScriptHisto
     const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
     return response.data;
 };
-
-// 참고 영상 상세 분석 (자막+댓글 → 장단점, 시청자 반응, 적용 포인트)
-export interface ReferenceVideoAnalyzeResult {
-    video_id: string;
-    analysis_strengths: string[];
-    analysis_weaknesses: string[];
-    applicable_points: string[];
-    comment_insights: { reactions: string[]; needs: string[] };
-    analyzed_at: string;
-}
-export const analyzeReferenceVideo = async (
-    youtubeVideoId: string,
-    title: string = '',
-): Promise<ReferenceVideoAnalyzeResult> => {
-    const response = await api.post('/script-gen/analyze-reference-video', {
-        youtube_video_id: youtubeVideoId,
-        title: title || '제목 없음',
-    });
-    return response.data;
-};
-

@@ -26,6 +26,8 @@ from langchain_core.messages import HumanMessage
 from dotenv import load_dotenv
 load_dotenv()
 
+from app.core.config import settings
+
 logger = logging.getLogger(__name__)
 
 # 설정
@@ -85,45 +87,50 @@ def news_research_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # 4. 기사 정렬 (차트 있는 기사 우선)
     full_articles.sort(key=lambda x: (len(x.get("charts", [])), len(x.get("images", []))), reverse=True)
 
-    # 5. [Fact Extractor] 기사별 확정 인덱스로 팩트 수집
-    structured_facts = []
-    for i, art in enumerate(full_articles):
-        art_facts = art.get("analysis", {}).get("facts", [])
-        source_name = _extract_source_from_url(art.get("url", "")) or art.get("source", "Unknown")
-        article_id = art.get("id", "")
-        article_url = art.get("url", "")
-        for fact_text in art_facts:
-            structured_facts.append({
-                "id": f"fact-{uuid.uuid4().hex[:12]}",
-                "content": fact_text,
-                "source_index": i,
-                "source_name": source_name,
-                "source_indices": [i],
-                "article_id": article_id,
-                "article_url": article_url,
-                "category": "Fact",
-                "visual_proposal": "None",
-            })
-    logger.info(f"[Fact Extractor] 팩트 수집: {len(structured_facts)}개 (기사 {len(full_articles)}개)")
-
-    # 6. Opinions 모음
-    structured_opinions = []
-    for art in full_articles:
-        ops = art.get("analysis", {}).get("opinions", [])
-        if ops:
-            source = art.get("source", "Unknown")
-            for op in ops:
-                structured_opinions.append(f"[{source}] {op}")
+    # 5. 수집 결과 로깅 (팩트/의견 추출은 article_analyzer_node에서 수행)
+    logger.info(f"[News Research] 기사 수집 완료: {len(full_articles)}개 기사")
+    for idx, art in enumerate(full_articles, 1):
+        title = (art.get("title") or "")[:60]
+        source = art.get("source", "Unknown")
+        content_len = len(art.get("content", ""))
+        logger.info(f"  {idx}. [{source}] {title} (본문 {content_len}자)")
 
     return {
         "news_data": {
             "articles": full_articles,
-            "structured_facts": structured_facts,
-            "structured_opinions": structured_opinions,
+            "structured_facts": [],    # article_analyzer_node에서 채움
+            "structured_opinions": [], # article_analyzer_node에서 채움
             "queries_used": base_queries,
             "collected_at": datetime.now().isoformat()
         }
     }
+
+
+def _log_research_result(
+    articles: List[Dict],
+    structured_facts: List[Dict],
+    structured_opinions: List[str],
+    queries_used: List[str],
+) -> None:
+    """News Research 결과를 구조화된 형식으로 로깅합니다."""
+    lines = [
+        "[News Research] 결과:",
+        f"  검색 쿼리: {queries_used}",
+        f"  기사 수: {len(articles)}개",
+        f"  팩트 수: {len(structured_facts)}개",
+        f"  의견 수: {len(structured_opinions)}개",
+        "  기사 목록:",
+    ]
+    for idx, art in enumerate(articles, 1):
+        title = (art.get("title") or "")[:60]
+        source = art.get("source", "Unknown")
+        charts = art.get("charts", [])
+        facts_cnt = len(art.get("analysis", {}).get("facts", []))
+        lines.append(f"    {idx}. [{source}] {title}{'...' if len(art.get('title', '') or '') > 60 else ''}")
+        url = art.get("url", "")
+        url_display = (url[:80] + "...") if len(url) > 80 else url
+        lines.append(f"       URL: {url_display} | 팩트 {facts_cnt}개 | 차트 {len(charts)}개")
+    logger.info("\n".join(lines))
 
 
 def _search_naver(endpoint: str, keyword: str, headers: dict, display: int = 10) -> List[Dict]:
@@ -180,7 +187,7 @@ def _fetch_one_per_keyword(keywords: List[str], topic: str) -> List[Dict]:
         return []
 
     api_key = os.getenv("OPENAI_API_KEY")
-    llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key, temperature=0) if api_key else None
+    llm = ChatOpenAI(model="gpt-4o", api_key=api_key, temperature=0) if api_key else None
 
     headers = {"X-Naver-Client-Id": client_id, "X-Naver-Client-Secret": client_secret}
 
@@ -437,7 +444,7 @@ def _check_image_context(image_url: str, article_title: str, article_summary: st
             encoded_string = base64.b64encode(img_res.content).decode("utf-8")
             data_url = f"data:image/jpeg;base64,{encoded_string}"
             
-            llm = ChatOpenAI(model="gpt-4o-mini", api_key=api_key)
+            llm = ChatOpenAI(model="gpt-4o", api_key=api_key)
             
             prompt = f"""
             [분석 요청]
@@ -484,6 +491,41 @@ def _check_image_context(image_url: str, article_title: str, article_summary: st
     return {"relevant": False}
 
 
+def _optimize_crawl_url(url: str) -> str:
+    """
+    크롤링하기 어려운 URL을 접근 가능한 형태로 변환합니다.
+    - 네이버 블로그: 데스크탑(iframe 구조) → 모바일(본문 직접 노출)
+    - 네이버 카페: 데스크탑 → 모바일
+    """
+    if not url:
+        return url
+    # 네이버 블로그 desktop → mobile (iframe 문제 해결)
+    if "blog.naver.com" in url and "m.blog.naver.com" not in url:
+        return url.replace("blog.naver.com", "m.blog.naver.com")
+    # 네이버 카페 desktop → mobile
+    if "cafe.naver.com" in url and "m.cafe.naver.com" not in url:
+        return url.replace("cafe.naver.com", "m.cafe.naver.com")
+    return url
+
+
+def _extract_text_fallback(html: str) -> str:
+    """
+    trafilatura 실패 시 BeautifulSoup으로 텍스트를 추출합니다.
+    불필요한 태그 제거 후 의미 있는 줄만 반환합니다.
+    """
+    try:
+        from bs4 import BeautifulSoup
+        soup = BeautifulSoup(html, "html.parser")
+        for tag in soup(["script", "style", "nav", "header", "footer",
+                         "aside", "noscript", "iframe", "form"]):
+            tag.decompose()
+        raw = soup.get_text(separator="\n", strip=True)
+        lines = [l.strip() for l in raw.split("\n") if len(l.strip()) > 20]
+        return "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
     """Playwright로 접속하여 본문 및 이미지를 싹 긁어오고 AI로 분석"""
     results = []
@@ -499,23 +541,60 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
                 # 🎭 봇 탐지 우회: User-Agent 변경
                 page = browser.new_page(user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                 
-                # 로딩 대기
+                # 로딩 대기 (크롤링 최적화 URL 사용)
+                crawl_url = _optimize_crawl_url(item["url"])
                 try:
-                    page.goto(item["url"], timeout=CRAWL_TIMEOUT*1000, wait_until="domcontentloaded")
-                    
+                    page.goto(crawl_url, timeout=CRAWL_TIMEOUT*1000, wait_until="domcontentloaded")
+
                     # [Scroll Logic] Lazy Loading 이미지 로딩을 위해 스크롤 다운
                     for _ in range(5):
                         page.evaluate("window.scrollBy(0, document.body.scrollHeight / 5)")
                         page.wait_for_timeout(2000)  # 2.0초 대기 (Wait longer for lazy loading)
-                        
+
                 except:
                     browser.close()
                     return None
-                
-                # 본문 추출
+
+                # ── 본문 추출 (3단계 폴백) ──────────────────────────────────
                 content_html = page.content()
-                text = trafilatura.extract(content_html, include_links=False)
+
+                # 1단계: trafilatura (favor_recall=True → 더 많은 텍스트 회수)
+                text = trafilatura.extract(
+                    content_html,
+                    include_links=False,
+                    no_fallback=False,
+                    favor_recall=True,
+                )
+
+                # 2단계: 네이버 블로그 iframe 내부 직접 추출
+                if (not text or len(text) < 50) and "naver.com" in item["url"]:
+                    try:
+                        iframe = page.query_selector("iframe#mainFrame, iframe.se-main-section, #mainFrame")
+                        if iframe:
+                            frame = iframe.content_frame()
+                            if frame:
+                                frame.wait_for_load_state("domcontentloaded", timeout=10000)
+                                iframe_html = frame.content()
+                                text = trafilatura.extract(
+                                    iframe_html,
+                                    include_links=False,
+                                    no_fallback=False,
+                                    favor_recall=True,
+                                )
+                                if text and len(text) >= 50:
+                                    content_html = iframe_html  # 이미지 추출도 iframe 기준으로
+                                    logger.info(f"[Crawl] 네이버 iframe 본문 추출 성공: {item['url'][:60]}")
+                    except Exception as iframe_err:
+                        logger.debug(f"[Crawl] iframe 추출 실패: {iframe_err}")
+
+                # 3단계: BeautifulSoup 폴백
                 if not text or len(text) < 50:
+                    text = _extract_text_fallback(content_html)
+                    if text and len(text) >= 50:
+                        logger.info(f"[Crawl] BeautifulSoup 폴백 성공: {item['url'][:60]}")
+
+                if not text or len(text) < 50:
+                    logger.warning(f"[Crawl] 본문 추출 실패 (3단계 모두 실패): {item['url'][:60]}")
                     browser.close()
                     return None
                 
@@ -676,179 +755,55 @@ def _crawl_and_analyze(articles: List[Dict], topic: str = "") -> List[Dict]:
                 # [DEBUG] 중복 제거 후 로깅
                 logger.info(f"[DEBUG] 중복 제거 후: {len(candidates)}개")
                 
-                # --- AI 분석 단계 (Context check) - 병렬 처리! ---
+                # --- AI 분석 단계 (Context check) - 비활성화 시 스킵 ──
                 final_images = []
                 charts = []
                 
-                # 기사 요약 (앞부분 500자) - AI에게 문맥 제공용
-                summary = text[:500]
-                
-                # 최대 5개 이미지에 대해 AI 검수 (비용 조절)
-                target_images = candidates[:5]
-                logger.info(f"[DEBUG] AI 분석 시작: {len(target_images)}개 이미지 (병렬)")
-                
-                # 병렬 처리 함수
-                def analyze_single_image(img):
-                    analysis = _check_image_context(img["url"], item["title"], summary, referrer_url=item["url"])
-                    if analysis.get("relevant"):
-                        img_data = {
-                            "url": img["url"],
-                            "width": img.get("width", 0),
-                            "height": img.get("height", 0),
-                            "type": analysis.get("type", "other"),
-                            "desc": analysis.get("description", "")
-                        }
-                        # [Local Save] 이미지 로컬 저장
-                        local_path = download_image_to_local(img["url"], item["url"])
-                        if local_path:
-                            img_data["url"] = local_path
-                        return (analysis.get("type"), img_data)
-                    return None
-                
-                # ThreadPoolExecutor로 병렬 실행 (최대 5개 동시)
-                with concurrent.futures.ThreadPoolExecutor(max_workers=5) as img_executor:
-                    results = list(img_executor.map(analyze_single_image, target_images))
-                
-                # 결과 분류
-                for result in results:
-                    if result:
-                        img_type, img_data = result
-                        if img_type in ["chart", "table"]:
-                            charts.append(img_data)
-                        else:
-                            final_images.append(img_data)
+                if settings.news_image_analysis_enabled:
+                    # 기사 요약 (앞부분 500자) - AI에게 문맥 제공용
+                    summary = text[:500]
+                    target_images = candidates[:5]
+                    logger.info(f"[DEBUG] AI 이미지 분석 시작: {len(target_images)}개")
+
+                    def analyze_single_image(img):
+                        analysis = _check_image_context(img["url"], item["title"], summary, referrer_url=item["url"])
+                        if analysis.get("relevant"):
+                            img_data = {
+                                "url": img["url"],
+                                "width": img.get("width", 0),
+                                "height": img.get("height", 0),
+                                "type": analysis.get("type", "other"),
+                                "desc": analysis.get("description", "")
+                            }
+                            local_path = download_image_to_local(img["url"], item["url"])
+                            if local_path:
+                                img_data["url"] = local_path
+                            return (analysis.get("type"), img_data)
+                        return None
+
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as img_executor:
+                        results = list(img_executor.map(analyze_single_image, target_images))
+                    for result in results:
+                        if result:
+                            img_type, img_data = result
+                            if img_type in ["chart", "table"]:
+                                charts.append(img_data)
+                            else:
+                                final_images.append(img_data)
+                else:
+                    logger.info("[News Research] 이미지 AI 분석 비활성화 → 스킵")
                 
                 browser.close()
                 
-                # [AI] 기사 분석 및 UI용 데이터 구조화 (Fact vs Opinion)
-                try:
-                    # 텍스트가 너무 길면 앞부분 15000자 사용 (8000 → 15000 확장, 긴 기사 후반부 킬러 포인트 확보)
-                    input_text = text[:15000] 
-                    
-                    api_key = os.getenv("OPENAI_API_KEY")
-                    if api_key and len(input_text) > 300:
-                        llm_extract = ChatOpenAI(model="gpt-5-mini", api_key=api_key, temperature=1)
-                        
-                        analysis_prompt = f"""당신은 YouTube 크리에이터의 리서치 어시스턴트입니다.
+                # 출처명 추출 (URL 맵 → og:site_name 순서, GPT 없이)
+                url_source = _extract_source_from_url(item.get("url", ""))
+                og_source = item.get("og_source", "")
+                item["source"] = url_source or og_source or "Unknown"
 
-[목적]
-유튜버가 스크립트에서 "OO뉴스에 따르면..."으로 인용할 수 있는 검증 가능한 팩트를 추출합니다.
-추출된 팩트가 스크립트에 녹아들어, 시청자에게 "이 영상은 근거 있는 정보를 전달한다"는 신뢰를 줍니다.
-
-[영상 주제]
-"{topic}"
-
-⚠️ 절대 규칙:
-- 기사에 없는 내용은 절대 만들지 마시오.
-- 관련기사 목록의 제목은 분석 대상이 아닙니다.
-- 기사 전체를 위→아래 순서로 요약하지 마시오. 선별하시오.
-- 같은 내용을 다른 표현으로 반복하지 마시오.
-
-다음 JSON 형식으로 응답하세요:
-
-1. "source": 언론사명 (예: "매일경제", "TechCrunch")
-2. "summary_short": 기사 핵심 1문장 요약 (한국어)
-3. "analysis": 아래 두 리스트를 포함하는 객체:
-
-    - "facts": 유튜버가 스크립트에 인용할 수 있는 검증 가능한 사실 (한국어)
-      
-      추출 기준 — 아래 4가지 유형을 각각 찾으세요:
-      
-      [유형A: 핵심 수치] 금액, 건수, 비율 등 임팩트 있는 숫자 (핵심 2~3개만)
-        예: "앤트로픽은 API 매출 31억 달러를 보고했다"
-      
-      [유형B: 사건·행위] 누가 무엇을 했는지 — 스토리가 되는 것
-        예: "앤트로픽은 유압식 절단기로 중고책을 분리·스캔해 AI 학습에 활용했다"
-      
-      [유형C: 직접 인용] 기사 속 인물/단체의 원문 발언 (큰따옴표 유지)
-        예: "다리오 아모데이는 '처음 앤트로픽을 시작했을 때, 어떻게 돈을 벌지 전혀 몰랐습니다'라고 말했다"
-      
-      [유형D: 의외의 디테일] 시청자가 놀랄만한 에피소드, 반전, 아이러니
-        예: "클로드에게 자판기를 운영시켰더니, 비싸고 쓸모없는 텅스텐 큐브를 재고로 들여놓기로 결정했다"
-      
-      ⚠️ 금지:
-      - 같은 사실을 다른 문장으로 반복 (중복 금지)
-      - "빠르게 성장하고 있다" 같은 모호한 서술
-      - 영상 주제와 관련 없는 배경 정보
-      - 기업이 자사 제품/서비스에 대해 주장하는 내용 → facts가 아니라 opinions의 [업계]로 분류
-        예: "알리바바에 따르면 19개 벤치마크에서 경쟁력을 보였다" → [업계]
-        예: "삼성은 갤럭시가 업계 최고 성능이라고 밝혔다" → [업계]
-
-    - "opinions": 전문가/기관의 의견, 해석, 전망 (한국어)
-      
-      추출 규칙:
-      - facts에 이미 포함된 내용을 말투만 바꿔서 넣지 마시오 (중복 금지)
-      - 반드시 발언한 사람/기관의 이름이 있어야 함
-      - 기사에서 찾을 수 있는 만큼만 추출 (없으면 빈 배열도 가능)
-      - 억지로 개수를 채우지 마시오
-      
-      유형 태그: [전문가] [업계] [전망] [해석] [분석]
-      - [전문가]: 이름+직함이 있는 전문가의 직접 발언
-      - [업계]: 업계 관계자, 협회, 기관의 공식 입장
-      - [전망]: 미래 예측 (구체적 근거가 있는 것만)
-      - [해석]: 기사 속 분석가/전문가의 해석
-      - [분석]: 데이터 기반 분석적 주장
-      
-      [좋은 예시]
-      "[전문가] 다리오 아모데이(앤트로픽 CEO)는 '데이터센터를 그렇게 많이 사서 스스로를 과도하게 레버리지할 수 있을까요?'라고 경쟁사를 비꼬았다"
-      "[업계] 영국출판협회는 '비난받아 마땅하다. 비밀로 유지하려 했다는 사실 자체가 문제점을 인지하고 있었음을 시사한다'고 지적했다"
-      
-      [나쁜 예시 - 이렇게 하지 마시오]
-      "[분석] AI 기술이 발전하고 있다" ← 모호
-      "[전문가] 업계에서는 성장할 것으로 보인다" ← 이름 없음
-      "[전망] 매출이 100억 달러에 근접할 전망이다" ← facts에 이미 있는 내용 중복
-
-4. "key_paragraphs": 팩트/데이터가 포함된 원본 문단 전부 (수정 없이 복사). 이중 줄바꿈으로 구분.
-
-[기사 본문]
-{input_text}
-"""
-                        
-                        msg = HumanMessage(content=analysis_prompt)
-                        res = llm_extract.invoke([msg])
-                        
-                        # JSON 파싱
-                        content = res.content.replace("```json", "").replace("```", "").strip()
-                        try:
-                            data = json.loads(content)
-                            gpt_source = data.get("source", "")
-                            # 출처명 결정 우선순위: URL 맵 → og:site_name → GPT
-                            url_source = _extract_source_from_url(item.get("url", ""))
-                            og_source = item.get("og_source", "")
-                            if url_source:
-                                item["source"] = url_source
-                            elif og_source:
-                                item["source"] = og_source
-                            elif gpt_source and gpt_source not in ("Unknown", "미상", "출처불명", "출처 미상", "기사(출처 미상)", "기사(제공된 본문)", ""):
-                                item["source"] = gpt_source
-                            else:
-                                item["source"] = og_source or gpt_source or "Unknown"
-                            item["summary_short"] = data.get("summary_short", "")
-                            item["analysis"] = data.get("analysis", {"facts": [], "opinions": []})
-                            
-                            # 기존 파이프라인(Writer 등)을 위해 summary 필드에는 원문 핵심 문단을 유지
-                            item["summary"] = data.get("key_paragraphs", text[:1000]) 
-                            
-                            logger.info(f"[AI] 기사 분석 완료: {item['source']} (Facts: {len(item['analysis'].get('facts', []))}, Opinions: {len(item['analysis'].get('opinions', []))})")
-                        except json.JSONDecodeError:
-                            logger.warning("[AI] JSON 파싱 실패, fallback 수행")
-                            item["source"] = "Unknown"
-                            item["summary_short"] = item.get("desc", "")
-                            item["analysis"] = {"facts": [], "opinions": []}
-                            item["summary"] = text[:1000]
-                            
-                    else:
-                        item["source"] = "Unknown"
-                        item["summary_short"] = item.get("desc", "")
-                        item["analysis"] = {"facts": [], "opinions": []}
-                        item["summary"] = text[:1000] + "..." 
-
-                except Exception as e:
-                    logger.warning(f"기사 분석 실패: {e}")
-                    item["summary"] = text[:1000]
-                    item["source"] = "Unknown"
-                    item["summary_short"] = item.get("desc", "")
-                    item["analysis"] = {"facts": [], "opinions": []}
+                # 팩트·의견 추출은 article_analyzer_node에서 수행
+                item["analysis"] = {"facts": [], "opinions": []}
+                item["summary_short"] = item.get("desc", "") or text[:200]
+                item["summary"] = text[:3000]  # Writer가 참고할 원문 유지
 
                 item["content"] = text
                 item["images"] = final_images

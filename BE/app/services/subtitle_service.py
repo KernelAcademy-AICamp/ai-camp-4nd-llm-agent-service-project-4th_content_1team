@@ -87,6 +87,20 @@ class SubtitleService:
             [{"video_id": "...", "status": "success", "tracks": [...]}]
         """
         results = []
+        if not settings.youtube_subtitle_enabled:
+            logger.info("[SUBTITLE] 자막 기능 비활성화 (YOUTUBE_SUBTITLE_ENABLED=false)")
+            return [
+                {
+                    "video_id": vid,
+                    "status": "skipped",
+                    "source": "disabled",
+                    "tracks": [],
+                    "no_captions": True,
+                    "error": "Subtitle feature disabled",
+                }
+                for vid in video_ids
+            ]
+
         proxy_pool = SubtitleService._get_proxy_pool()
         max_attempts = min(len(proxy_pool), 5) if proxy_pool else 3
 

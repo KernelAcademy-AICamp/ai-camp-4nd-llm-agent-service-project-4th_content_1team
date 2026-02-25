@@ -5,9 +5,10 @@ Script Generation Graph - LangGraph 워크플로우
 Workflow (Full Pipeline):
     User Input (Topic + Channel Profile)
     → Planner (목차/질문 생성)
-    ┌→ News Research (뉴스 수집 + Fact Extraction)
+    ┌→ News Research (뉴스 수집 + 크롤링)
+    │   → Article Analyzer (기사별 팩트·의견·해석 추출)
     └→ YT Fetcher (유튜브 영상 검색)
-       → Competitor Analyzer (경쟁사 분석)
+        → Competitor Analyzer (경쟁사 분석)
     → Insight Builder (전략 수립)
     → Writer (대본 작성)
     → Verifier (팩트 체크 & 출처 정리)
@@ -23,6 +24,7 @@ from src.script_gen.state import ScriptGenState  # State 정의 import
 from src.script_gen.nodes.intent_analyzer import intent_node
 from src.script_gen.nodes.planner import planner_node
 from src.script_gen.nodes.news_research import news_research_node
+from src.script_gen.nodes.article_analyzer import article_analyzer_node
 from src.script_gen.nodes.yt_fetcher import yt_fetcher_node
 from src.script_gen.nodes.competitor_anal import competitor_anal_node
 from src.script_gen.nodes.insight_builder import insight_builder_node
@@ -47,6 +49,7 @@ def create_script_gen_graph():
     workflow.add_node("intent_analyzer", intent_node)
     workflow.add_node("planner", planner_node)
     workflow.add_node("news_research", news_research_node)
+    workflow.add_node("article_analyzer", article_analyzer_node)  # 기사 심층 분석
     workflow.add_node("yt_fetcher", yt_fetcher_node)
     workflow.add_node("competitor_anal", competitor_anal_node)
     workflow.add_node("insight_builder", insight_builder_node)
@@ -54,20 +57,22 @@ def create_script_gen_graph():
     workflow.add_node("verifier", verifier_node)
 
     # 3. 엣지 연결
-    workflow.set_entry_point("intent_analyzer")  # Intent Analyzer를 시작점으로 변경
-    # workflow.add_edge("trend_scout", "planner")  # 주석처리
+    workflow.set_entry_point("intent_analyzer")
     workflow.add_edge("intent_analyzer", "planner")
 
-    # Planner 후 병렬 실행: News Research와 YT Fetcher
+    # Planner 후 병렬 실행: News Research 와 YT Fetcher
     workflow.add_edge("planner", "news_research")
     workflow.add_edge("planner", "yt_fetcher")
+
+    # News Research → Article Analyzer (기사 수집 후 팩트·의견 추출)
+    workflow.add_edge("news_research", "article_analyzer")
 
     # YT Fetcher → Competitor Analyzer
     workflow.add_edge("yt_fetcher", "competitor_anal")
 
-    # News Research와 Competitor Analyzer 모두 완료 후 Insight Builder
-    # (LangGraph는 자동으로 모든 선행 노드 완료를 기다림)
-    workflow.add_edge("news_research", "insight_builder")
+    # Article Analyzer 와 Competitor Analyzer 모두 완료 후 Insight Builder
+    # (LangGraph 가 두 선행 노드를 자동으로 기다림)
+    workflow.add_edge("article_analyzer", "insight_builder")
     workflow.add_edge("competitor_anal", "insight_builder")
 
     workflow.add_edge("insight_builder", "writer")
@@ -77,7 +82,7 @@ def create_script_gen_graph():
     # 4. 컴파일
     app = workflow.compile()
 
-    logger.info("Script Generation Graph 생성 완료 (Full Pipeline: 8 nodes)")
+    logger.info("Script Generation Graph 생성 완료 (Full Pipeline: 9 nodes)")
     return app
 
 

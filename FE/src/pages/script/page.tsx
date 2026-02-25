@@ -7,7 +7,7 @@ import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
 import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
-import type { GeneratedScript, ReferenceArticle, Citation, YoutubeVideo } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle, Citation } from "../../lib/api/services"
 
 function ScriptPageContent() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -18,7 +18,6 @@ function ScriptPageContent() {
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
   const [citations, setCitations] = useState<Citation[]>([])
-  const [youtubeVideos, setYoutubeVideos] = useState<YoutubeVideo[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
 
   // 자동 생성 트리거 방지 플래그 (useRef: 동기적 즉시 반영 → StrictMode 중복 방지)
@@ -36,18 +35,6 @@ function ScriptPageContent() {
             setScriptData(result.script)
             setReferences(result.references || [])
             setCitations(result.citations || [])
-            if (result.competitor_videos?.length) {
-              setYoutubeVideos(result.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
-                video_id: v.video_id,
-                title: v.title,
-                channel: v.channel || "",
-                url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
-                thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
-                view_count: 0,
-                view_velocity: 0,
-                search_keyword: "",
-              })))
-            }
             hasExistingData = true
           }
         } else {
@@ -58,18 +45,6 @@ function ScriptPageContent() {
               setScriptData(latest.script)
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
-              if (latest.competitor_videos?.length) {
-                setYoutubeVideos(latest.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
-                  video_id: v.video_id,
-                  title: v.title,
-                  channel: v.channel || "",
-                  url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
-                  thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
-                  view_count: 0,
-                  view_velocity: 0,
-                  search_keyword: "",
-                })))
-              }
               hasExistingData = true
             }
           }
@@ -99,25 +74,14 @@ function ScriptPageContent() {
         setScriptData(result.script)
         setReferences(result.references || [])
         setCitations(result.citations || [])
-        if (result.competitor_videos && result.competitor_videos.length > 0) {
-          setYoutubeVideos(result.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
-            video_id: v.video_id,
-            title: v.title,
-            channel: v.channel || "",
-            url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
-            thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
-            view_count: 0,
-            view_velocity: 0,
-            search_keyword: "",
-          })))
-        }
         if (result.topic_request_id) {
           const newParams = new URLSearchParams(searchParams)
           newParams.set("topicId", result.topic_request_id)
           setSearchParams(newParams, { replace: true })
         }
       } else {
-        alert(`생성 실패: ${result.error || "알 수 없는 오류"}`)
+        const errMsg = result.error || result.message || "알 수 없는 오류"
+        alert(`생성 실패: ${errMsg}`)
       }
     } catch (error) {
       console.error("[FE] API 오류:", error)
@@ -151,7 +115,7 @@ function ScriptPageContent() {
           {/* Right Panel - Resources & Analysis */}
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
-              <RelatedResources apiReferences={references} youtubeVideos={youtubeVideos} activeCitationUrl={activeCitationUrl} />
+              <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
             </div>
           </div>
         </div>

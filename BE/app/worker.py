@@ -208,6 +208,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "source": art.get("source", "Unknown"),
                         "url": art.get("url"),
                         "date": art.get("pub_date"),
+                        "query": art.get("query"),  # 검색에 사용된 키워드
                         "analysis": {
                             "facts": facts,
                             "opinions": opinions
@@ -340,6 +341,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         return {
             "success": False,
             "message": str(e),
+            "error": str(e),
             "script": None,
             "references": None
         }

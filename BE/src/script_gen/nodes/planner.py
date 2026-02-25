@@ -366,6 +366,7 @@ def _validate_content_brief(brief: Dict) -> None:
 # =============================================================================
 
 def _log_result(topic: str, brief: Dict) -> None:
+    """Planner 결과를 구조화된 형식으로 로깅합니다."""
     angle = brief.get("content_angle", {})
     sources = brief.get("research_plan", {}).get("sources", [])
     yt_kw = brief.get("research_plan", {}).get("youtube_keywords", [])
@@ -380,4 +381,4 @@ def _log_result(topic: str, brief: Dict) -> None:
     for s in sources:
         lines.append(f"    • \"{s.get('keyword', '')}\" → {s.get('how_to_use', '')}")
     lines.append(f"  유튜브 키워드: {yt_kw}")
-    print("\n".join(lines), flush=True)
+    logger.info("\n".join(lines))
