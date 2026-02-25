@@ -102,6 +102,12 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         # (Celery worker에서 기존 이벤트 루프 충돌 방지)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
+        # ★ 이전 task에서 닫힌 루프에 바인딩된 DB 커넥션 풀 초기화
+        # (안 하면 stale 커넥션 재사용 → 'NoneType' has no attribute 'send' 에러)
+        from app.core.db import engine
+        loop.run_until_complete(engine.dispose())
+        
         try:
             # TopicRequest가 없으면 생성
             if not topic_request_id:

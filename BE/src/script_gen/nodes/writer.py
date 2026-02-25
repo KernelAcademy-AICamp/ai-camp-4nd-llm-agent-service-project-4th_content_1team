@@ -157,6 +157,9 @@ async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     opinions = news_data.get("structured_opinions", [])
     channel_profile = state.get("channel_profile", {})
     
+    # 인용번호 후처리용 매핑: fact_id → ①②③
+    fact_marker_map = _build_fact_marker_map(facts)
+    
     # 1. Base Context 생성
     base_context = _build_writer_context(channel_profile, insight_pack, facts, opinions)
     
@@ -164,6 +167,8 @@ async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
     # (1) Intro
     logger.info("Generating Intro...")
     hook = await _generate_intro(base_context)
+    # 인용번호 교정 (후처리)
+    hook.text = _fix_citation_numbers(hook.text, hook.fact_references, fact_marker_map)
     
     # (2) Chapters — 순차 생성 (도입부 다양성 + 팩트 격리 + Self-Check)
     chapter_plans = insight_pack.get("story_structure", {}).get("chapters", [])
@@ -174,6 +179,37 @@ async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
         all_chapter_facts = [
             set(plan.get("required_facts", [])) for plan in chapter_plans
         ]
+        
+        # ★ 안전장치: 모든 기사(source_index)에서 최소 1개 팩트가 배정되도록 보장
+        # Insight Builder가 일부 기사의 팩트를 required_facts에 넣지 않으면
+        # 해당 기사의 인용번호(③④ 등)가 대본에 아예 등장하지 않는 문제 방지
+        all_assigned = set()
+        for s in all_chapter_facts:
+            all_assigned.update(s)
+        
+        # 기사별로 최소 1개 팩트가 배정되었는지 확인
+        source_indices_covered = set()
+        for f in facts:
+            if f.get("id") in all_assigned:
+                source_indices_covered.add(f.get("source_index", -1))
+        
+        orphan_facts = []
+        for f in facts:
+            src_idx = f.get("source_index", -1)
+            if src_idx not in source_indices_covered and f.get("id"):
+                orphan_facts.append(f)
+                source_indices_covered.add(src_idx)  # 기사당 1개만
+        
+        if orphan_facts:
+            # 마지막 챕터에 미배정 팩트 추가
+            last_idx = len(all_chapter_facts) - 1
+            for f in orphan_facts:
+                all_chapter_facts[last_idx].add(f["id"])
+            orphan_sources = [f.get("source_name", "?") for f in orphan_facts]
+            logger.warning(
+                f"★ 미배정 기사 팩트 {len(orphan_facts)}개를 마지막 챕터에 추가: "
+                f"{orphan_sources}"
+            )
         
         chapters = []
         previous_openings = []   # 이전 챕터 도입 문장 (패턴 반복 방지)
@@ -224,6 +260,11 @@ async def writer_node(state: Dict[str, Any]) -> Dict[str, Any]:
                 # 이미 인용된 팩트를 다음 챕터 배정에서 제거 (코드 레벨 중복 방지)
                 for future_idx in range(i, len(all_chapter_facts)):
                     all_chapter_facts[future_idx].discard(ref_id)
+            
+            # 인용번호 교정 (후처리): 각 Beat의 번호를 fact_references 기반으로 검증·수정
+            for beat in ch.beats:
+                beat.line = _fix_citation_numbers(beat.line, beat.fact_references, fact_marker_map)
+            ch.narration = "\n".join(beat.line for beat in ch.beats)
             
             chapters.append(ch)
             logger.info(f"Chapter {i} generated: {ch.title}")
@@ -575,6 +616,79 @@ Generate the Closing object.
 CIRCLE_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
                   "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"]
 
+
+def _build_fact_marker_map(facts: List[Dict]) -> Dict[str, str]:
+    """fact_id → 원형번호(①②③) 매핑 생성 (인용번호 후처리용)"""
+    article_idx_to_marker: Dict[int, str] = {}
+    next_marker_idx = 0
+    fact_to_marker: Dict[str, str] = {}
+    
+    for f in facts:
+        art_idx = f.get("source_index")
+        if art_idx is None:
+            source_indices = f.get("source_indices", [])
+            art_idx = source_indices[0] if source_indices and isinstance(source_indices[0], int) else 0
+        
+        if art_idx not in article_idx_to_marker:
+            marker = CIRCLE_NUMBERS[next_marker_idx] if next_marker_idx < len(CIRCLE_NUMBERS) else f"[{next_marker_idx+1}]"
+            article_idx_to_marker[art_idx] = marker
+            next_marker_idx += 1
+        
+        fact_id = f.get("id", "")
+        if fact_id:
+            fact_to_marker[fact_id] = article_idx_to_marker[art_idx]
+    
+    return fact_to_marker
+
+
+def _fix_citation_numbers(text: str, fact_references: List[str], fact_marker_map: Dict[str, str]) -> str:
+    """
+    Beat/Hook 텍스트의 인용 번호를 fact_references 기반으로 검증·교정.
+    
+    하이브리드 전략:
+      1) LLM이 올바르게 넣었으면 그대로 유지 (자연스러운 위치 보존)
+      2) 틀렸으면 전부 제거 후 올바른 번호를 문장 끝에 추가
+    """
+    if not fact_references:
+        # 인용 팩트 없는데 번호가 있으면 제거
+        for cn in CIRCLE_NUMBERS:
+            text = text.replace(cn, "")
+        return text.strip()
+    
+    # 올바른 마커 세트 계산
+    correct_markers = set()
+    for fid in fact_references:
+        marker = fact_marker_map.get(fid)
+        if marker:
+            correct_markers.add(marker)
+    
+    if not correct_markers:
+        return text
+    
+    # 텍스트에 있는 마커 세트 확인
+    existing_markers = set()
+    for cn in CIRCLE_NUMBERS:
+        if cn in text:
+            existing_markers.add(cn)
+    
+    # 올바르면 그대로 유지 (LLM이 맞춤 → 자연스러운 위치 보존)
+    if existing_markers == correct_markers:
+        return text
+    
+    # 틀렸으면 교정: 전부 제거 → 올바른 번호 추가
+    logger.info(f"인용번호 교정: {existing_markers or '없음'} → {correct_markers}")
+    for cn in CIRCLE_NUMBERS:
+        text = text.replace(cn, "")
+    text = text.rstrip()
+    
+    sorted_markers = sorted(
+        correct_markers,
+        key=lambda m: CIRCLE_NUMBERS.index(m) if m in CIRCLE_NUMBERS else 99
+    )
+    text += "".join(sorted_markers)
+    
+    return text
+
 def _build_writer_context(channel: Dict, insight: Dict, facts: List[Dict], opinions: List[str] = [],
                           filter_fact_ids: set = None, used_facts_summary: List[str] = None) -> str:
     """공통 컨텍스트 조립 (기사 기준 인라인 출처 번호 포함, 챕터별 팩트 필터링 지원)"""
@@ -645,13 +759,25 @@ def _build_writer_context(channel: Dict, insight: Dict, facts: List[Dict], opini
     article_idx_to_source: Dict[int, str] = {}
     next_marker_idx = 0
 
+    # 1단계: 전체 팩트 순회 → 기사별 번호 매핑 (필터 전, 번호 일관성 유지)
+    for f in facts:
+        art_idx = f.get("source_index")
+        if art_idx is None:
+            source_indices = f.get("source_indices", [])
+            art_idx = source_indices[0] if source_indices and isinstance(source_indices[0], int) else 0
+        if art_idx not in article_idx_to_marker:
+            marker = CIRCLE_NUMBERS[next_marker_idx] if next_marker_idx < len(CIRCLE_NUMBERS) else f"[{next_marker_idx+1}]"
+            article_idx_to_marker[art_idx] = marker
+            article_idx_to_source[art_idx] = f.get("source_name", "")
+            next_marker_idx += 1
+
     f_str = "\n## AVAILABLE FACTS\n"
     f_str += (
         "**인용 규칙 (필수)**:\n"
-        "- 번호는 '기사(출처)' 단위입니다. 같은 기사에서 나온 팩트는 같은 번호를 사용합니다.\n"
-        "- 팩트를 인용할 때 반드시 **해당 기사의 번호**를 문장 끝에 붙이세요.\n"
-        "- 예시: ①번 기사의 팩트면 → '불만이 70% 감소했습니다①'\n"
-        "- 같은 기사의 다른 팩트도 같은 번호를 사용합니다.\n"
+        "- 아래 팩트는 **기사(출처) 단위**로 묶여 있습니다.\n"
+        "- 팩트를 인용할 때 반드시 **해당 기사 섹션 제목의 번호**(①②③)를 문장 끝에 붙이세요.\n"
+        "- 예시: ① 출처의 팩트면 → '불만이 70% 감소했습니다①'\n"
+        "- ⚠️ 번호를 절대 혼동하지 마세요. 각 기사 섹션 제목의 번호를 그대로 쓰세요.\n"
         "- ⚠️ 아래 나열된 팩트를 **전부** 인용하세요. 하나라도 빠지면 실패입니다.\n"
     )
     # 이전 챕터에서 사용된 팩트 요약 (반복 방지)
@@ -660,26 +786,27 @@ def _build_writer_context(channel: Dict, insight: Dict, facts: List[Dict], opini
         for s in used_facts_summary:
             f_str += f"- {s}\n"
         f_str += "\n"
-    for i, f in enumerate(facts):
-        # 확정된 source_index를 우선 사용
+
+    # 2단계: 기사별 그룹핑 표시 (filter_fact_ids 적용)
+    source_groups: Dict[int, List[Dict]] = {}
+    for f in facts:
         art_idx = f.get("source_index")
         if art_idx is None:
             source_indices = f.get("source_indices", [])
-            art_idx = source_indices[0] if source_indices and isinstance(source_indices[0], int) else i
-        
-        if art_idx not in article_idx_to_marker:
-            marker = CIRCLE_NUMBERS[next_marker_idx] if next_marker_idx < len(CIRCLE_NUMBERS) else f"[{next_marker_idx+1}]"
-            article_idx_to_marker[art_idx] = marker
-            article_idx_to_source[art_idx] = f.get("source_name", "")
-            next_marker_idx += 1
-        
-        # 챕터별 팩트 필터링: filter_fact_ids가 지정된 경우 해당 팩트만 표시
+            art_idx = source_indices[0] if source_indices and isinstance(source_indices[0], int) else 0
+        # 챕터별 팩트 필터링
         if filter_fact_ids is not None and f.get("id") not in filter_fact_ids:
             continue
-        
+        if art_idx not in source_groups:
+            source_groups[art_idx] = []
+        source_groups[art_idx].append(f)
+
+    for art_idx in sorted(source_groups.keys()):
         marker = article_idx_to_marker[art_idx]
-        source_label = f.get("source_name", "")
-        f_str += f"- {marker} [{f.get('id')}] ({source_label}) {f.get('content')}\n"
+        source_name = article_idx_to_source.get(art_idx, "Unknown")
+        f_str += f"\n### {marker} {source_name}\n"
+        for f in source_groups[art_idx]:
+            f_str += f"  - [{f.get('id')}] {f.get('content')}\n"
         
     o_str = "\n## AVAILABLE QUOTES/OPINIONS\n"
     o_str += (
