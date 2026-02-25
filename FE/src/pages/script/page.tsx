@@ -5,7 +5,6 @@ import { useSearchParams } from "react-router-dom"
 import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
-import { CompetitorAnalysis } from "./components/competitor-analysis"
 import { ScriptHeader } from "./components/script-header"
 import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle, Citation } from "../../lib/api/services"
@@ -31,22 +30,18 @@ function ScriptPageContent() {
 
       try {
         if (topicId) {
-          // topicId가 있으면 해당 결과만 조회
           const result = await getScriptById(topicId)
           if (result.script) {
-            console.log("[FE] 이전 결과 복원 (by ID):", result.topic_title)
             setScriptData(result.script)
             setReferences(result.references || [])
             setCitations(result.citations || [])
             hasExistingData = true
           }
         } else {
-          // topicId 없으면 최근 이력에서 복원
           const history = await getScriptHistory(1)
           if (history.length > 0) {
             const latest = history[0]
             if (latest.script) {
-              console.log("[FE] 이전 결과 복원 (최근):", latest.topic_title)
               setScriptData(latest.script)
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
@@ -71,30 +66,22 @@ function ScriptPageContent() {
   const handleGenerate = async () => {
     setIsGenerating(true)
     try {
-      console.log("[FE] 스크립트 생성 요청:", topic)
       const { task_id } = await executeScriptGen(topic, topicId)
-      console.log("[FE] Task ID:", task_id)
-
       const result = await pollScriptGenResult(task_id, (status) => {
         console.log("[FE] 상태:", status)
       })
-
       if (result.success && result.script) {
-        console.log("[FE] 생성 완료!", result)
         setScriptData(result.script)
         setReferences(result.references || [])
         setCitations(result.citations || [])
-
-        // 새로고침 시 복원을 위해 topicId를 URL에 반영
         if (result.topic_request_id) {
           const newParams = new URLSearchParams(searchParams)
           newParams.set("topicId", result.topic_request_id)
           setSearchParams(newParams, { replace: true })
-          console.log("[FE] URL에 topicId 반영:", result.topic_request_id)
         }
       } else {
-        console.error("[FE] 생성 실패:", result.error)
-        alert(`생성 실패: ${result.error}`)
+        const errMsg = result.error || result.message || "알 수 없는 오류"
+        alert(`생성 실패: ${errMsg}`)
       }
     } catch (error) {
       console.error("[FE] API 오류:", error)
@@ -129,7 +116,6 @@ function ScriptPageContent() {
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
               <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
-              <CompetitorAnalysis />
             </div>
           </div>
         </div>
