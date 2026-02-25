@@ -37,51 +37,16 @@ logger = logging.getLogger(__name__)
 # Graph Construction
 # =============================================================================
 
-def create_script_gen_graph(intent_only: bool = False, planner_only: bool = False, research_only: bool = False):
-    """Script Generation Graph 생성
-
-    Args:
-        intent_only:    True이면 intent_analyzer만 실행하고 종료 (테스트용)
-        planner_only:   True이면 intent_analyzer → planner 까지만 실행하고 종료 (테스트용)
-        research_only:  True이면 intent_analyzer → planner → news_research 까지만 실행하고 종료 (테스트용)
-    """
+def create_script_gen_graph():
+    """Script Generation Graph 생성 (전체 파이프라인)"""
 
     # 1. Graph 초기화
     workflow = StateGraph(ScriptGenState)
 
     # 2. 노드 추가
     workflow.add_node("intent_analyzer", intent_node)
-
-    # [TEST MODE A] intent_analyzer 결과만 확인
-    if intent_only:
-        workflow.set_entry_point("intent_analyzer")
-        workflow.add_edge("intent_analyzer", END)
-        app = workflow.compile()
-        logger.info("Script Generation Graph 생성 완료 (Test Mode: intent_analyzer only)")
-        return app
-
-    # workflow.add_node("trend_scout", trend_scout_node)  # 주석처리: topic_recommendations로 대체
     workflow.add_node("planner", planner_node)
-
-    # [TEST MODE B] intent_analyzer → planner 까지만 실행
-    if planner_only:
-        workflow.set_entry_point("intent_analyzer")
-        workflow.add_edge("intent_analyzer", "planner")
-        workflow.add_edge("planner", END)
-        app = workflow.compile()
-        logger.info("Script Generation Graph 생성 완료 (Test Mode: intent_analyzer → planner)")
-        return app
-
-    # [TEST MODE C] intent_analyzer → planner → news_research 까지만 실행
     workflow.add_node("news_research", news_research_node)
-    if research_only:
-        workflow.set_entry_point("intent_analyzer")
-        workflow.add_edge("intent_analyzer", "planner")
-        workflow.add_edge("planner", "news_research")
-        workflow.add_edge("news_research", END)
-        app = workflow.compile()
-        logger.info("Script Generation Graph 생성 완료 (Test Mode: intent_analyzer → planner → news_research)")
-        return app
     workflow.add_node("yt_fetcher", yt_fetcher_node)
     workflow.add_node("competitor_anal", competitor_anal_node)
     workflow.add_node("insight_builder", insight_builder_node)
@@ -124,26 +89,17 @@ async def generate_script(
     topic: str,
     channel_profile: dict,
     topic_request_id: str = None,
-    intent_only: bool = False,
-    planner_only: bool = False,
-    research_only: bool = False,
 ) -> dict:
     """
-    주제를 입력받아 파이프라인을 실행합니다.
+    주제를 입력받아 전체 파이프라인을 실행합니다.
 
     Args:
         topic: 사용자가 입력한 주제 (예: "AI 반도체 시장 동향")
         channel_profile: 채널 정보 (name, tone, target_audience 등)
         topic_request_id: 요청 ID (선택)
-        intent_only:    True이면 intent_analyzer 결과만 반환 (테스트용)
-        planner_only:   True이면 intent_analyzer → planner 결과만 반환 (테스트용)
-        research_only:  True이면 intent_analyzer → planner → news_research 결과만 반환 (테스트용)
 
     Returns:
-        intent_only=True   : {"intent_analysis": {...}}
-        planner_only=True  : {"intent_analysis": {...}, "content_brief": {...}}
-        research_only=True : {"intent_analysis": {...}, "content_brief": {...}, "news_data": {...}}
-        otherwise          : ScriptDraft dict (최종 대본)
+        ScriptDraft dict (최종 대본, news_data, competitor_data 포함)
     """
     import uuid
 
@@ -165,29 +121,12 @@ async def generate_script(
         "youtube_data": None
     }
 
-    mode = "research_only" if research_only else ("planner_only" if planner_only else ("intent_only" if intent_only else "full"))
-    logger.info(f"Script Generation 시작: {topic!r} (mode={mode})")
-    app = create_script_gen_graph(intent_only=intent_only, planner_only=planner_only, research_only=research_only)
+    logger.info(f"Script Generation 시작: {topic!r}")
+    app = create_script_gen_graph()
 
     try:
         final_state = await app.ainvoke(initial_state)
         logger.info("Script Generation 완료")
-
-        if intent_only:
-            return {"intent_analysis": final_state.get("intent_analysis", {})}
-
-        if planner_only:
-            return {
-                "intent_analysis": final_state.get("intent_analysis", {}),
-                "content_brief": final_state.get("content_brief", {}),
-            }
-
-        if research_only:
-            return {
-                "intent_analysis": final_state.get("intent_analysis", {}),
-                "content_brief": final_state.get("content_brief", {}),
-                "news_data": final_state.get("news_data", {}),
-            }
 
         # 전체 파이프라인 결과
         result = final_state["script_draft"].copy()

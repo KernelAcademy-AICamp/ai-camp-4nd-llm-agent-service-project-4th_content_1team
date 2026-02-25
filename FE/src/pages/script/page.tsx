@@ -6,7 +6,7 @@ import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
-import { runResearchOnly, executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
+import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle, Citation, YoutubeVideo } from "../../lib/api/services"
 
 function ScriptPageContent() {
@@ -31,25 +31,45 @@ function ScriptPageContent() {
 
       try {
         if (topicId) {
-          // topicId가 있으면 해당 결과만 조회
           const result = await getScriptById(topicId)
           if (result.script) {
-            console.log("[FE] 이전 결과 복원 (by ID):", result.topic_title)
             setScriptData(result.script)
             setReferences(result.references || [])
             setCitations(result.citations || [])
+            if (result.competitor_videos?.length) {
+              setYoutubeVideos(result.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
+                video_id: v.video_id,
+                title: v.title,
+                channel: v.channel || "",
+                url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
+                thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
+                view_count: 0,
+                view_velocity: 0,
+                search_keyword: "",
+              })))
+            }
             hasExistingData = true
           }
         } else {
-          // topicId 없으면 최근 이력에서 복원
           const history = await getScriptHistory(1)
           if (history.length > 0) {
             const latest = history[0]
             if (latest.script) {
-              console.log("[FE] 이전 결과 복원 (최근):", latest.topic_title)
               setScriptData(latest.script)
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
+              if (latest.competitor_videos?.length) {
+                setYoutubeVideos(latest.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
+                  video_id: v.video_id,
+                  title: v.title,
+                  channel: v.channel || "",
+                  url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
+                  thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
+                  view_count: 0,
+                  view_velocity: 0,
+                  search_keyword: "",
+                })))
+              }
               hasExistingData = true
             }
           }
@@ -69,86 +89,42 @@ function ScriptPageContent() {
   }, [topicId])
 
   const handleGenerate = async () => {
-    // -----------------------------------------------------------------------
-    // [TEST] Intent Analyzer → Planner → News Research 순서 실행
-    // 각 키워드당 1개 기사를 선별하여 참고자료 패널에 표시합니다.
-    // -----------------------------------------------------------------------
     setIsGenerating(true)
     try {
-      console.log("[FE][TEST] Intent → Planner → Research 실행 요청:", topic)
-      const result = await runResearchOnly(topic, topicId)
-
-      // 참고자료 표시
-      if (result.references && result.references.length > 0) {
-        setReferences(result.references)
-        console.log(`[FE][TEST] 참고자료 ${result.references.length}개 수집 완료`)
-      }
-
-      // YouTube 영상 표시
-      if (result.youtube_videos && result.youtube_videos.length > 0) {
-        setYoutubeVideos(result.youtube_videos)
-        console.log(`[FE][TEST] YouTube 영상 ${result.youtube_videos.length}개 수집 완료`)
-      }
-
-      // Planner 결과 콘솔 출력
-      if (result.content_brief) {
-        const { content_angle, research_plan } = result.content_brief
-        console.group("[FE][TEST] Planner 결과 (content_brief)")
-
-        console.group("콘텐츠 앵글")
-        console.log("앵글:  ", content_angle.angle)
-        console.log("설명:  ", content_angle.description)
-        console.log("훅:    ", content_angle.hook)
-        console.groupEnd()
-
-        console.group(`리서치 플랜 (${research_plan.sources.length}개 소스)`)
-        research_plan.sources.forEach((s, i) => {
-          console.log(`  ${i + 1}. "${s.keyword}"`)
-          console.log(`     활용: ${s.how_to_use}`)
-        })
-        console.log("유튜브 검색 키워드:", research_plan.youtube_keywords)
-        console.groupEnd()
-
-        console.log("--- 전체 JSON ---")
-        console.log(JSON.stringify(result.content_brief, null, 2))
-        console.groupEnd()
+      const { task_id } = await executeScriptGen(topic, topicId)
+      const result = await pollScriptGenResult(task_id, (status) => {
+        console.log("[FE] 상태:", status)
+      })
+      if (result.success && result.script) {
+        setScriptData(result.script)
+        setReferences(result.references || [])
+        setCitations(result.citations || [])
+        if (result.competitor_videos && result.competitor_videos.length > 0) {
+          setYoutubeVideos(result.competitor_videos.map((v: { video_id: string; title: string; channel?: string; url?: string; thumbnail?: string }) => ({
+            video_id: v.video_id,
+            title: v.title,
+            channel: v.channel || "",
+            url: v.url || `https://www.youtube.com/watch?v=${v.video_id}`,
+            thumbnail: v.thumbnail || `https://img.youtube.com/vi/${v.video_id}/default.jpg`,
+            view_count: 0,
+            view_velocity: 0,
+            search_keyword: "",
+          })))
+        }
+        if (result.topic_request_id) {
+          const newParams = new URLSearchParams(searchParams)
+          newParams.set("topicId", result.topic_request_id)
+          setSearchParams(newParams, { replace: true })
+        }
       } else {
-        console.warn("[FE][TEST] content_brief 없음:", result)
+        alert(`생성 실패: ${result.error || "알 수 없는 오류"}`)
       }
-
-      alert(`[TEST] Research 완료! 참고자료 ${result.references?.length || 0}개 수집. 브라우저 콘솔(F12)에서 Planner 결과를 확인하세요.`)
     } catch (error) {
-      console.error("[FE][TEST] API 오류:", error)
+      console.error("[FE] API 오류:", error)
       alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
     } finally {
       setIsGenerating(false)
     }
-    // -----------------------------------------------------------------------
-    // [ORIGINAL] 아래는 원래 풀 파이프라인 코드 (테스트 후 복원)
-    // -----------------------------------------------------------------------
-    // setIsGenerating(true)
-    // try {
-    //   const { task_id } = await executeScriptGen(topic, topicId)
-    //   const result = await pollScriptGenResult(task_id, (status) => {
-    //     console.log("[FE] 상태:", status)
-    //   })
-    //   if (result.success && result.script) {
-    //     setScriptData(result.script)
-    //     setReferences(result.references || [])
-    //     setCitations(result.citations || [])
-    //     if (result.topic_request_id) {
-    //       const newParams = new URLSearchParams(searchParams)
-    //       newParams.set("topicId", result.topic_request_id)
-    //       setSearchParams(newParams, { replace: true })
-    //     }
-    //   } else {
-    //     alert(`생성 실패: ${result.error}`)
-    //   }
-    // } catch (error) {
-    //   alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
-    // } finally {
-    //   setIsGenerating(false)
-    // }
   }
 
   return (

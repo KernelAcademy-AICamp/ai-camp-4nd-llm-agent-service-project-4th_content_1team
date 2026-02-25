@@ -5,7 +5,6 @@ Script Generation API Router
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.concurrency import run_in_threadpool  # run_in_threadpool 임포트
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -15,8 +14,6 @@ from app.models.user import User
 from app.schemas.script_gen import (
     ScriptGenStartRequest,
     ScriptGenStartResponse,
-    ScriptGenPlannerResponse,
-    ScriptGenResearchResponse,
     PlannerInputResponse,
     ChannelProfileResponse,
     TopicContextResponse,
@@ -29,7 +26,6 @@ from src.script_gen.utils.input_builder import (
     PlannerInputBuildError,
 )
 from src.script_gen.graph import generate_script
-from src.script_gen.nodes.yt_fetcher import search_top_video_per_keyword
 
 logger = logging.getLogger(__name__)
 
@@ -283,166 +279,6 @@ async def start_script_generation(
         )
 
 
-@router.post("/planner", response_model=ScriptGenPlannerResponse)
-async def run_planner(
-    request: ScriptGenStartRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Planner 노드만 실행 (테스트/디버깅용)
-    
-    1. Planner 입력 생성
-    2. Planner 노드 실행
-    3. ContentBrief 반환
-    """
-    
-    try:
-        # 1. Planner 입력 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
-        planner_input = await build_planner_input(
-            db=db,
-            topic=request.topic,
-            user_id=str(current_user.id),
-            topic_recommendation_id=request.topic_recommendation_id,
-        )
-
-        # 2. topic_context를 channel_profile에 병합
-        channel_profile = planner_input["channel_profile"].copy()
-        if planner_input.get("topic_context"):
-            channel_profile["topic_context"] = planner_input["topic_context"]
-
-        logger.info(f"[Planner] intent_analyzer → planner 실행: {request.topic!r}")
-
-        # 3. intent_analyzer → planner 파이프라인 실행
-        result = await generate_script(
-            topic=planner_input["topic"],
-            channel_profile=channel_profile,
-            planner_only=True,
-        )
-
-        logger.info("[Planner] 완료")
-
-        return ScriptGenPlannerResponse(
-            success=True,
-            message="콘텐츠 기획안이 생성되었습니다.",
-            content_brief=result.get("content_brief"),
-            error=None,
-        )
-
-    except PlannerInputBuildError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-
-    except Exception as e:
-        logger.error(f"Error in run_planner: {e}", exc_info=True)
-        return ScriptGenPlannerResponse(
-            success=False,
-            message="콘텐츠 기획안 생성에 실패했습니다.",
-            content_brief=None,
-            error=str(e),
-        )
-
-
-@router.post("/research", response_model=ScriptGenResearchResponse)
-async def run_research(
-    request: ScriptGenStartRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Planner + News Research 실행 (테스트/디버깅용)
-
-    각 키워드당 제일 관련성 높은 기사 1개씩 선별하여 참고자료로 반환합니다.
-    """
-    try:
-        # 1. Planner Input 빌드
-        planner_input = await build_planner_input(
-            db=db,
-            topic=request.topic,
-            user_id=str(current_user.id),
-            topic_recommendation_id=request.topic_recommendation_id,
-        )
-
-        channel_profile = planner_input["channel_profile"].copy()
-        if planner_input.get("topic_context"):
-            channel_profile["topic_context"] = planner_input["topic_context"]
-
-        logger.info(f"[Research] intent → planner → news_research 실행: {request.topic!r}")
-
-        # 2. intent_analyzer → planner → news_research 파이프라인 실행
-        result = await generate_script(
-            topic=planner_input["topic"],
-            channel_profile=channel_profile,
-            research_only=True,
-        )
-
-        # 3. news_data.articles → references 형식으로 변환
-        articles = result.get("news_data", {}).get("articles", [])
-        references = []
-        for art in articles:
-            if art.get("title") and art.get("url"):
-                # 이미지 + 차트 통합
-                all_images = []
-                for img in art.get("images", []):
-                    if img.get("url"):
-                        all_images.append({
-                            "url": img["url"],
-                            "caption": img.get("desc", ""),
-                            "is_chart": img.get("type") in ["chart", "table"],
-                        })
-                for img in art.get("charts", []):
-                    if img.get("url"):
-                        all_images.append({
-                            "url": img["url"],
-                            "caption": img.get("desc", ""),
-                            "is_chart": True,
-                        })
-
-                references.append({
-                    "title": art.get("title"),
-                    "summary": art.get("summary_short") or art.get("summary", "")[:200],
-                    "source": art.get("source", "Unknown"),
-                    "url": art.get("url"),
-                    "date": art.get("pub_date"),
-                    "query": art.get("query"),
-                    "analysis": art.get("analysis"),
-                    "images": all_images,
-                })
-
-        logger.info(f"[Research] 완료: {len(references)}개 기사")
-
-        # 4. YouTube 키워드별 인기 영상 검색 (기간당 조회수 증가율 기준)
-        youtube_keywords = result.get("content_brief", {}).get("search_queries", [])
-        youtube_videos = []
-        if youtube_keywords:
-            logger.info(f"[Research] YouTube 검색: {youtube_keywords}")
-            youtube_videos = await run_in_threadpool(
-                search_top_video_per_keyword, youtube_keywords
-            )
-            logger.info(f"[Research] YouTube 완료: {len(youtube_videos)}개 영상")
-
-        return ScriptGenResearchResponse(
-            success=True,
-            message=f"기사 {len(references)}개, 영상 {len(youtube_videos)}개 수집 완료",
-            content_brief=result.get("content_brief"),
-            references=references,
-            youtube_videos=youtube_videos,
-        )
-
-    except PlannerInputBuildError as e:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
-
-    except Exception as e:
-        logger.error(f"Error in run_research: {e}", exc_info=True)
-        return ScriptGenResearchResponse(
-            success=False,
-            message="리서치 실행에 실패했습니다.",
-            error=str(e),
-        )
-
-
 # =============================================================================
 # 참고 영상 분석
 # =============================================================================
@@ -483,42 +319,6 @@ async def analyze_reference_video(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"영상 분석 실패: {str(e)}",
-        )
-
-
-# =============================================================================
-# Test Endpoint: Intent Analyzer Only
-# =============================================================================
-
-@router.post("/intent", response_model=None)
-async def run_intent_only(
-    request: ScriptGenStartRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    [테스트용] Intent Analyzer 노드만 실행하고 결과 반환.
-    Planner 이후 노드는 실행되지 않습니다.
-    """
-    try:
-        planner_input = await build_planner_input(
-            db=db,
-            topic=request.topic,
-            user_id=str(current_user.id),
-            topic_recommendation_id=request.topic_recommendation_id,
-        )
-        result = await generate_script(
-            topic=planner_input["topic"],
-            channel_profile=planner_input["channel_profile"],
-            intent_only=True,
-        )
-        return {"success": True, "intent_analysis": result.get("intent_analysis", {})}
-
-    except Exception as e:
-        logger.error(f"Intent-only test failed: {e}", exc_info=True)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e),
         )
 
 

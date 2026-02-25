@@ -6,13 +6,6 @@ import asyncio
 # 로깅 설정
 logger = logging.getLogger(__name__)
 
-# =============================================================================
-# [TEST FLAG] Intent Analyzer 단독 테스트
-# True  → /execute 호출 시 intent_analyzer만 실행하고 결과 출력 후 종료
-# False → 정상 풀 파이프라인 실행
-# =============================================================================
-INTENT_ONLY_TEST = True  # TODO: 테스트 완료 후 False로 변경
-
 import os
 import base64
 import uuid
@@ -123,39 +116,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 topic=topic,
                 channel_profile=channel_profile,
                 topic_request_id=topic_request_id,
-                intent_only=INTENT_ONLY_TEST,
             ))
-
-            # ----------------------------------------------------------------
-            # [TEST MODE] intent_only=True → 결과 출력 후 즉시 종료
-            # ----------------------------------------------------------------
-            if INTENT_ONLY_TEST:
-                intent = result.get("intent_analysis", {})
-                intent_mix = intent.get("intent_mix", {})
-                sub_topics = intent.get("sub_topics", [])
-
-                lines = [
-                    "=" * 60,
-                    "[IntentAnalyzer] 결과",
-                    "=" * 60,
-                    f"  core_question    : {intent.get('core_question', '-')}",
-                    f"  reader_pain_point: {intent.get('reader_pain_point', '-')}",
-                    f"  reader_desire    : {intent.get('reader_desire', '-')}",
-                    f"  intent_mix       : informational={intent_mix.get('informational', 0)} / "
-                    f"emotional={intent_mix.get('emotional', 0)} / "
-                    f"actionable={intent_mix.get('actionable', 0)}",
-                    f"  content_angle    : {intent.get('content_angle', '-')}",
-                    "  sub_topics       :",
-                ]
-                for idx, st in enumerate(sub_topics, 1):
-                    lines.append(
-                        f"    {idx}. [{st.get('topic', '')}] — {st.get('reason', '')} "
-                        f"(hint: {st.get('search_hint', '')})"
-                    )
-                lines.append("=" * 60)
-                print("\n".join(lines), flush=True)
-
-                return {"success": True, "message": "[TEST] intent_only 결과 출력 완료", "intent_analysis": intent}
 
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
             
