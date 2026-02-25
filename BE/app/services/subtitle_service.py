@@ -6,8 +6,8 @@ import tempfile
 from typing import Optional
 import json
 
-from youtube_transcript_api import YouTubeTranscriptApi
-from youtube_transcript_api._errors import (
+from youtube_transcript_api import (
+    YouTubeTranscriptApi,
     TranscriptsDisabled,
     NoTranscriptFound,
     VideoUnavailable,
@@ -98,7 +98,11 @@ class SubtitleService:
                     "text": snippet.text.strip(),
                 })
             
-            lang = transcript.language_code if hasattr(transcript, 'language_code') else languages[0]
+            lang = (
+                transcript.language_code
+                if hasattr(transcript, 'language_code')
+                else (languages[0] if languages else "und")
+            )
             is_auto = transcript.is_generated if hasattr(transcript, 'is_generated') else False
             
             logger.info(
@@ -120,16 +124,16 @@ class SubtitleService:
             }
         except TranscriptsDisabled:
             logger.info(f"[SUBTITLE] transcript-api: 자막 비활성화 [{video_id}]")
-            return {"status": "no_subtitle", "source": "transcript-api", "no_captions": True, "error": None}
+            return {"video_id": video_id, "status": "no_subtitle", "source": "transcript-api", "tracks": [], "no_captions": True, "error": None}
         except NoTranscriptFound:
             logger.info(f"[SUBTITLE] transcript-api: 해당 언어 자막 없음 [{video_id}]")
-            return {"status": "no_subtitle", "source": "transcript-api", "no_captions": True, "error": None}
+            return {"video_id": video_id, "status": "no_subtitle", "source": "transcript-api", "tracks": [], "no_captions": True, "error": None}
         except VideoUnavailable:
             logger.warning(f"[SUBTITLE] transcript-api: 영상 접근 불가 [{video_id}]")
-            return {"status": "failed", "source": "transcript-api", "no_captions": True, "error": "Video unavailable"}
+            return {"video_id": video_id, "status": "failed", "source": "transcript-api", "tracks": [], "no_captions": True, "error": "Video unavailable"}
         except Exception as e:
             logger.warning(f"[SUBTITLE] transcript-api 실패 [{video_id}]: {type(e).__name__}: {e}")
-            return {"status": "failed", "source": "transcript-api", "no_captions": True, "error": str(e)}
+            return {"video_id": video_id, "status": "failed", "source": "transcript-api", "tracks": [], "no_captions": True, "error": str(e)}
 
     @staticmethod
     async def fetch_subtitles(
@@ -221,7 +225,7 @@ class SubtitleService:
                     break
 
             # 최종 결과 처리
-            if result is None or result.get("status") != "success":
+            if result is None:
                 result = {
                     "video_id": video_id,
                     "status": "failed",
@@ -231,6 +235,8 @@ class SubtitleService:
                     "error": last_error or "Unknown error",
                 }
                 logger.error(f"[SUBTITLE] ✗ 최종 실패 [{video_id}] error={last_error}")
+            elif result.get("status") == "failed" and not result.get("error"):
+                result["error"] = last_error or "Unknown error"
 
             results.append(result)
             
