@@ -115,9 +115,9 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             result = loop.run_until_complete(generate_script(
                 topic=topic,
                 channel_profile=channel_profile,
-                topic_request_id=topic_request_id
+                topic_request_id=topic_request_id,
             ))
-        
+
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
             
             # [DEBUG] 결과 데이터 확인
@@ -208,6 +208,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "source": art.get("source", "Unknown"),
                         "url": art.get("url"),
                         "date": art.get("pub_date"),
+                        "query": art.get("query"),  # 검색에 사용된 키워드
                         "analysis": {
                             "facts": facts,
                             "opinions": opinions
@@ -340,6 +341,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         return {
             "success": False,
             "message": str(e),
+            "error": str(e),
             "script": None,
             "references": None
         }

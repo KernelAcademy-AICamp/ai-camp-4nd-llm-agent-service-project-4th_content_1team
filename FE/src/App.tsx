@@ -8,6 +8,7 @@ import ScriptPage from './pages/script/page'
 import ThumbnailPage from './pages/thumbnail/page'
 import AnalysisPage from './pages/analysis/page'
 import { ProtectedRoute } from './components/ProtectedRoute'
+
 function App() {
   return (
     <RootLayout>
@@ -15,7 +16,7 @@ function App() {
         <Route>
           {/* Public Routes */}
           <Route index element={<LoginPage />} />
-          
+
           {/* Protected Routes */}
           <Route path="onboarding" element={<ProtectedRoute><OnboardingPage /></ProtectedRoute>} />
           <Route path="dashboard" element={<ProtectedRoute><DashboardPage /></ProtectedRoute>} />
