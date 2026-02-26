@@ -108,6 +108,20 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         from app.core.db import engine
         loop.run_until_complete(engine.dispose())
         
+        # ★ 진행 상황 콜백: Celery update_state로 Redis에 저장
+        from src.script_gen.graph import PIPELINE_STEPS
+        def progress_callback(current_step: str, message: str, completed_steps: list):
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current_step': current_step,
+                    'message': message,
+                    'completed_steps': completed_steps,
+                    'total_steps': len(PIPELINE_STEPS),
+                    'steps': PIPELINE_STEPS,
+                }
+            )
+        
         try:
             # TopicRequest가 없으면 생성
             if not topic_request_id:
@@ -122,6 +136,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 topic=topic,
                 channel_profile=channel_profile,
                 topic_request_id=topic_request_id,
+                progress_callback=progress_callback,
             ))
 
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")

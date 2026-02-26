@@ -4,8 +4,8 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Button } from "../../../components/ui/button"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
-import { Copy, RefreshCw, Sparkles, Clock, Check, AlignLeft } from "lucide-react"
-import type { Citation } from "../../../lib/api/services"
+import { Copy, RefreshCw, Sparkles, Clock, Check, AlignLeft, Loader2, CheckCircle2, Circle } from "lucide-react"
+import type { Citation, ProgressInfo } from "../../../lib/api/services"
 
 interface ScriptEditorProps {
   apiData?: { hook: string; chapters: { title: string; content: string }[]; outro: string } | null;
@@ -13,6 +13,7 @@ interface ScriptEditorProps {
   onRegenerate?: () => void;
   citations?: Citation[];
   onCitationClick?: (sourceUrl: string) => void;
+  progress?: ProgressInfo | null;
 }
 
 /**
@@ -48,7 +49,18 @@ function parseFullScript(text: string): { intro: string; body: string; outro: st
   return { intro: parsedIntro, body: parsedBody, outro: parsedOutro }
 }
 
-export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, citations = [], onCitationClick }: ScriptEditorProps = {}) {
+// ★ 기본 스텝 목록 (서버에서 받기 전 표시용)
+const DEFAULT_STEPS = [
+  { key: "intent_analyzer", label: "시청자 의도 분석", emoji: "🎯" },
+  { key: "planner", label: "콘텐츠 기획안 작성", emoji: "📋" },
+  { key: "research", label: "뉴스 기사 수집 및 유튜브 영상 검색", emoji: "📰" },
+  { key: "analysis", label: "기사 심층 분석 및 경쟁 영상 분석", emoji: "�" },
+  { key: "insight_builder", label: "전략 인사이트 수립", emoji: "💡" },
+  { key: "writer", label: "스크립트 작성", emoji: "✍️" },
+  { key: "verifier", label: "팩트 체크 검증", emoji: "✅" },
+]
+
+export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, citations = [], onCitationClick, progress = null }: ScriptEditorProps = {}) {
   const [intro, setIntro] = useState("")
   const [body, setBody] = useState("")
   const [outro, setOutro] = useState("")
@@ -56,12 +68,16 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
   const [fullViewOverride, setFullViewOverride] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("full")
 
-  // API 데이터가 있으면 사용
+  // API 데이터가 있으면 사용, null이면 초기화 (재생성 시 진행 UI 표시용)
   useEffect(() => {
     if (apiData) {
       setIntro(apiData.hook || "");
       setBody(apiData.chapters.map(ch => `## ${ch.title}\n\n${ch.content}`).join("\n\n") || "");
       setOutro(apiData.outro || "");
+    } else {
+      setIntro("");
+      setBody("");
+      setOutro("");
     }
   }, [apiData]);
 
@@ -98,6 +114,9 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
     }
     setActiveTab(value)
   }, [fullViewOverride])
+
+  // ★ 진행 상황 또는 빈 화면 표시 여부
+  const showEmptyOrProgress = !intro && !body && !outro
 
   return (
     <Card className="border-border/50 bg-card/50 backdrop-blur h-full flex flex-col">
@@ -142,16 +161,67 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
         </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-auto">
-        {!intro && !body && !outro ? (
-          // Empty State
-          <div className="h-full flex items-center justify-center">
-            <div className="text-center space-y-3 p-8">
-              <div className="text-4xl">💭</div>
-              <p className="text-muted-foreground text-sm">
-                "재생성 버튼을 눌러<br />AI 스크립트를 생성하세요"
-              </p>
+        {showEmptyOrProgress ? (
+          // ★ 생성 중이면 진행 상황 표시, 아니면 빈 화면
+          isGenerating ? (
+            <div className="h-full flex items-center justify-center">
+              <div className="w-full max-w-sm space-y-1">
+                <div className="text-center mb-6">
+                  <Loader2 className="w-8 h-8 animate-spin text-primary mx-auto mb-3" />
+                  <p className="text-sm font-medium text-foreground">
+                    {progress?.message || "AI 에이전트 파이프라인 실행 중..."}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {progress ? `${progress.completed_steps.length} / ${progress.total_steps} 단계 완료` : "잠시만 기다려주세요..."}
+                  </p>
+                </div>
+                <div className="space-y-0.5">
+                  {(progress?.steps || DEFAULT_STEPS).map((step) => {
+                    const isCompleted = progress?.completed_steps?.includes(step.key) || false
+                    const isCurrent = progress?.current_step === step.key && !isCompleted
+                    return (
+                      <div
+                        key={step.key}
+                        className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-300 ${isCompleted
+                          ? "bg-primary/10 text-foreground"
+                          : isCurrent
+                            ? "bg-primary/5 text-foreground"
+                            : "text-muted-foreground/50"
+                          }`}
+                      >
+                        <div className="w-5 h-5 flex items-center justify-center flex-shrink-0">
+                          {isCompleted ? (
+                            <CheckCircle2 className="w-4 h-4 text-primary" />
+                          ) : isCurrent ? (
+                            <Loader2 className="w-4 h-4 text-primary animate-spin" />
+                          ) : (
+                            <Circle className="w-3.5 h-3.5 text-muted-foreground/30" />
+                          )}
+                        </div>
+                        <span className="text-xl leading-none">{step.emoji}</span>
+                        <span className={`text-sm ${isCompleted ? "font-medium" : isCurrent ? "font-medium" : ""}`}>
+                          {step.label}
+                        </span>
+                        {isCompleted && (
+                          <span className="text-xs text-primary/60 ml-auto">완료</span>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
             </div>
-          </div>
+          ) : (
+            // 빈 화면
+            <div className="h-full flex items-center justify-center">
+              <div className="text-center space-y-3 p-8">
+                <div className="text-4xl">💭</div>
+                <p className="text-muted-foreground text-sm">
+                  "재생성 버튼을 눌러<br />AI 스크립트를 생성하세요"
+                </p>
+              </div>
+            </div>
+          )
         ) : (
           // 실제 컨텐츠
           <Tabs value={activeTab} onValueChange={handleTabChange} className="h-full flex flex-col">
