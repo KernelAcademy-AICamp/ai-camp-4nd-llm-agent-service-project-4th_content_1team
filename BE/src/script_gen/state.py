@@ -16,6 +16,7 @@ class ScriptGenState(TypedDict, total=False):
     
     Workflow:
         User Input (topic + channel_profile)
+        → Intent Analyzer (intent_analysis)
         → Planner (content_brief)
         → News Research (news_data) + YT Fetcher (youtube_data)
         → Competitor Analyzer (competitor_data)
@@ -61,23 +62,43 @@ class ScriptGenState(TypedDict, total=False):
     """
     
     # ==========================================================================
+    # 1.5. Intent Analyzer 노드 결과 (Planner 이전)
+    # ==========================================================================
+    intent_analysis: Dict[str, Any]
+    """
+    독자 의도 분석 결과 (Intent Analyzer가 생성, Planner가 활용)
+
+    구조:
+        - core_question: 시청자가 진짜 원하는 핵심 질문
+        - reader_pain_point: 시청자의 고민/불편함
+        - reader_desire: 시청자가 원하는 결과
+        - intent_mix: 의도 비율 {"informational": int, "emotional": int, "actionable": int}
+        - content_angle: 콘텐츠 접근 각도
+        - sub_topics: 다뤄야 할 하위 주제 [{"topic": str, "reason": str, "search_hint": str}]
+    """
+
+    # ==========================================================================
     # 2. Planner 노드 결과 (태윤)
     # ==========================================================================
     content_brief: Dict[str, Any]
     """
-    콘텐츠 기획안
-    
+    콘텐츠 기획안 (Planner 출력)
+
     구조:
-        - workingTitleCandidates: 제목 후보 (3-5개)
-        - coreQuestions: 핵심 질문
-        - narrative: 내러티브 구조
-            - hookGoal: 훅 전략
-            - structure: 구조
-            - chapters: 챕터 리스트 (정확히 5개)
-        - researchPlan: 리서치 계획
-            - newsQuery: 뉴스 검색 키워드 (6개 이상)
-            - competitorQuery: 경쟁사 검색 키워드 (4개 이상)
-            - freshnessDays: 신선도 기준 (7-365일)
+        - content_angles: 콘텐츠 앵글 3개
+            - angle: 앵글 이름 (예: "반박형 - 예상을 뒤집는 관점")
+            - description: 앵글 설명
+            - hook: 훅 문장
+        - research_plan: 리서치 플랜
+            - sources: 소스 목록 (최소 5개)
+                - keyword: 검색 키워드
+                - source_type: 소스 유형 (뉴스 기사 / 통계·보고서 / 공식 발표 / 커뮤니티 반응 / 사례 연구 / 학술·전문 자료)
+                - how_to_use: 영상에서 활용 방법
+            - youtube_keywords: 유사 유튜브 영상 검색 키워드 2개
+
+    파생 필드 (downstream 호환용 — Planner가 자동 생성):
+        - researchPlan.newsQuery: sources[].keyword 추출 → news_research_node 사용
+        - search_queries: youtube_keywords → yt_fetcher_node 사용
     """
     
     # ==========================================================================

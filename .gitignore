@@ -11,3 +11,6 @@ BE/public/images/news/
 # Local documentation
 md/RUN_GUIDE.md
 md/ASYNC_REFACTOR_PLAN.md
+BE/insert_topic.sql
+seed_persona.sql
+FE_CHANGES_ANALYSIS.md

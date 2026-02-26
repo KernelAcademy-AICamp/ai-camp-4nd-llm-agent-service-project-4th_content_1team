@@ -47,6 +47,7 @@ async def _save_result_to_db(topic_request_id: str, formatted: dict):
                 source_map_json={
                     "references": formatted.get("references", []),
                     "competitor_videos": formatted.get("competitor_videos", []),
+                    "citations": formatted.get("citations", []),
                 },
             )
             session.add(verified)
@@ -114,9 +115,9 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             result = loop.run_until_complete(generate_script(
                 topic=topic,
                 channel_profile=channel_profile,
-                topic_request_id=topic_request_id
+                topic_request_id=topic_request_id,
             ))
-        
+
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
             
             # [DEBUG] 결과 데이터 확인
@@ -207,6 +208,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "source": art.get("source", "Unknown"),
                         "url": art.get("url"),
                         "date": art.get("pub_date"),
+                        "query": art.get("query"),  # 검색에 사용된 키워드
                         "analysis": {
                             "facts": facts,
                             "opinions": opinions
@@ -232,12 +234,88 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "strong_points": video.get("strong_points", [])
                     })
             
+            # Citations 배열 생성 (기사 기준 ①②③ → 출처 매핑)
+            CIRCLE_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
+                              "⑪", "⑫", "⑬", "⑭", "⑮", "⑯", "⑰", "⑱", "⑲", "⑳"]
+            
+            structured_facts = news_data.get("structured_facts", [])
+            
+            # 스크립트 전체 텍스트 조합 (실제 사용된 마커 필터링용)
+            script_full_text = ""
+            if final_script:
+                script_full_text = (final_script.get("hook", "") + " "
+                    + " ".join(ch.get("content", "") for ch in final_script.get("chapters", []))
+                    + " " + final_script.get("outro", ""))
+            
+            all_citations = []
+            article_idx_to_marker = {}  # 기사 인덱스 → 마커 매핑
+            next_marker_idx = 0
+            
+            for fact in structured_facts:
+                # 확정된 source_index를 우선 사용 (news_research에서 하드코딩)
+                source_article = None
+                art_idx = fact.get("source_index")
+                
+                if art_idx is not None and 0 <= art_idx < len(articles):
+                    source_article = articles[art_idx]
+                else:
+                    # 호환: 기존 source_indices fallback
+                    source_indices = fact.get("source_indices", [])
+                    if source_indices and isinstance(source_indices, list):
+                        first_idx = source_indices[0] if isinstance(source_indices[0], int) else None
+                        if first_idx is not None and 0 <= first_idx < len(articles):
+                            source_article = articles[first_idx]
+                            art_idx = first_idx
+                
+                # 기사 인덱스 기준으로 마커 할당 (같은 기사 = 같은 번호)
+                if art_idx is not None:
+                    if art_idx not in article_idx_to_marker:
+                        marker = CIRCLE_NUMBERS[next_marker_idx] if next_marker_idx < len(CIRCLE_NUMBERS) else f"[{next_marker_idx+1}]"
+                        article_idx_to_marker[art_idx] = {
+                            "marker": marker,
+                            "number": next_marker_idx + 1,
+                        }
+                        next_marker_idx += 1
+                    info = article_idx_to_marker[art_idx]
+                else:
+                    # 출처 기사를 못 찾으면 새 번호 할당
+                    marker = CIRCLE_NUMBERS[next_marker_idx] if next_marker_idx < len(CIRCLE_NUMBERS) else f"[{next_marker_idx+1}]"
+                    info = {"marker": marker, "number": next_marker_idx + 1}
+                    next_marker_idx += 1
+                
+                # source_name(확정)을 우선 사용, 없으면 article에서 가져옴
+                source_display = fact.get("source_name") or (source_article.get("source", "Unknown") if source_article else "Unknown")
+                
+                all_citations.append({
+                    "marker": info["marker"],
+                    "number": info["number"],
+                    "fact_id": fact.get("id"),
+                    "content": fact.get("content"),
+                    "category": fact.get("category", "Fact"),
+                    "source": source_display,
+                    "source_title": source_article.get("title", "") if source_article else "",
+                    "source_url": fact.get("article_url") or (source_article.get("url", "") if source_article else ""),
+                })
+            
+            # 스크립트에 실제 사용된 마커만 필터링
+            # all_citations의 모든 마커를 검사 (①~⑳ 뿐 아니라 [21] 등 대괄호 형식도 포함)
+            used_markers = set()
+            for c in all_citations:
+                if c["marker"] in script_full_text:
+                    used_markers.add(c["marker"])
+            
+            if used_markers:
+                citations = [c for c in all_citations if c["marker"] in used_markers]
+            else:
+                citations = all_citations  # 마커 찾기 실패 시 전체 표시 (안전 fallback)
+            
             formatted_result = {
                 "success": True,
                 "message": "작업 완료",
                 "script": final_script,
                 "references": references,
-                "competitor_videos": competitor_videos
+                "competitor_videos": competitor_videos,
+                "citations": citations
             }
             
             # ====== DB에 결과 저장 ======
@@ -263,6 +341,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         return {
             "success": False,
             "message": str(e),
+            "error": str(e),
             "script": None,
             "references": None
         }

@@ -10,7 +10,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content_topic import ChannelTopic, TrendTopic
 from app.models.channel_persona import ChannelPersona
-from app.services.keyword_extraction_service import extract_keywords_batch
+# [제거] Planner가 영상 구조에서 키워드를 역산하므로 미리 뽑을 필요 없음
+# from app.services.keyword_extraction_service import extract_keywords_batch
 
 
 # =============================================================================
@@ -155,8 +156,8 @@ async def generate_channel_topics(
     if not recommendations_raw:
         return []
 
-    # 3.5. 키워드 에이전트로 search_keywords 품질 향상
-    recommendations_raw = await _enhance_search_keywords(recommendations_raw)
+    # [제거] Planner가 영상 구조에서 키워드를 역산하므로 미리 뽑을 필요 없음
+    # recommendations_raw = await _enhance_search_keywords(recommendations_raw)
 
     # 4. DB 저장
     now = datetime.utcnow()
@@ -220,8 +221,8 @@ async def generate_trend_topics(
     if not recommendations_raw:
         return []
 
-    # 3.5. 키워드 에이전트로 search_keywords 품질 향상
-    recommendations_raw = await _enhance_search_keywords(recommendations_raw)
+    # [제거] Planner가 영상 구조에서 키워드를 역산하므로 미리 뽑을 필요 없음
+    # recommendations_raw = await _enhance_search_keywords(recommendations_raw)
 
     # 4. DB 저장
     now = datetime.utcnow()

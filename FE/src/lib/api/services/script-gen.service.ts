@@ -12,15 +12,28 @@ export interface GeneratedScript {
     outro: string;
 }
 
+export interface Citation {
+    marker: string;
+    number: number;
+    fact_id: string;
+    content: string;
+    category: string;
+    source: string;
+    source_title: string;
+    source_url: string;
+}
+
 export interface ReferenceArticle {
     title: string;
     summary: string;
     source: string;
     date?: string;  // optional - 백엔드에서 null일 수 있음
     url: string;
+    query?: string; // 검색에 사용된 키워드
     analysis?: {
         facts: string[];
         opinions: string[];
+        key_points?: string[]; // 핵심 포인트 (article_analyzer 추출)
     };
     images?: Array<{
         url: string;
@@ -35,7 +48,9 @@ export interface ScriptGenResult {
     script?: GeneratedScript;
     references?: ReferenceArticle[];
     competitor_videos?: any[];
+    citations?: Citation[];
     error?: string;
+    topic_request_id?: string;
 }
 
 export interface TaskStatusResponse {
@@ -45,7 +60,10 @@ export interface TaskStatusResponse {
 }
 
 // 스크립트 생성 시작
-export const executeScriptGen = async (topic: string, topicRecommendationId?: string): Promise<TaskStatusResponse> => {
+export const executeScriptGen = async (
+    topic: string,
+    topicRecommendationId?: string,
+): Promise<TaskStatusResponse> => {
     const response = await api.post('/script-gen/execute', {
         topic,
         topic_recommendation_id: topicRecommendationId,
@@ -60,10 +78,12 @@ export const checkScriptGenStatus = async (taskId: string): Promise<TaskStatusRe
 };
 
 // 폴링 헬퍼 (완료될 때까지 대기)
+// 첫 시도 실패 완화: Celery worker cold start를 위해 최초 2초 대기 후 폴링 시작
 export const pollScriptGenResult = async (
     taskId: string,
     onStatusChange?: (status: string) => void
 ): Promise<ScriptGenResult> => {
+    await new Promise((r) => setTimeout(r, 2000));
     return new Promise((resolve, reject) => {
         const interval = setInterval(async () => {
             try {
@@ -75,7 +95,7 @@ export const pollScriptGenResult = async (
                     resolve(statusData.result);
                 } else if (statusData.status === 'FAILURE') {
                     clearInterval(interval);
-                    reject(new Error(statusData.result?.error || 'Task Failed'));
+                    reject(new Error(statusData.result?.error || statusData.result?.message || 'Task Failed'));
                 }
             } catch (error) {
                 clearInterval(interval);
@@ -94,6 +114,7 @@ export interface ScriptHistoryItem {
     script: GeneratedScript | null;
     references: ReferenceArticle[] | null;
     competitor_videos: any[] | null;
+    citations: Citation[] | null;
 }
 
 export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistoryItem[]> => {
@@ -106,4 +127,3 @@ export const getScriptById = async (topicRequestId: string): Promise<ScriptHisto
     const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
     return response.data;
 };
-
