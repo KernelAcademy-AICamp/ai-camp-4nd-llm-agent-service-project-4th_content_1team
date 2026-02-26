@@ -33,6 +33,7 @@ langchain-google-genai
 langchain-community
 langgraph
 google-generativeai  # Gemini API
+scikit-learn         # TF-IDF 키워드 추출
 
 # Tools & Crawling
 tavily-python

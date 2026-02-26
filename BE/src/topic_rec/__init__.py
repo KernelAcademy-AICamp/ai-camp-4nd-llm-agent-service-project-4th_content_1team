@@ -5,15 +5,14 @@ LangGraph-based workflow for recommending YouTube video topics
 based on current trends from multiple sources.
 
 Usage:
-    from src.topic_rec import run_topic_recommendation
+    from src.topic_rec import topic_rec_graph
 
-    result = run_topic_recommendation("tech_kr")
+    result = topic_rec_graph.invoke(initial_state)
     recommendations = result["recommendations"]
 """
 
 from src.topic_rec.graph import (
     topic_rec_graph,
-    run_topic_recommendation,
     create_topic_rec_graph,
 )
 from src.topic_rec.state import (
@@ -25,12 +24,10 @@ from src.topic_rec.state import (
     SubCategoryCluster,
     TrendTopic,
 )
-from src.topic_rec.nodes.recommender import PERSONA_PRESETS
 
 __all__ = [
     # Graph
     "topic_rec_graph",
-    "run_topic_recommendation",
     "create_topic_rec_graph",
     # State
     "TopicRecState",
@@ -41,6 +38,4 @@ __all__ = [
     "CategoryCluster",
     "SubCategoryCluster",
     "TrendTopic",
-    # Presets
-    "PERSONA_PRESETS",
 ]

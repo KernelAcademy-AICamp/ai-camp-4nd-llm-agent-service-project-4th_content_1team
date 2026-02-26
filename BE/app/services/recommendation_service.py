@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.content_topic import ChannelTopic, TrendTopic
 from app.models.channel_persona import ChannelPersona
+from app.models.channel_video import YTChannelVideo
 # [제거] Planner가 영상 구조에서 키워드를 역산하므로 미리 뽑을 필요 없음
 # from app.services.keyword_extraction_service import extract_keywords_batch
 
@@ -212,11 +213,21 @@ async def generate_trend_topics(
     if not persona:
         return []
 
-    # 2. 기존 추천 삭제
+    # 2. 최근 영상 제목 조회
+    video_stmt = (
+        select(YTChannelVideo.title)
+        .where(YTChannelVideo.channel_id == channel_id)
+        .order_by(YTChannelVideo.published_at.desc())
+        .limit(15)
+    )
+    video_result = await db.execute(video_stmt)
+    recent_titles = [row[0] for row in video_result.all()]
+
+    # 3. 기존 추천 삭제
     await _delete_existing_topics(db, channel_id, TrendTopic)
 
-    # 3. Gemini 호출 (트렌드 모드)
-    recommendations_raw = await _call_topic_rec(persona, count, trend_focus=True)
+    # 4. Gemini 호출 (트렌드 모드)
+    recommendations_raw = await _call_topic_rec(persona, count, trend_focus=True, recent_video_titles=recent_titles)
 
     if not recommendations_raw:
         return []
@@ -238,7 +249,10 @@ async def generate_trend_topics(
             based_on_topic=rec.get("based_on_topic"),
             trend_basis=rec.get("trend_basis"),
             recommendation_reason=rec.get("recommendation_reason"),
-            urgency=rec.get("urgency", "urgent"),  # 트렌드는 기본 urgent
+            recommendation_type=rec.get("recommendation_type"),
+            recommendation_direction=rec.get("recommendation_direction"),
+            source_layer=rec.get("source_layer"),
+            urgency=rec.get("urgency", "urgent"),
             search_keywords=rec.get("search_keywords", []),
             content_angles=rec.get("content_angles", []),
             thumbnail_idea=rec.get("thumbnail_idea"),
@@ -391,6 +405,7 @@ async def _call_topic_rec(
     persona: ChannelPersona,
     count: int,
     trend_focus: bool = False,
+    recent_video_titles: List[str] = None,
 ) -> List[dict]:
     """
     topic_rec 모듈 호출 (Gemini 추천 생성).
@@ -399,13 +414,10 @@ async def _call_topic_rec(
         persona: 채널 페르소나
         count: 생성할 추천 개수
         trend_focus: True면 트렌드 중심 추천
+        recent_video_titles: 최근 영상 제목 목록
     """
     import asyncio
     from concurrent.futures import ThreadPoolExecutor
-
-    # 페르소나에서 카테고리 추출
-    preferred_categories = persona.preferred_categories or persona.analyzed_categories or []
-    preferred_subcategories = persona.preferred_subcategories or persona.analyzed_subcategories or []
 
     def run_topic_rec():
         """topic_rec 실행 (동기)."""
@@ -413,10 +425,16 @@ async def _call_topic_rec(
             from src.topic_rec.graph import topic_rec_graph
 
             persona_config = {
-                "channel_name": persona.one_liner or "Unknown",
-                "preferred_categories": preferred_categories,
-                "preferred_subcategories": preferred_subcategories,
+                "channel_name": persona.one_liner or persona.channel_id or "Unknown",
+                "persona_summary": persona.persona_summary or "",
+                "main_topics": persona.main_topics or [],
+                "target_audience": persona.target_audience or "일반 시청자",
+                "hit_patterns": persona.hit_patterns or [],
+                "audience_needs": persona.audience_needs or "",
+                "viewer_likes": persona.viewer_likes or [],
+                "tone_manner": persona.tone_manner or "",
                 "trend_focus": trend_focus,
+                "recent_video_titles": recent_video_titles or [],
             }
 
             initial_state = {
@@ -427,6 +445,7 @@ async def _call_topic_rec(
                 "clusters": [],
                 "insights": {},
                 "recommendations": [],
+                "source_config": None,
                 "retry_count": 0,
                 "error": None,
                 "current_step": "init",
