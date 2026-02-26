@@ -282,12 +282,25 @@ def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competit
             dropped_count = len(facts) - len(valid_facts)
             logger.warning(f"Dropped {dropped_count} facts without IDs (출처 불명 팩트 제외)")
         
-        # [FIX] 개선된 우선순위 점수로 정렬 (Event도 고려)
-        prioritized_facts = sorted(
-            valid_facts,
-            key=_calculate_fact_priority,
-            reverse=True
-        )[:15]
+        # [FIX] 개선된 우선순위 점수로 정렬하되, 각 기사(source_index)별 최소 1개 팩트 보장
+        # 기사별 최소 1개 → 나머지 우선순위로 채우기 (15개 상한)
+        # 이렇게 해야 Insight Builder가 모든 기사의 팩트를 볼 수 있음
+        source_best: Dict[Any, Dict] = {}  # source_index → 해당 기사 최고 점수 팩트
+        for f in valid_facts:
+            src_idx = f.get("source_index", -1)
+            if src_idx not in source_best or _calculate_fact_priority(f) > _calculate_fact_priority(source_best[src_idx]):
+                source_best[src_idx] = f
+        
+        # 1단계: 기사별 대표 팩트 확보
+        guaranteed = list(source_best.values())
+        guaranteed_ids = {f["id"] for f in guaranteed}
+        
+        # 2단계: 나머지 팩트를 우선순위로 정렬하여 채우기
+        remaining = [f for f in valid_facts if f["id"] not in guaranteed_ids]
+        remaining_sorted = sorted(remaining, key=_calculate_fact_priority, reverse=True)
+        
+        prioritized_facts = guaranteed + remaining_sorted
+        prioritized_facts = prioritized_facts[:15]  # 최대 15개
         
         for f in prioritized_facts:
             f_id = f["id"]  # 이제 확실히 존재함
