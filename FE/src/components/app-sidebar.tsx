@@ -1,9 +1,25 @@
 import { useSidebar } from "../contexts/sidebar-context"
-import { Compass, FileText, BarChart3, PanelLeft, Crown, Play } from "lucide-react"
+import { Compass, FileText, BarChart3, PanelLeft, Crown } from "lucide-react"
 import { Link, useLocation } from "react-router-dom"
 import { cn } from "../lib/utils"
 import { Button } from "./ui/button"
-import { Avatar, AvatarFallback } from "./ui/avatar"
+import { Avatar, AvatarFallback, AvatarImage } from "./ui/avatar"
+import { useAuth } from "../hooks/useAuth"
+
+const EMAIL_TRUNCATE_LEN = 24
+const NAME_TRUNCATE_LEN = 14
+
+function truncateEmail(email: string): string {
+  if (!email) return ""
+  if (email.length <= EMAIL_TRUNCATE_LEN) return email
+  return email.slice(0, EMAIL_TRUNCATE_LEN - 3) + "..."
+}
+
+function truncateName(name: string): string {
+  if (!name) return ""
+  if (name.length <= NAME_TRUNCATE_LEN) return name
+  return name.slice(0, NAME_TRUNCATE_LEN - 2) + "…"
+}
 
 const menuItems = [
   { path: "/explore", label: "주제 탐색", icon: Compass },
@@ -11,16 +27,16 @@ const menuItems = [
   { path: "/analysis", label: "채널 분석", icon: BarChart3 },
 ]
 
-// 사용자 정보 (실제로는 Context에서 가져와야 함)
-const userInfo = {
-  name: "Doheun Lee",
-  email: "battingeye.cs@gmail.com",
-  plan: "스타터",
-}
-
 export function AppSidebar() {
   const { isAppSidebarOpen, toggleAppSidebar } = useSidebar()
   const location = useLocation()
+  const { user } = useAuth()
+
+  const displayName = user?.name ?? "사용자"
+  const displayEmail = user?.email ?? ""
+  const nameTruncated = truncateName(displayName)
+  const emailTruncated = truncateEmail(displayEmail)
+  const profileImageSrc = user?.avatar_url || "/profile_dummy.png"
 
   if (!isAppSidebarOpen) {
     return null
@@ -97,18 +113,28 @@ export function AppSidebar() {
           {/* 사용자 프로필 */}
           <div className="px-4 pb-3">
             <div className="flex items-center gap-3">
-              <Avatar className="w-[40px] h-[40px]">
+              <Avatar className="w-[40px] h-[40px] flex-shrink-0">
+                <AvatarImage
+                  src={profileImageSrc}
+                  alt={displayName}
+                  onError={(e) => {
+                    const target = e.currentTarget
+                    if (target.src !== "/profile_dummy.png") {
+                      target.src = "/profile_dummy.png"
+                    }
+                  }}
+                />
                 <AvatarFallback className="bg-[#6b7280] text-white text-sm">
-                  {userInfo.name.split(' ').map(n => n[0]).join('')}
+                  {displayName.slice(0, 2).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white truncate mb-0.5">
-                  {userInfo.name}
+                <p className="text-sm font-semibold text-white truncate mb-0.5" title={displayName}>
+                  {nameTruncated}
                 </p>
-                <p className="text-xs text-[#8c929d] truncate">
-                  {userInfo.email}
+                <p className="text-xs text-[#8c929d] truncate" title={displayEmail || undefined}>
+                  {emailTruncated}
                 </p>
               </div>
             </div>
@@ -135,8 +161,9 @@ export function AppSidebar() {
             title="프로필"
           >
             <Avatar className="w-8 h-8 mx-auto">
+              <AvatarImage src={profileImageSrc} alt={displayName} />
               <AvatarFallback className="bg-[#6b7280] text-white text-xs">
-                {userInfo.name.split(' ').map(n => n[0]).join('')}
+                {displayName.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
           </button>
