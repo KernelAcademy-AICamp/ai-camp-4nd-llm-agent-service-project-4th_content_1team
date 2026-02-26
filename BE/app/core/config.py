@@ -59,13 +59,20 @@ class Settings(BaseSettings):
     naver_client_id: str
     naver_client_secret: str
 
+    # News Research 이미지 AI 분석 (GPT Vision 호출 → 429 방지용 비활성화)
+    news_image_analysis_enabled: bool = False
+
     
     # YouTube Subtitle (자막 다운로드 설정)
+    youtube_subtitle_enabled: bool = False  # True일 때만 yt-dlp로 자막 추출 (비활성화 시 스킵)
     youtube_cookies_file: Optional[str] = None  # Cookies 파일 경로 (429 에러 방지)
     youtube_proxy_url: Optional[str] = None  # Proxy URL (http://user:pass@host:port)
 
     # Nano Banana API (for image generation)
     nano_banana_api_key: Optional[str] = None
+
+    # Redis (Celery broker 겸 SharedState 캐시)
+    redis_url: str = "redis://localhost:6379/0"
     
     @property
     def cors_origins_list(self) -> list[str]:

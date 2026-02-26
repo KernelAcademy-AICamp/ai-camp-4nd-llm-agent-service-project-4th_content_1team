@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 
 from app.core.config import settings
 from app.core.db import engine
-from app.api.routes import auth, youtube, competitor, subtitle, persona, recommendations, script_gen, thumbnail
+from app.api.routes import auth, youtube, subtitle, persona, recommendations, script_gen, thumbnail
 from app.api.routes.channel import router as channel_router
 
 # Create FastAPI app
@@ -31,7 +31,6 @@ app.add_middleware(
 # Include routers
 app.include_router(auth.router)
 app.include_router(youtube.router)
-app.include_router(competitor.router)
 app.include_router(subtitle.router)
 app.include_router(persona.router)
 app.include_router(recommendations.router)
@@ -68,3 +67,5 @@ async def shutdown():
     """Shutdown event handler."""
     print("👋 Application shutting down...")
     await engine.dispose()
+    from app.core.redis import close_redis
+    await close_redis()

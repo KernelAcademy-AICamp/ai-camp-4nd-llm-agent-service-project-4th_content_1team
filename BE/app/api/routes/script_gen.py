@@ -5,7 +5,6 @@ Script Generation API Router
 """
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from fastapi.concurrency import run_in_threadpool  # run_in_threadpool 임포트
 from sqlalchemy.ext.asyncio import AsyncSession
 import logging
 
@@ -15,11 +14,10 @@ from app.models.user import User
 from app.schemas.script_gen import (
     ScriptGenStartRequest,
     ScriptGenStartResponse,
-    ScriptGenPlannerResponse,
     PlannerInputResponse,
     ChannelProfileResponse,
     TopicContextResponse,
-    ScriptGenExecuteResponse, 
+    ScriptGenExecuteResponse,
     ScriptGenTaskResponse,
 )
 
@@ -27,8 +25,7 @@ from src.script_gen.utils.input_builder import (
     build_planner_input,
     PlannerInputBuildError,
 )
-from src.script_gen.nodes.planner import planner_node
-from src.script_gen.graph import generate_script  # Import generate_script
+from src.script_gen.graph import generate_script
 
 logger = logging.getLogger(__name__)
 
@@ -64,14 +61,14 @@ async def execute_pipeline_async(
     logger.info(f"Queueing async pipeline for: {request.topic}")
     
     try:
-        # 1. Planner Input 빌드 (DB 조회 등은 여기서 수행)
+        # 1. Planner Input 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         # 2. topic_context를 channel_profile에 병합
         # (Planner가 channel_profile.topic_context에서 추천 컨텍스트를 읽음)
         channel_profile = planner_input["channel_profile"].copy()
@@ -152,14 +149,14 @@ async def run_complete_pipeline(
     logger.info(f"Starting full pipeline execution for: {request.topic}")
     
     try:
-        # 1. Planner Input 빌드 (채널 프로필 등 가져오기)
+        # 1. Planner Input 빌드 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         # 2. 비동기 파이프라인 실행
         # generate_script는 async 함수이므로 직접 await
         result_dict = await generate_script(
@@ -202,12 +199,18 @@ async def run_complete_pipeline(
         for art in articles:
             # 기사 데이터 유효성 검사 및 매핑
             if art.get("title") and art.get("url"):
+                analysis = art.get("analysis", {})
                 references.append({
                     "title": art.get("title"),
                     "summary": art.get("summary_short") or art.get("summary", "")[:100] + "...",
                     "source": art.get("source", "Unknown"),
                     "url": art.get("url"),
-                    "date": art.get("pub_date")
+                    "date": art.get("pub_date"),
+                    "query": art.get("query"),
+                    "analysis": {
+                        "facts": analysis.get("facts", []),
+                        "opinions": analysis.get("opinions", []),
+                    }
                 })
         
         return ScriptGenExecuteResponse(
@@ -243,14 +246,14 @@ async def start_script_generation(
     """
     
     try:
-        # Planner 입력 생성
+        # Planner 입력 생성 (Redis SharedState에서 채널/페르소나 캐시 조회)
         planner_input = await build_planner_input(
             db=db,
             topic=request.topic,
             user_id=str(current_user.id),
             topic_recommendation_id=request.topic_recommendation_id,
         )
-        
+
         logger.info(
             f"Planner input built for user {current_user.id}, "
             f"topic: {request.topic}"
@@ -279,72 +282,6 @@ async def start_script_generation(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="스크립트 생성 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.",
-        )
-
-
-@router.post("/planner", response_model=ScriptGenPlannerResponse)
-async def run_planner(
-    request: ScriptGenStartRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_user),
-):
-    """
-    Planner 노드만 실행 (테스트/디버깅용)
-    
-    1. Planner 입력 생성
-    2. Planner 노드 실행
-    3. ContentBrief 반환
-    """
-    
-    try:
-        # 1. Planner 입력 생성
-        planner_input = await build_planner_input(
-            db=db,
-            topic=request.topic,
-            user_id=str(current_user.id),
-            topic_recommendation_id=request.topic_recommendation_id,
-        )
-        
-        logger.info(f"Running planner for topic: {request.topic}")
-        
-        # 2. Planner 노드 실행
-        # State 구성 (Planner가 필요로 하는 최소 state)
-        # topic_context를 channel_profile에 병합
-        channel_profile_with_context = planner_input["channel_profile"].copy()
-        if planner_input.get("topic_context"):
-            channel_profile_with_context["topic_context"] = planner_input["topic_context"]
-        
-        state = {
-            "topic": planner_input["topic"],
-            "channel_profile": channel_profile_with_context,
-            "trend_analysis": None,  # Trend Scout 없이 실행
-        }
-        
-        # Planner 실행
-        result = planner_node(state)
-        
-        logger.info("Planner execution completed successfully")
-        
-        return ScriptGenPlannerResponse(
-            success=True,
-            message="콘텐츠 기획안이 생성되었습니다.",
-            content_brief=result.get("content_brief"),
-            error=None,
-        )
-    
-    except PlannerInputBuildError as e:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
-        )
-    
-    except Exception as e:
-        logger.error(f"Error in run_planner: {e}", exc_info=True)
-        return ScriptGenPlannerResponse(
-            success=False,
-            message="콘텐츠 기획안 생성에 실패했습니다.",
-            content_brief=None,
-            error=str(e),
         )
 
 

@@ -19,6 +19,7 @@ from app.services.persona_service import (
     update_persona,
 )
 from app.services.channel_video_service import sync_channel_videos
+from app.services.shared_state_service import SharedStateService
 from sqlalchemy import select
 
 
@@ -120,6 +121,9 @@ async def generate_my_persona(
                 persona=None,
             )
 
+        # 페르소나 재생성 시 Redis 캐시 무효화
+        await SharedStateService.invalidate_channel_profile(str(current_user.id))
+
         return PersonaGenerateResponse(
             success=True,
             message="페르소나가 성공적으로 생성되었습니다.",
@@ -161,6 +165,49 @@ async def generate_my_persona(
         )
 
 
+@router.get("/channel-profile")
+async def get_channel_profile_for_agents(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    에이전트 입력용 채널 프로필 조회.
+
+    Redis shared_state에서 우선 조회하고, 없으면 DB에서 빌드 후 캐시합니다.
+    페르소나 재생성/수정 시 캐시가 자동 무효화되므로 항상 최신 데이터를 반환합니다.
+    """
+    from src.script_gen.utils.input_builder import _get_user_channel, _build_channel_profile
+
+    user_id = str(current_user.id)
+
+    # 1. Redis 캐시 우선 조회
+    cached = await SharedStateService.get_channel_profile(user_id)
+    if cached:
+        return cached
+
+    # 2. 캐시 미스 → DB 조회
+    channel = await _get_user_channel(db, user_id)
+    if not channel:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="연결된 YouTube 채널이 없습니다.",
+        )
+
+    persona = await get_persona(db, channel.channel_id)
+    if not persona:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="페르소나가 생성되지 않았습니다. POST /personas/generate를 먼저 호출해주세요.",
+        )
+
+    profile = _build_channel_profile(channel, persona)
+    profile["channel_id"] = channel.channel_id
+
+    # 3. Redis 저장
+    await SharedStateService.set_channel_profile(user_id, profile)
+    return profile
+
+
 @router.patch("/me", response_model=PersonaResponse)
 async def update_my_persona(
     request: PersonaUpdateRequest,
@@ -188,6 +235,9 @@ async def update_my_persona(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="페르소나가 없습니다. 먼저 생성해주세요.",
         )
+
+    # 페르소나 수정 시 Redis 캐시 무효화
+    await SharedStateService.invalidate_channel_profile(str(current_user.id))
 
     return PersonaResponse(
         id=str(persona.id),

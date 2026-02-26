@@ -223,7 +223,7 @@ export function ScriptEditor({ apiData, isGenerating = false, onRegenerate, cita
             <div className="space-y-1">
               {citations.map((c) => (
                 <div key={c.number} className="flex items-start gap-2 text-xs">
-                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full bg-primary/20 text-primary text-[9px] font-bold flex-shrink-0 mt-0.5">
+                  <span className="inline-flex items-center justify-center w-4 h-4 rounded-full text-[9px] font-bold flex-shrink-0 mt-0.5" style={{ background: 'rgba(251,191,36,0.25)', color: '#F59E0B' }}>
                     {c.marker}
                   </span>
                   <span className="text-muted-foreground">
@@ -264,35 +264,120 @@ function EditableWithCitations({
   const divRef = useRef<HTMLDivElement>(null)
   const isEditing = useRef(false)
 
-  // 텍스트 → HTML 변환 (①②③를 클릭 가능한 뱃지로)
+  // 뱃지 HTML 생성 헬퍼
+  const makeBadge = useCallback((marker: string) => {
+    const c = citations.find(ct => ct.marker === marker)
+    if (!c) return marker
+    const tooltip = `${c.source}: ${(c.content || "").slice(0, 60)}`.replace(/"/g, "&quot;").replace(/'/g, "&#39;")
+    return (
+      `<span class="cite-badge" data-url="${c.source_url || ""}" title="${tooltip}" contenteditable="false"` +
+      ` style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;` +
+      `border-radius:50%;background:rgba(251,191,36,0.25);color:#F59E0B;` +
+      `font-size:10px;font-weight:bold;cursor:pointer;margin:0 2px;vertical-align:super;` +
+      `transition:background 0.2s;"` +
+      ` onmouseover="this.style.background='rgba(251,191,36,0.45)'"` +
+      ` onmouseout="this.style.background='rgba(251,191,36,0.25)'"` +
+      `>${marker}</span>`
+    )
+  }, [citations])
+
+  // 텍스트 → HTML 변환 (인용 문장 하이라이트 + ①②③ 뱃지)
   const buildHtml = useCallback((text: string) => {
-    const circlePattern = /([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳])/g
+    // HTML 이스케이프
     let html = text
       .replace(/&/g, "&amp;")
       .replace(/</g, "&lt;")
       .replace(/>/g, "&gt;")
-      .replace(/\n/g, "<br>")
 
-    html = html.replace(circlePattern, (match) => {
-      const c = citations.find(ct => ct.marker === match)
-      if (c) {
-        const tooltip = `${c.source}: ${(c.content || "").slice(0, 60)}`.replace(/"/g, "&quot;").replace(/'/g, "&#39;")
-        return (
-          `<span class="cite-badge" data-url="${c.source_url || ""}" title="${tooltip}" contenteditable="false"` +
-          ` style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;` +
-          `border-radius:50%;background:hsl(var(--primary)/0.2);color:hsl(var(--primary));` +
-          `font-size:10px;font-weight:bold;cursor:pointer;margin:0 2px;vertical-align:super;` +
-          `transition:background 0.2s;"` +
-          ` onmouseover="this.style.background='hsl(var(--primary)/0.4)'"` +
-          ` onmouseout="this.style.background='hsl(var(--primary)/0.2)'"` +
-          `>${match}</span>`
-        )
+    // 마커 기준으로 텍스트 분할 (마커를 캡처 그룹으로 유지)
+    const parts = html.split(/([①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]+\.?)/g)
+    // parts = [텍스트, 마커들, 텍스트, 마커들, ...]
+
+    // 인용 문장 시작 위치 찾기 (숫자.숫자 패턴은 문장 경계로 무시)
+    const findCitedStart = (s: string): number => {
+      // 모든 문장 경계 위치 수집
+      const breaks: number[] = []
+      for (let i = 0; i < s.length; i++) {
+        const ch = s[i]
+        if (ch === '\n') {
+          breaks.push(i)
+        } else if (ch === '?' || ch === '!' || ch === '。') {
+          breaks.push(i)
+        } else if (ch === '.') {
+          const prevIsDigit = i > 0 && /\d/.test(s[i - 1])
+          const nextIsDigit = i < s.length - 1 && /\d/.test(s[i + 1])
+          if (!(prevIsDigit && nextIsDigit)) {
+            breaks.push(i)
+          }
+        }
       }
-      return match
-    })
 
-    return html
-  }, [citations])
+      if (breaks.length === 0) return 0 // 경계 없으면 전체가 인용
+
+      const lastBreak = breaks[breaks.length - 1]
+      const textAfterLast = s.slice(lastBreak + 1).trim()
+
+      if (textAfterLast.length === 0) {
+        // 마지막 경계가 텍스트 끝에 있음 (예: "않나요?" + 마커)
+        // → 그 전 경계부터 하이라이트
+        if (breaks.length >= 2) {
+          return breaks[breaks.length - 2] + 1
+        }
+        return 0 // 경계가 하나뿐이면 전체가 인용
+      }
+
+      // 마지막 경계 이후에 텍스트가 있으면 거기부터 하이라이트
+      return lastBreak + 1
+    }
+
+    let result = ''
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i]
+      const isMarker = /^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]+\.?$/.test(part)
+
+      if (isMarker) {
+        // 마커를 뱃지로 변환
+        const badges = part.replace(/[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]/g, (m: string) => makeBadge(m))
+        result += badges
+      } else {
+        // 다음 파트가 마커인지 확인
+        const nextIsMarker = i + 1 < parts.length && /^[①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮⑯⑰⑱⑲⑳]+\.?$/.test(parts[i + 1])
+
+        if (nextIsMarker && part.trim().length > 0) {
+          // 이 텍스트 뒤에 마커가 온다 → 인용 문장 시작 위치를 찾아서 그 이후만 하이라이트
+          const citedStart = findCitedStart(part)
+
+          if (citedStart > 0) {
+            // 인용 시작 이전 = 일반 텍스트
+            const before = part.slice(0, citedStart)
+            // 인용 시작 이후 = 인용 문장 (하이라이트)
+            const cited = part.slice(citedStart)
+            result += before
+            result += (
+              `<span class="cite-highlight"` +
+              ` style="background:rgba(251,191,36,0.10);border-left:3px solid rgba(251,191,36,0.5);` +
+              `padding:1px 4px;border-radius:0 3px 3px 0;"` +
+              `>${cited}</span>`
+            )
+          } else {
+            // 전체가 인용 문장
+            result += (
+              `<span class="cite-highlight"` +
+              ` style="background:rgba(251,191,36,0.10);border-left:3px solid rgba(251,191,36,0.5);` +
+              `padding:1px 4px;border-radius:0 3px 3px 0;"` +
+              `>${part}</span>`
+            )
+          }
+        } else {
+          // 마커가 뒤에 안 오면 일반 텍스트
+          result += part
+        }
+      }
+    }
+
+    result = result.replace(/\n/g, "<br>")
+    return result
+  }, [citations, makeBadge])
 
   // HTML → 텍스트 추출 (뱃지를 다시 ①②③ 글자로 복원)
   const extractText = useCallback(() => {
@@ -309,6 +394,12 @@ function EditableWithCitations({
     clone.querySelectorAll(".cite-badge").forEach(badge => {
       const marker = badge.textContent || ""
       badge.replaceWith(marker)
+    })
+
+    // 인용 하이라이트 → 내부 텍스트만 유지
+    clone.querySelectorAll(".cite-highlight").forEach(hl => {
+      const inner = hl.textContent || ""
+      hl.replaceWith(inner)
     })
 
     // div/p 태그 줄바꿈 처리

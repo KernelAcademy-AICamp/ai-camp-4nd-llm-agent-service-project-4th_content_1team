@@ -29,85 +29,92 @@ async def build_planner_input(
 ) -> Dict[str, Any]:
     """
     Planner 에이전트 입력 데이터를 생성합니다.
-    
+
+    1. Redis shared_state에서 channel_profile 조회 (캐시 HIT → DB 생략)
+    2. 캐시 MISS → DB에서 채널 + 페르소나 조회 후 Redis에 저장
+    3. topic_context는 topic_recommendation_id가 있을 때만 DB 조회
+
     Args:
         db: 데이터베이스 세션
         topic: 영상 주제
         user_id: 사용자 ID
         topic_recommendation_id: AI 추천 주제 ID (선택)
-    
+
     Returns:
         planner_input dict
-        
+
     Raises:
         PlannerInputBuildError: 필수 데이터가 없거나 조회 실패 시
-    
-    Example:
-        >>> planner_input = await build_planner_input(
-        ...     db=db,
-        ...     topic="AI 코딩 도구의 미래",
-        ...     user_id="user-123",
-        ...     topic_recommendation_id="rec-456"  # 선택
-        ... )
     """
-    
+    from app.services.shared_state_service import SharedStateService
+
     try:
-        # ========== 1. 채널 정보 조회 ==========
-        channel = await _get_user_channel(db, user_id)
-        if not channel:
-            raise PlannerInputBuildError(
-                f"사용자 {user_id}의 연결된 YouTube 채널을 찾을 수 없습니다. "
-                "먼저 채널을 연결해주세요."
+        # ── 1. Redis shared_state 조회 ────────────────────────────────────────
+        channel_profile = await SharedStateService.get_channel_profile(user_id)
+        channel_id: Optional[str] = None
+
+        if channel_profile:
+            # 캐시 HIT: DB 채널/페르소나 조회 생략
+            channel_id = channel_profile.get("channel_id")
+            logger.info(
+                f"[SharedState] HIT — channel/persona DB 조회 생략 "
+                f"(user={user_id}, channel_id={channel_id})"
             )
-        
-        logger.info(f"Channel found: {channel.title} ({channel.channel_id})")
-        
-        
-        # ========== 2. 페르소나 조회 ==========
-        persona = await _get_channel_persona(db, channel.channel_id)
-        if not persona:
-            raise PlannerInputBuildError(
-                f"채널 '{channel.title}'의 페르소나를 찾을 수 없습니다. "
-                "먼저 채널 분석을 완료해주세요."
-            )
-        
-        logger.info(f"Persona found for channel: {channel.channel_id}")
-        
-        
-        # ========== 3. channel_profile 구성 ==========
-        channel_profile = _build_channel_profile(channel, persona)
-        
-        
-        # ========== 4. topic_context 구성 (AI 추천 시만) ==========
+
+            # channel_id가 캐시에 없는 예외 상황 처리
+            if not channel_id and topic_recommendation_id:
+                channel = await _get_user_channel(db, user_id)
+                channel_id = channel.channel_id if channel else None
+
+        else:
+            # ── 2. 캐시 MISS: DB 조회 후 Redis 저장 ──────────────────────────
+            channel = await _get_user_channel(db, user_id)
+            if not channel:
+                raise PlannerInputBuildError(
+                    f"사용자 {user_id}의 연결된 YouTube 채널을 찾을 수 없습니다. "
+                    "먼저 채널을 연결해주세요."
+                )
+            logger.info(f"[SharedState] MISS — DB 조회: {channel.title} ({channel.channel_id})")
+
+            persona = await _get_channel_persona(db, channel.channel_id)
+            if not persona:
+                raise PlannerInputBuildError(
+                    f"채널 '{channel.title}'의 페르소나를 찾을 수 없습니다. "
+                    "먼저 채널 분석을 완료해주세요."
+                )
+
+            channel_profile = _build_channel_profile(channel, persona)
+            channel_profile["channel_id"] = channel.channel_id
+            channel_id = channel.channel_id
+
+            # Redis에 저장 (실패해도 무시)
+            await SharedStateService.set_channel_profile(user_id, channel_profile)
+
+        # ── 3. topic_context 구성 (AI 추천 시만) ──────────────────────────────
         topic_context = None
-        if topic_recommendation_id:
+        if topic_recommendation_id and channel_id:
             topic_context = await _build_topic_context(
-                db, 
-                channel.channel_id, 
-                topic_recommendation_id
+                db,
+                channel_id,
+                topic_recommendation_id,
             )
-        
-        
-        # ========== 5. 최종 입력 구성 ==========
+
         planner_input = {
             "topic": topic,
             "channel_profile": channel_profile,
             "topic_context": topic_context,
         }
-        
+
         logger.info(
-            f"Planner input built successfully. "
-            f"Topic: {topic}, Has context: {topic_context is not None}"
+            f"Planner input 구성 완료 — topic={topic!r}, "
+            f"has_context={topic_context is not None}"
         )
-        
         return planner_input
-    
+
     except PlannerInputBuildError:
-        # 이미 사용자 친화적 메시지가 있는 에러는 그대로 전달
         raise
-    
+
     except Exception as e:
-        # 예상치 못한 에러는 로깅하고 일반 메시지로 변환
         logger.error(f"Unexpected error building planner input: {e}", exc_info=True)
         raise PlannerInputBuildError(
             "콘텐츠 기획 준비 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요."

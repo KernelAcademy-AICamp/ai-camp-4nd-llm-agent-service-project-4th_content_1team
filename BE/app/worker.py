@@ -102,6 +102,12 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         # (Celery worker에서 기존 이벤트 루프 충돌 방지)
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
+        
+        # ★ 이전 task에서 닫힌 루프에 바인딩된 DB 커넥션 풀 초기화
+        # (안 하면 stale 커넥션 재사용 → 'NoneType' has no attribute 'send' 에러)
+        from app.core.db import engine
+        loop.run_until_complete(engine.dispose())
+        
         try:
             # TopicRequest가 없으면 생성
             if not topic_request_id:
@@ -115,9 +121,9 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
             result = loop.run_until_complete(generate_script(
                 topic=topic,
                 channel_profile=channel_profile,
-                topic_request_id=topic_request_id
+                topic_request_id=topic_request_id,
             ))
-        
+
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
             
             # [DEBUG] 결과 데이터 확인
@@ -208,6 +214,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "source": art.get("source", "Unknown"),
                         "url": art.get("url"),
                         "date": art.get("pub_date"),
+                        "query": art.get("query"),  # 검색에 사용된 키워드
                         "analysis": {
                             "facts": facts,
                             "opinions": opinions
@@ -340,6 +347,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         return {
             "success": False,
             "message": str(e),
+            "error": str(e),
             "script": None,
             "references": None
         }
