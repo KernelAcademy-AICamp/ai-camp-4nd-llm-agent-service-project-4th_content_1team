@@ -45,7 +45,10 @@ class Settings(BaseSettings):
 
     # OpenAI API (for LLM)
     openai_api_key: str
-    
+
+    # Anthropic API (for Claude LLM)
+    anthropic_api_key: Optional[str] = None
+
     # Gemini API
     gemini_api_key: str
     
