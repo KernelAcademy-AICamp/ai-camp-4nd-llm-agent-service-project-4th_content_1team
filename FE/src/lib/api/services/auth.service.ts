@@ -1,11 +1,11 @@
 import { api } from '../client';
 import type { LoginResponse, User, RefreshTokenResponse } from '../types';
 
-// Google OAuth 로그인
+// Google OAuth 로그인 (BE는 snake_case 기대)
 export const googleLogin = async (code: string, redirectUri: string): Promise<LoginResponse> => {
     const response = await api.post('/auth/google/callback', {
         code,
-        redirectUri,
+        redirect_uri: redirectUri,
     });
     return response.data;
 };

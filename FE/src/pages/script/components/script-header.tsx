@@ -14,11 +14,11 @@ export function ScriptHeader() {
     <header className="border-b border-border p-4 flex items-center justify-between bg-card/30 backdrop-blur">
       <div className="flex items-center gap-4">
         <div className="flex items-center gap-2 text-sm text-muted-foreground mb-2">
-          <Link to="/dashboard" className="hover:text-primary transition-colors">
+          <Link to="/explore" className="hover:text-primary transition-colors">
             <Home className="w-4 h-4" />
           </Link>
           <ChevronRight className="w-4 h-4" />
-          <Link to="/dashboard" className="hover:text-primary transition-colors">
+          <Link to="/script" className="hover:text-primary transition-colors">
             스크립트 목록
           </Link>
         </div>

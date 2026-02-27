@@ -1,7 +1,6 @@
 "use client"
 
 import { useState } from "react"
-import { DashboardSidebar } from "./components/sidebar"
 import { ContentCalendar } from "./components/calendar"
 import { UploadSettings } from "./components/upload-settings"
 import { ConfirmedTopicsPanel } from "./components/confirmed-topics-panel"
@@ -73,11 +72,8 @@ export default function DashboardPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
-      <main className="flex-1 p-6 overflow-auto">
-        <div className="max-w-[1600px] mx-auto space-y-6">
+    <div className="p-6">
+      <div className="max-w-[1600px] mx-auto space-y-6">
           {/* Header */}
           <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
             <div>
@@ -110,8 +106,7 @@ export default function DashboardPage() {
               <ConfirmedTopicsPanel confirmedTopics={confirmedTopics} />
             </div>
           </div>
-        </div>
-      </main>
+      </div>
     </div>
   )
 }

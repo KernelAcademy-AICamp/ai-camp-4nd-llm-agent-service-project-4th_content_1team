@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState, useRef } from "react"
+import { useNavigate } from "react-router-dom"
 import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui/card"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
@@ -45,7 +46,10 @@ const topicTypeConfig = {
   competitor: { label: "경쟁자 분석", icon: Target, color: "text-rose-500", bg: "bg-rose-500/20" },
 }
 
+const NO_CHANNEL_MESSAGE = "연결된 YouTube 채널이 없습니다."
+
 export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProps) {
+  const navigate = useNavigate()
   const [channelTopics, setChannelTopics] = useState<TopicResponse[]>([])
   const [trendTopics, setTrendTopics] = useState<TopicResponse[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -57,6 +61,7 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
   const hasCalledRef = useRef(false)
+  const isNoChannelError = error === NO_CHANNEL_MESSAGE
 
   const loadTopics = async () => {
     try {
@@ -105,10 +110,11 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
 
     } catch (err: any) {
       console.error("추천 로드 실패:", err)
-      if (err.response?.status === 404) {
-        setError("연결된 YouTube 채널이 없습니다.")
+      const detail = err.response?.data?.detail
+      if (err.response?.status === 404 && (detail?.includes("채널") || detail?.includes("channel"))) {
+        setError(NO_CHANNEL_MESSAGE)
       } else {
-        setError("추천을 불러오는데 실패했습니다.")
+        setError(detail || "추천을 불러오는데 실패했습니다.")
       }
     } finally {
       setIsLoading(false)
@@ -274,11 +280,26 @@ export function RecommendationCards({ onAddToCalendar }: RecommendationCardsProp
 
         {/* 에러 상태 */}
         {!isLoading && !isGenerating && !isGeneratingCompetitor && error && (
-          <div className="flex flex-col items-center justify-center py-8 gap-3">
-            <p className="text-muted-foreground text-sm">{error}</p>
-            <Button variant="outline" size="sm" onClick={loadTopics}>
-              다시 시도
-            </Button>
+          <div className="flex flex-col items-center justify-center py-8 gap-4">
+            {isNoChannelError ? (
+              <>
+                <p className="font-medium text-foreground">분석 중 문제가 발생했어요</p>
+                <p className="text-muted-foreground text-sm text-center max-w-sm">{error}</p>
+                <p className="text-muted-foreground text-xs text-center max-w-sm">
+                  Google 계정에 연결된 YouTube 채널이 필요해요. 채널 연결을 위해 온보딩을 진행해 주세요.
+                </p>
+                <Button onClick={() => navigate("/onboarding")}>
+                  채널 연결하러 가기
+                </Button>
+              </>
+            ) : (
+              <>
+                <p className="text-muted-foreground text-sm">{error}</p>
+                <Button variant="outline" size="sm" onClick={loadTopics}>
+                  다시 시도
+                </Button>
+              </>
+            )}
           </div>
         )}
 

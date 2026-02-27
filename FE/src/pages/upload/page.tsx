@@ -1,24 +1,18 @@
 "use client"
 
 import { Suspense } from "react"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { UploadForm } from "./components/upload-form"
 import { UploadHeader } from "./components/upload-header"
 
 export default function UploadPage() {
   return (
-    <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Suspense fallback={<UploadHeaderSkeleton />}>
-          <UploadHeader />
-        </Suspense>
-
-        <div className="flex-1 overflow-auto p-6">
-          <UploadForm />
-        </div>
-      </main>
+    <div className="flex flex-col h-full overflow-hidden">
+      <Suspense fallback={<UploadHeaderSkeleton />}>
+        <UploadHeader />
+      </Suspense>
+      <div className="flex-1 overflow-auto p-6">
+        <UploadForm />
+      </div>
     </div>
   )
 }

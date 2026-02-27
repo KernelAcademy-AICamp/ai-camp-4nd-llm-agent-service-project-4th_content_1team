@@ -13,7 +13,7 @@ import {
 } from "../../../components/ui/dropdown-menu"
 
 const navItems = [
-  { href: "/dashboard", label: "대시보드", icon: Calendar },
+  { href: "/explore", label: "탐색", icon: Calendar },
   { href: "/analysis", label: "분석", icon: BarChart3 },
   { href: "/script", label: "스크립트", icon: FileText },
   { href: "/thumbnail", label: "썸네일", icon: ImageIcon },
@@ -26,7 +26,7 @@ export function DashboardSidebar() {
   return (
     <aside className="w-64 border-r border-border bg-sidebar p-4 flex flex-col hidden md:flex">
       {/* Logo */}
-      <Link to="/dashboard" className="flex items-center gap-3 mb-8">
+      <Link to="/explore" className="flex items-center gap-3 mb-8">
         <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
           <Play className="w-5 h-5 text-primary-foreground fill-current" />
         </div>
@@ -37,7 +37,11 @@ export function DashboardSidebar() {
       <nav className="flex-1 space-y-1">
         {navItems.map((item) => {
           const Icon = item.icon
-          const isActive = pathname === item.href || pathname.startsWith(item.href + "/")
+          const isExplore = item.href === "/explore"
+          const isActive =
+            pathname === item.href ||
+            pathname.startsWith(item.href + "/") ||
+            (isExplore && (pathname === "/dashboard" || pathname.startsWith("/dashboard/")))
           return (
             <Link
               key={item.href}

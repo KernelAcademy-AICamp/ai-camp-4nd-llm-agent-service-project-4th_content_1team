@@ -1,7 +1,7 @@
 "use client"
 
-import { useState, useCallback } from "react"
-import { useNavigate } from "react-router-dom"
+import { useState, useCallback, useEffect } from "react"
+import { useNavigate, useLocation } from "react-router-dom"
 import { StepCategorySelect } from "@/pages/onboarding/components/step-category-select"
 import { StepTargetAudience } from "@/pages/onboarding/components/step-target-audience"
 import { StepBenchmarkChannels, type BenchmarkChannel } from "@/pages/onboarding/components/step-benchmark-channels"
@@ -36,38 +36,72 @@ interface OnboardingData {
 
 const BRAND_NAME = "CreatorHub"
 
+const FLOW_STEP_SEGMENTS: FlowStep[] = ["step1", "step2", "step3", "step4", "loading", "result"]
+
+function getStepFromPath(pathname: string): FlowStep {
+  const segment = pathname.replace(/^\/onboarding\/?/, "").toLowerCase() || "step1"
+  return FLOW_STEP_SEGMENTS.includes(segment as FlowStep) ? (segment as FlowStep) : "step1"
+}
+
 export default function OnboardingPage() {
   const navigate = useNavigate()
-  const [currentFlow, setCurrentFlow] = useState<FlowStep>("step1")
+  const location = useLocation()
+  const [currentFlow, setCurrentFlow] = useState<FlowStep>(() => getStepFromPath(location.pathname))
   const [onboardingData, setOnboardingData] = useState<Partial<OnboardingData>>({})
+
+  /* URL과 단계 동기화: 직접 주소 입력·뒤로가기 시 */
+  useEffect(() => {
+    const step = getStepFromPath(location.pathname)
+    setCurrentFlow(step)
+  }, [location.pathname])
+
+  /* /onboarding 만 입력한 경우 step1으로 URL 통일 */
+  useEffect(() => {
+    if (location.pathname === "/onboarding" || location.pathname === "/onboarding/") {
+      navigate("/onboarding/step1", { replace: true })
+    }
+  }, [location.pathname, navigate])
 
   const hasCompetitors = (onboardingData.benchmarkChannels ?? []).length > 0
   const currentStepNumber = STEP_NUMBER_MAP[currentFlow]
   const isStepView = FLOW_STEPS.includes(currentFlow)
 
-  const handleStep1Complete = useCallback((categories: string[]) => {
-    setOnboardingData((prev) => ({ ...prev, preferredCategories: categories }))
-    setCurrentFlow("step2")
-  }, [])
+  const handleStep1Complete = useCallback(
+    (categories: string[]) => {
+      setOnboardingData((prev) => ({ ...prev, preferredCategories: categories }))
+      setCurrentFlow("step2")
+      navigate("/onboarding/step2")
+    },
+    [navigate]
+  )
 
-  const handleStep2Complete = useCallback((data: { gender: Gender; ageGroup: number }) => {
-    setOnboardingData((prev) => ({
-      ...prev,
-      targetGender: data.gender,
-      targetAgeGroup: data.ageGroup,
-    }))
-    setCurrentFlow("step3")
-  }, [])
+  const handleStep2Complete = useCallback(
+    (data: { gender: Gender; ageGroup: number }) => {
+      setOnboardingData((prev) => ({
+        ...prev,
+        targetGender: data.gender,
+        targetAgeGroup: data.ageGroup,
+      }))
+      setCurrentFlow("step3")
+      navigate("/onboarding/step3")
+    },
+    [navigate]
+  )
 
-  const handleStep3Complete = useCallback((channels: BenchmarkChannel[]) => {
-    setOnboardingData((prev) => ({ ...prev, benchmarkChannels: channels }))
-    setCurrentFlow("step4")
-  }, [])
+  const handleStep3Complete = useCallback(
+    (channels: BenchmarkChannel[]) => {
+      setOnboardingData((prev) => ({ ...prev, benchmarkChannels: channels }))
+      setCurrentFlow("step4")
+      navigate("/onboarding/step4")
+    },
+    [navigate]
+  )
 
   const handleStep3Skip = useCallback(() => {
     setOnboardingData((prev) => ({ ...prev, benchmarkChannels: [] }))
     setCurrentFlow("step4")
-  }, [])
+    navigate("/onboarding/step4")
+  }, [navigate])
 
   const handleStep4Complete = useCallback(
     (data: { topicKeywords: string[]; styleKeywords: string[] }) => {
@@ -77,21 +111,27 @@ export default function OnboardingPage() {
         styleKeywords: data.styleKeywords,
       }))
       setCurrentFlow("loading")
+      navigate("/onboarding/loading")
     },
-    []
+    [navigate]
   )
 
   const handleAnalysisComplete = useCallback(() => {
     setCurrentFlow("result")
-  }, [])
+    navigate("/onboarding/result")
+  }, [navigate])
 
   const handleResultComplete = useCallback(() => {
     navigate("/explore")
   }, [navigate])
 
-  const handlePrev = useCallback((step: FlowStep) => {
-    setCurrentFlow(step)
-  }, [])
+  const handlePrev = useCallback(
+    (step: FlowStep) => {
+      setCurrentFlow(step)
+      navigate(`/onboarding/${step}`)
+    },
+    [navigate]
+  )
 
   /* 로딩 화면 */
   if (currentFlow === "loading") {

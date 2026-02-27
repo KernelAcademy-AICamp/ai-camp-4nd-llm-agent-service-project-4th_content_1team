@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "../../components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card"
 import { Input } from "../../components/ui/input"
@@ -12,10 +13,11 @@ import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
 import { googleLogin, getMyPersona } from "../../lib/api/index"
 
 export default function LoginPage() {
+  const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("login")
-  const navigate = useNavigate()
 
   // 로그인 폼 상태
   const [loginEmail, setLoginEmail] = useState("")
@@ -42,19 +44,30 @@ export default function LoginPage() {
           const redirectUri = import.meta.env.VITE_GOOGLE_REDIRECT_URI || window.location.origin
           const response = await googleLogin(code, redirectUri)
 
-          // 로그인 성공 - 토큰 저장 (선택사항, 쿠키 사용 시 불필요)
-          if (response.tokens) {
-            localStorage.setItem('accessToken', response.tokens.accessToken)
-            localStorage.setItem('refreshToken', response.tokens.refreshToken)
+          // 로그인 성공 - 토큰 저장 (BE는 snake_case 반환)
+          const tokens = response.tokens as { access_token?: string; refresh_token?: string; accessToken?: string; refreshToken?: string }
+          if (tokens?.access_token ?? tokens?.accessToken) {
+            localStorage.setItem('accessToken', tokens.access_token ?? tokens.accessToken ?? '')
+            localStorage.setItem('refreshToken', tokens.refresh_token ?? tokens.refreshToken ?? '')
+          }
+
+          // 로그인 응답의 user를 캐시에 넣어 ProtectedRoute가 즉시 인증 상태로 인식하도록 함
+          const rawUser = (response as { user?: { user_id?: string; id?: string; email?: string; name?: string; avatar_url?: string } }).user
+          if (rawUser) {
+            const user = {
+              id: String(rawUser.user_id ?? rawUser.id ?? ''),
+              email: rawUser.email ?? '',
+              name: rawUser.name ?? '',
+              avatar_url: rawUser.avatar_url,
+            }
+            queryClient.setQueryData(['current-user'], user)
           }
 
           // 페르소나 존재 확인 후 라우팅
           try {
             await getMyPersona()
-            // 페르소나가 있으면 대시보드로 이동
-            navigate('/dashboard')
+            navigate('/channel-result')
           } catch {
-            // 페르소나가 없으면 온보딩으로 이동
             navigate('/onboarding')
           }
         } catch (err: unknown) {

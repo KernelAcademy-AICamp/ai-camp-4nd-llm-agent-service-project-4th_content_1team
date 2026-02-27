@@ -2,7 +2,6 @@
 
 import { Suspense, useState, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
@@ -92,15 +91,12 @@ function ScriptPageContent() {
   }
 
   return (
-    <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
+    <div className="flex flex-col h-full overflow-hidden">
+      <Suspense fallback={<ScriptHeaderSkeleton />}>
+        <ScriptHeader />
+      </Suspense>
 
-      <main className="flex-1 flex flex-col overflow-hidden">
-        <Suspense fallback={<ScriptHeaderSkeleton />}>
-          <ScriptHeader />
-        </Suspense>
-
-        <div className="flex-1 flex overflow-hidden">
+      <div className="flex-1 flex overflow-hidden min-h-0">
           {/* Left Panel - Script Editor */}
           <div className="w-1/2 border-r border-border overflow-auto p-6">
             <ScriptEditor
@@ -119,7 +115,6 @@ function ScriptPageContent() {
             </div>
           </div>
         </div>
-      </main>
     </div>
   )
 }
