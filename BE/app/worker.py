@@ -47,6 +47,7 @@ async def _save_result_to_db(topic_request_id: str, formatted: dict):
                 source_map_json={
                     "references": formatted.get("references", []),
                     "competitor_videos": formatted.get("competitor_videos", []),
+                    "related_videos": formatted.get("related_videos", []),
                     "citations": formatted.get("citations", []),
                 },
             )
@@ -108,6 +109,20 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
         from app.core.db import engine
         loop.run_until_complete(engine.dispose())
         
+        # ★ 진행 상황 콜백: Celery update_state로 Redis에 저장
+        from src.script_gen.graph import PIPELINE_STEPS
+        def progress_callback(current_step: str, message: str, completed_steps: list):
+            self.update_state(
+                state='PROGRESS',
+                meta={
+                    'current_step': current_step,
+                    'message': message,
+                    'completed_steps': completed_steps,
+                    'total_steps': len(PIPELINE_STEPS),
+                    'steps': PIPELINE_STEPS,
+                }
+            )
+        
         try:
             # TopicRequest가 없으면 생성
             if not topic_request_id:
@@ -122,6 +137,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 topic=topic,
                 channel_profile=channel_profile,
                 topic_request_id=topic_request_id,
+                progress_callback=progress_callback,
             ))
 
             logger.info(f"[Task {self.request.id}] 스크립트 생성 완료")
@@ -239,6 +255,9 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "weak_points": video.get("weak_points", []),
                         "strong_points": video.get("strong_points", [])
                     })
+
+            # yt_fetcher에서 가져온 관련 영상 (키워드별 상위 영상)
+            related_videos = result.get("related_videos", [])
             
             # Citations 배열 생성 (기사 기준 ①②③ → 출처 매핑)
             CIRCLE_NUMBERS = ["①", "②", "③", "④", "⑤", "⑥", "⑦", "⑧", "⑨", "⑩",
@@ -321,6 +340,7 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                 "script": final_script,
                 "references": references,
                 "competitor_videos": competitor_videos,
+                "related_videos": related_videos,
                 "citations": citations
             }
             
