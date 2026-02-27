@@ -44,6 +44,8 @@ requests        # HTTP 요청
 lxml            # 파싱 가속
 playwright      # 브라우저 자동화 (이미지/표 추출)
 yt-dlp          # YouTube 자막 다운로드 (현재 사용 중)
+youtube-transcript-api  # YouTube 자막 API
 
-celery
-redis[asyncio]>=4.2.0
+# redis 4.2.0과 호환: Celery 5.6+는 redis 5.x의 CredentialProvider 사용
+celery==5.5.0
+redis[asyncio]==4.2.0
