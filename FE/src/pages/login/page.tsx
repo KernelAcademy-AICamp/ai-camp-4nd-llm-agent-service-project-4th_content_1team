@@ -1,8 +1,6 @@
 "use client"
 
-import React from "react"
-
-import { useState, useEffect, useRef } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "../../components/ui/button"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../../components/ui/card"
@@ -59,9 +57,13 @@ export default function LoginPage() {
             // 페르소나가 없으면 온보딩으로 이동
             navigate('/onboarding')
           }
-        } catch (err: any) {
-          console.error('Google login failed:', err)
-          setError(err.response?.data?.detail || '로그인에 실패했습니다. 다시 시도해주세요.')
+        } catch (err: unknown) {
+          console.error("Google login failed:", err)
+          const message =
+            err && typeof err === "object" && "response" in err
+              ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+              : null
+          setError(message || "로그인에 실패했습니다. 다시 시도해주세요.")
           // URL에서 code 파라미터 제거
           window.history.replaceState({}, document.title, window.location.pathname)
         } finally {
@@ -91,8 +93,12 @@ export default function LoginPage() {
       // TODO: 이메일 로그인 API 연동
       // const response = await emailLogin(loginEmail, loginPassword)
       setError("이메일 로그인은 아직 구현되지 않았습니다. Google 계정을 사용해주세요.")
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "로그인에 실패했습니다.")
+    } catch (err: unknown) {
+      const message =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(message || "로그인에 실패했습니다.")
     } finally {
       setIsLoading(false)
     }
@@ -117,8 +123,12 @@ export default function LoginPage() {
       // TODO: 회원가입 API 연동
       // const response = await signup(signupEmail, signupPassword, signupName)
       setError("회원가입은 아직 구현되지 않았습니다. Google 계정을 사용해주세요.")
-    } catch (err: any) {
-      setError(err.response?.data?.detail || "회원가입에 실패했습니다.")
+    } catch (err: unknown) {
+      const message =
+        err && typeof err === "object" && "response" in err
+          ? (err as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          : null
+      setError(message || "회원가입에 실패했습니다.")
     } finally {
       setIsLoading(false)
     }
@@ -193,14 +203,20 @@ export default function LoginPage() {
           </CardHeader>
           <CardContent>
             {error && (
-              <div className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm">
+              <div
+                role="alert"
+                className="mb-4 p-3 rounded-lg bg-destructive/10 border border-destructive/20 text-destructive text-sm"
+              >
                 {error}
               </div>
             )}
 
             {isLoading ? (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"></div>
+                <div
+                  className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary"
+                  aria-label="처리 중"
+                />
                 <p className="text-sm text-muted-foreground">처리 중...</p>
               </div>
             ) : (
@@ -343,7 +359,13 @@ export default function LoginPage() {
   )
 }
 
-function FeatureCard({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
+interface FeatureCardProps {
+  icon: React.ReactNode
+  title: string
+  description: string
+}
+
+function FeatureCard({ icon, title, description }: FeatureCardProps) {
   return (
     <div className="p-4 rounded-xl bg-card/50 border border-border/50 space-y-2">
       <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center text-primary">

@@ -35,7 +35,6 @@
     }
   },
   "include": [
-    "src",
-    "common/components"
+    "src"
   ]
 }

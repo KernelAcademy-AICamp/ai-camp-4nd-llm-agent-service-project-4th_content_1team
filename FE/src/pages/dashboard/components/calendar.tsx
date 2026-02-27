@@ -49,7 +49,7 @@ const typeIcons = {
 const weekDays = ["일", "월", "화", "수", "목", "금", "토"]
 
 export function ContentCalendar({
-  weeklyUploads,
+  weeklyUploads: _weeklyUploads,
   onTopicConfirm,
   confirmedTopics = [],
   externalTopics = []

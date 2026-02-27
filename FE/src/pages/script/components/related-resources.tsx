@@ -342,9 +342,6 @@ function ArticleDetailModal({
   const images = (article.images ?? []).filter(
     img => img.url && (img.url.startsWith("data:image") || img.url.startsWith("http") || img.url.startsWith("/"))
   )
-  const charts = images.filter(img => img.is_chart)
-  const photos = images.filter(img => !img.is_chart)
-
   const handleCopyFacts = () => {
     const text = facts.map((f, i) => `${i + 1}. ${f}`).join("\n")
     navigator.clipboard.writeText(text).catch(() => {})
