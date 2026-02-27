@@ -42,12 +42,28 @@ export interface ReferenceArticle {
     }>;
 }
 
+// Planner에서 내려오는 유튜브 키워드 기반 추천 영상
+export interface RelatedVideo {
+    video_id: string;
+    title: string;
+    channel: string;
+    url: string;
+    thumbnail: string;
+    view_count: number;
+    published_at: string;
+    view_velocity: number;
+    search_keyword: string;
+    // 백엔드에서 안 줄 수도 있으므로 기본값으로 채워 사용
+    search_type: "relevance" | "popular";
+}
+
 export interface ScriptGenResult {
     success: boolean;
     message: string;
     script?: GeneratedScript;
     references?: ReferenceArticle[];
     competitor_videos?: any[];
+    related_videos?: RelatedVideo[];
     citations?: Citation[];
     error?: string;
     topic_request_id?: string;
@@ -136,6 +152,7 @@ export interface ScriptHistoryItem {
     references: ReferenceArticle[] | null;
     competitor_videos: any[] | null;
     citations: Citation[] | null;
+    related_videos?: RelatedVideo[] | null;
 }
 
 export const getScriptHistory = async (limit: number = 10): Promise<ScriptHistoryItem[]> => {

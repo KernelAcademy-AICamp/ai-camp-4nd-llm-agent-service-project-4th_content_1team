@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
-import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Lightbulb, Globe, Building2 } from "lucide-react"
+import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Lightbulb, Globe, Building2, Play, TrendingUp, Star } from "lucide-react"
 import { ScrollArea } from "../../../components/ui/scroll-area"
 
 // --- Data Types ---
@@ -52,6 +52,21 @@ interface SourceData {
   images: ImageData[]
 }
 
+// --- Related Video Type ---
+
+interface RelatedVideoData {
+  video_id: string
+  title: string
+  channel: string
+  url: string
+  thumbnail: string
+  view_count: number
+  published_at: string
+  view_velocity: number
+  search_keyword: string
+  search_type: "relevance" | "popular"
+}
+
 // --- Helper Components ---
 
 const getSourceIcon = (icon: string) => {
@@ -91,6 +106,7 @@ interface RelatedResourcesProps {
     }>;
   }>;
   activeCitationUrl?: string | null;
+  relatedVideos?: RelatedVideoData[];
 }
 
 // URL 비교 헬퍼: 쿼리 파라미터 등 차이 무시, 도메인+경로 기준
@@ -105,7 +121,9 @@ function urlsMatch(url1?: string | null, url2?: string | null): boolean {
   }
 }
 
-export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedResourcesProps = {}) {
+export function RelatedResources({ apiReferences, activeCitationUrl, relatedVideos = [] }: RelatedResourcesProps = {}) {
+  console.log("[RelatedResources] relatedVideos prop 수신:", relatedVideos)
+
   const [selectedSource, setSelectedSource] = useState<string>("all")
   const [selectedArticle, setSelectedArticle] = useState<ArticleData | null>(null)
   const [displaySources, setDisplaySources] = useState<SourceData[]>([])
@@ -120,7 +138,6 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
           grouped[sourceName] = { articles: [], images: [] };
         }
 
-        // Article에 images, key_points 포함
         grouped[sourceName].articles.push({
           id: idx,
           title: ref.title,
@@ -129,11 +146,9 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
           url: ref.url,
           searchKeyword: ref.query,
           analysis: ref.analysis || { facts: [], opinions: [], key_points: [] },
-          // 기사 이미지를 ArticleData에도 보존 (팝업용)
           images: ref.images || [],
         });
 
-        // Images 탭용 (소스별 이미지 목록)
         if (ref.images && Array.isArray(ref.images)) {
           ref.images.forEach((img, imgIdx) => {
             grouped[sourceName].images.push({
@@ -170,18 +185,19 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
   )
 
   return (
-    <div className="relative h-full">
-      <Card className="border-border/50 bg-card/50 backdrop-blur h-full flex flex-col">
+    <div className="flex flex-col gap-4">
+      {/* 참고 자료 카드 */}
+      <Card className="border-border/50 bg-card/50 backdrop-blur flex flex-col">
         <CardHeader className="pb-4 flex-shrink-0">
           <CardTitle className="text-lg">참고 자료</CardTitle>
         </CardHeader>
-        <CardContent className="flex-1 min-h-0 flex flex-col">
+        <CardContent className="flex flex-col">
           {displaySources.length === 0 ? (
-            <div className="h-full flex items-center justify-center">
+            <div className="flex items-center justify-center py-12">
               <div className="text-center space-y-3 p-8">
                 <div className="text-4xl">📰</div>
                 <p className="text-muted-foreground text-sm">
-                  "스크립트 생성 시<br />관련 뉴스가 표시됩니다"
+                  스크립트 생성 시<br />관련 뉴스가 표시됩니다
                 </p>
               </div>
             </div>
@@ -218,7 +234,7 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
                 </div>
               </div>
 
-              <Tabs defaultValue="articles" className="flex-1 flex flex-col min-h-0">
+              <Tabs defaultValue="articles" className="flex flex-col">
                 <TabsList className="grid w-full grid-cols-2 mb-4 flex-shrink-0">
                   <TabsTrigger value="articles" className="gap-1 text-xs">
                     <FileText className="w-3 h-3" />
@@ -230,8 +246,8 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
                   </TabsTrigger>
                 </TabsList>
 
-                <TabsContent value="articles" className="flex-1 min-h-0 relative">
-                  <ScrollArea className="h-full pr-4">
+                <TabsContent value="articles">
+                  <ScrollArea className="h-[480px] pr-4">
                     <div className="space-y-4 pb-4">
                       {selectedSource === "all" ? (
                         displaySources.map((source) => (
@@ -277,8 +293,8 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
                   </ScrollArea>
                 </TabsContent>
 
-                <TabsContent value="images" className="flex-1 min-h-0 relative">
-                  <ScrollArea className="h-full pr-4">
+                <TabsContent value="images">
+                  <ScrollArea className="h-[480px] pr-4">
                     <div className="space-y-4 pb-4">
                       {selectedSource === "all" ? (
                         displaySources.filter((s) => s.images.length > 0).map((source) => (
@@ -316,12 +332,19 @@ export function RelatedResources({ apiReferences, activeCitationUrl }: RelatedRe
         </CardContent>
       </Card>
 
-      {/* --- Detail View Modal --- */}
+      {/* --- Detail View Modal (fixed로 전체 화면 위에 표시) --- */}
       {selectedArticle && (
-        <ArticleDetailModal
-          article={selectedArticle}
-          onClose={() => setSelectedArticle(null)}
-        />
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+          <ArticleDetailModal
+            article={selectedArticle}
+            onClose={() => setSelectedArticle(null)}
+          />
+        </div>
+      )}
+
+      {/* --- 관련 영상 섹션 --- */}
+      {relatedVideos.length > 0 && (
+        <RelatedVideosSection videos={relatedVideos} />
       )}
     </div>
   )
@@ -342,8 +365,6 @@ function ArticleDetailModal({
   const images = (article.images ?? []).filter(
     img => img.url && (img.url.startsWith("data:image") || img.url.startsWith("http") || img.url.startsWith("/"))
   )
-  const charts = images.filter(img => img.is_chart)
-  const photos = images.filter(img => !img.is_chart)
 
   const handleCopyFacts = () => {
     const text = facts.map((f, i) => `${i + 1}. ${f}`).join("\n")
@@ -351,171 +372,169 @@ function ArticleDetailModal({
   }
 
   return (
-    <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-      <Card className="w-full max-w-lg h-full max-h-[680px] flex flex-col shadow-2xl border-primary/20 bg-card">
-        {/* Header */}
-        <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2 border-b flex-shrink-0">
-          <div className="space-y-1 pr-4">
-            <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 flex-wrap">
-              <Badge variant="outline" className="text-[10px]">{article.sourceName || "News"}</Badge>
-              <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {article.date}</span>
-              {article.searchKeyword && (
-                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                  🔍 {article.searchKeyword}
-                </span>
-              )}
-            </div>
-            <CardTitle className="text-base font-bold leading-tight">
-              <a href={article.url} target="_blank" rel="noreferrer" className="hover:underline hover:text-primary transition-colors flex items-center gap-1">
-                {article.title}
-                <ExternalLink className="w-3 h-3 opacity-50 flex-shrink-0" />
-              </a>
-            </CardTitle>
+    <Card className="w-full max-w-lg max-h-[80vh] flex flex-col shadow-2xl border-primary/20 bg-card">
+      {/* Header */}
+      <CardHeader className="flex flex-row items-start justify-between space-y-0 pb-2 border-b flex-shrink-0">
+        <div className="space-y-1 pr-4">
+          <div className="flex items-center gap-2 text-xs text-muted-foreground mb-1 flex-wrap">
+            <Badge variant="outline" className="text-[10px]">{article.sourceName || "News"}</Badge>
+            <span className="flex items-center gap-1"><Clock className="w-3 h-3" /> {article.date}</span>
+            {article.searchKeyword && (
+              <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                🔍 {article.searchKeyword}
+              </span>
+            )}
           </div>
-          <Button size="icon" variant="ghost" className="h-6 w-6 -mr-2 flex-shrink-0" onClick={onClose}>
-            <X className="w-4 h-4" />
-          </Button>
-        </CardHeader>
-
-        {/* Scrollable Body */}
-        <CardContent className="flex-1 overflow-hidden p-0">
-          <ScrollArea className="h-full p-4">
-            <div className="space-y-5">
-
-              {/* 핵심 요약 */}
-              <div className="bg-muted/30 p-3 rounded-md border border-border/50">
-                <h4 className="text-xs font-semibold text-muted-foreground mb-1">핵심 요약</h4>
-                <p className="text-sm font-medium leading-relaxed">{article.summary_short}</p>
-              </div>
-
-              {/* 이미지 & 차트 (있을 때만) */}
-              {images.length > 0 && (
-                <div className="space-y-2">
-                  <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-                    <ImageIcon className="w-3.5 h-3.5" />
-                    기사 이미지 / 차트 ({images.length})
-                  </h4>
-                  <div className="grid grid-cols-3 gap-2">
-                    {images.slice(0, 6).map((img, idx) => (
-                      <div key={idx} className="relative aspect-video rounded-md overflow-hidden bg-muted/40 group cursor-pointer">
-                        <img
-                          src={img.url}
-                          alt={img.caption || `이미지 ${idx + 1}`}
-                          className="w-full h-full object-cover transition-transform group-hover:scale-105"
-                          onError={(e) => {
-                            (e.target as HTMLImageElement).style.display = "none"
-                          }}
-                        />
-                        {img.is_chart && (
-                          <div className="absolute top-1 left-1">
-                            <Badge className="text-[9px] px-1 py-0 bg-emerald-500/90 text-white">차트</Badge>
-                          </div>
-                        )}
-                        {img.caption && (
-                          <div className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1">
-                            <p className="text-[10px] text-foreground leading-tight line-clamp-2">{img.caption}</p>
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                  {images.length > 6 && (
-                    <p className="text-[10px] text-muted-foreground text-right">+{images.length - 6}개 더 있음</p>
-                  )}
-                </div>
-              )}
-
-              {/* 핵심 포인트 (Key Points) */}
-              {keyPoints.length > 0 && (
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-violet-500 font-semibold text-sm border-b pb-1 border-violet-500/20">
-                    <Lightbulb className="w-4 h-4" />
-                    <span>핵심 포인트</span>
-                  </div>
-                  <div className="bg-violet-500/5 rounded-md p-3 space-y-2">
-                    {keyPoints.map((point, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
-                        <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-600 text-[10px] font-bold flex items-center justify-center mt-0.5">
-                          {idx + 1}
-                        </span>
-                        <span className="leading-snug">{point}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {/* 팩트 */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-blue-500 font-semibold text-sm border-b pb-1 border-blue-500/20">
-                  <Target className="w-4 h-4" />
-                  <span>팩트 (Facts)</span>
-                </div>
-                <div className="bg-blue-500/5 rounded-md p-3 space-y-2">
-                  {facts.length > 0 ? (
-                    facts.map((fact, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
-                        <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
-                        <span className="leading-snug">{fact}</span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-xs text-muted-foreground">추출된 팩트가 없습니다.</p>
-                  )}
-                </div>
-              </div>
-
-              {/* 전망 및 해석 */}
-              <div className="space-y-2">
-                <div className="flex items-center gap-2 text-amber-500 font-semibold text-sm border-b pb-1 border-amber-500/20">
-                  <MessageSquare className="w-4 h-4" />
-                  <span>전망 및 해석 (Insights)</span>
-                </div>
-                <div className="bg-amber-500/5 rounded-md p-3 space-y-2">
-                  {opinions.length > 0 ? (
-                    opinions.slice(0, 5).map((op, idx) => (
-                      <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
-                        <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
-                        <span className="leading-snug">
-                          {op.startsWith('[') && op.includes(']') ? (
-                            <>
-                              <span className="font-bold text-amber-600 mr-1">{op.split(']')[0] + ']'}</span>
-                              {op.split(']').slice(1).join(']')}
-                            </>
-                          ) : (
-                            op
-                          )}
-                        </span>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-xs text-muted-foreground">관련 전문가 의견이나 분석이 없습니다.</p>
-                  )}
-                </div>
-              </div>
-
-            </div>
-          </ScrollArea>
-        </CardContent>
-
-        {/* Footer */}
-        <div className="p-3 border-t bg-muted/20 flex gap-2 justify-end flex-shrink-0">
-          <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={handleCopyFacts}>
-            <Copy className="w-3 h-3" />
-            팩트 복사
-          </Button>
-          <Button
-            variant="default"
-            size="sm"
-            className="h-8 text-xs gap-1"
-            onClick={() => window.open(article.url, "_blank", "noopener,noreferrer")}
-          >
-            <ExternalLink className="w-3 h-3" />
-            원문 보기
-          </Button>
+          <CardTitle className="text-base font-bold leading-tight">
+            <a href={article.url} target="_blank" rel="noreferrer" className="hover:underline hover:text-primary transition-colors flex items-center gap-1">
+              {article.title}
+              <ExternalLink className="w-3 h-3 opacity-50 flex-shrink-0" />
+            </a>
+          </CardTitle>
         </div>
-      </Card>
-    </div>
+        <Button size="icon" variant="ghost" className="h-6 w-6 -mr-2 flex-shrink-0" onClick={onClose}>
+          <X className="w-4 h-4" />
+        </Button>
+      </CardHeader>
+
+      {/* Scrollable Body */}
+      <CardContent className="flex-1 overflow-hidden p-0">
+        <ScrollArea className="h-full p-4">
+          <div className="space-y-5">
+
+            {/* 핵심 요약 */}
+            <div className="bg-muted/30 p-3 rounded-md border border-border/50">
+              <h4 className="text-xs font-semibold text-muted-foreground mb-1">핵심 요약</h4>
+              <p className="text-sm font-medium leading-relaxed">{article.summary_short}</p>
+            </div>
+
+            {/* 이미지 & 차트 */}
+            {images.length > 0 && (
+              <div className="space-y-2">
+                <h4 className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <ImageIcon className="w-3.5 h-3.5" />
+                  기사 이미지 / 차트 ({images.length})
+                </h4>
+                <div className="grid grid-cols-3 gap-2">
+                  {images.slice(0, 6).map((img, idx) => (
+                    <div key={idx} className="relative aspect-video rounded-md overflow-hidden bg-muted/40 group cursor-pointer">
+                      <img
+                        src={img.url}
+                        alt={img.caption || `이미지 ${idx + 1}`}
+                        className="w-full h-full object-cover transition-transform group-hover:scale-105"
+                        onError={(e) => {
+                          (e.target as HTMLImageElement).style.display = "none"
+                        }}
+                      />
+                      {img.is_chart && (
+                        <div className="absolute top-1 left-1">
+                          <Badge className="text-[9px] px-1 py-0 bg-emerald-500/90 text-white">차트</Badge>
+                        </div>
+                      )}
+                      {img.caption && (
+                        <div className="absolute inset-0 bg-background/80 opacity-0 group-hover:opacity-100 transition-opacity flex items-end p-1">
+                          <p className="text-[10px] text-foreground leading-tight line-clamp-2">{img.caption}</p>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {images.length > 6 && (
+                  <p className="text-[10px] text-muted-foreground text-right">+{images.length - 6}개 더 있음</p>
+                )}
+              </div>
+            )}
+
+            {/* 핵심 포인트 */}
+            {keyPoints.length > 0 && (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-violet-500 font-semibold text-sm border-b pb-1 border-violet-500/20">
+                  <Lightbulb className="w-4 h-4" />
+                  <span>핵심 포인트</span>
+                </div>
+                <div className="bg-violet-500/5 rounded-md p-3 space-y-2">
+                  {keyPoints.map((point, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-violet-500/20 text-violet-600 text-[10px] font-bold flex items-center justify-center mt-0.5">
+                        {idx + 1}
+                      </span>
+                      <span className="leading-snug">{point}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* 팩트 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-blue-500 font-semibold text-sm border-b pb-1 border-blue-500/20">
+                <Target className="w-4 h-4" />
+                <span>팩트 (Facts)</span>
+              </div>
+              <div className="bg-blue-500/5 rounded-md p-3 space-y-2">
+                {facts.length > 0 ? (
+                  facts.map((fact, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                      <span className="w-1.5 h-1.5 rounded-full bg-blue-500 mt-1.5 flex-shrink-0" />
+                      <span className="leading-snug">{fact}</span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">추출된 팩트가 없습니다.</p>
+                )}
+              </div>
+            </div>
+
+            {/* 전망 및 해석 */}
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 text-amber-500 font-semibold text-sm border-b pb-1 border-amber-500/20">
+                <MessageSquare className="w-4 h-4" />
+                <span>전망 및 해석 (Insights)</span>
+              </div>
+              <div className="bg-amber-500/5 rounded-md p-3 space-y-2">
+                {opinions.length > 0 ? (
+                  opinions.slice(0, 5).map((op, idx) => (
+                    <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                      <span className="w-1.5 h-1.5 rounded-full bg-amber-500 mt-1.5 flex-shrink-0" />
+                      <span className="leading-snug">
+                        {op.startsWith('[') && op.includes(']') ? (
+                          <>
+                            <span className="font-bold text-amber-600 mr-1">{op.split(']')[0] + ']'}</span>
+                            {op.split(']').slice(1).join(']')}
+                          </>
+                        ) : (
+                          op
+                        )}
+                      </span>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-xs text-muted-foreground">관련 전문가 의견이나 분석이 없습니다.</p>
+                )}
+              </div>
+            </div>
+
+          </div>
+        </ScrollArea>
+      </CardContent>
+
+      {/* Footer */}
+      <div className="p-3 border-t bg-muted/20 flex gap-2 justify-end flex-shrink-0">
+        <Button variant="outline" size="sm" className="h-8 text-xs gap-1" onClick={handleCopyFacts}>
+          <Copy className="w-3 h-3" />
+          팩트 복사
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          className="h-8 text-xs gap-1"
+          onClick={() => window.open(article.url, "_blank", "noopener,noreferrer")}
+        >
+          <ExternalLink className="w-3 h-3" />
+          원문 보기
+        </Button>
+      </div>
+    </Card>
   )
 }
 
@@ -574,7 +593,6 @@ function ArticleCard({
         {article.summary_short}
       </p>
 
-      {/* 분석 뱃지 */}
       {(hasAnalysis || imageCount > 0) && (
         <div className="flex items-center gap-1.5 mt-2">
           {hasAnalysis && (
@@ -653,5 +671,105 @@ function ImageCard({
         <p className="text-xs text-foreground font-medium text-center px-2">{image.title}</p>
       </div>
     </div>
+  )
+}
+
+// --- Related Videos Section ---
+
+function RelatedVideosSection({ videos }: { videos: RelatedVideoData[] }) {
+  console.log("[RelatedVideosSection] 렌더링, videos:", videos)
+
+  const formatViewCount = (count: number) => {
+    if (count >= 100000000) return `${(count / 100000000).toFixed(1)}억`
+    if (count >= 10000) return `${(count / 10000).toFixed(1)}만`
+    if (count >= 1000) return `${(count / 1000).toFixed(1)}천`
+    return count.toString()
+  }
+
+  const formatDate = (iso: string) => {
+    if (!iso) return ""
+    try {
+      const d = new Date(iso)
+      return `${d.getFullYear()}.${String(d.getMonth() + 1).padStart(2, "0")}.${String(d.getDate()).padStart(2, "0")}`
+    } catch {
+      return ""
+    }
+  }
+
+  return (
+    <Card className="border-border/50 bg-card/50 backdrop-blur">
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg flex items-center gap-2">
+          <Play className="w-5 h-5 text-red-500" />
+          관련 영상
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {videos.map((video) => (
+          <a
+            key={video.video_id}
+            href={video.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="flex gap-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/60 border border-transparent hover:border-border/50 transition-colors group"
+          >
+            {/* 썸네일 */}
+            <div className="relative flex-shrink-0 w-28 aspect-video rounded-md overflow-hidden bg-muted">
+              <img
+                src={video.thumbnail}
+                alt={video.title}
+                className="w-full h-full object-cover"
+                onError={(e) => {
+                  (e.target as HTMLImageElement).style.display = "none"
+                }}
+              />
+              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                <Play className="w-6 h-6 text-white fill-white" />
+              </div>
+              {/* 검색 유형 뱃지 */}
+              <div className="absolute top-1 left-1">
+                {video.search_type === "relevance" ? (
+                  <Badge className="text-[9px] px-1 py-0 bg-blue-500/90 text-white flex items-center gap-0.5">
+                    <Star className="w-2.5 h-2.5" />
+                    관련도
+                  </Badge>
+                ) : (
+                  <Badge className="text-[9px] px-1 py-0 bg-orange-500/90 text-white flex items-center gap-0.5">
+                    <TrendingUp className="w-2.5 h-2.5" />
+                    인기
+                  </Badge>
+                )}
+              </div>
+            </div>
+
+            {/* 영상 정보 */}
+            <div className="flex-1 min-w-0 space-y-1">
+              <h4 className="text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug">
+                {video.title}
+              </h4>
+              <p className="text-xs text-muted-foreground font-medium">{video.channel}</p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="flex items-center gap-0.5">
+                  <Eye className="w-3 h-3" />
+                  {formatViewCount(video.view_count)}
+                </span>
+                <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                <span className="flex items-center gap-0.5">
+                  <Clock className="w-3 h-3" />
+                  {formatDate(video.published_at)}
+                </span>
+              </div>
+              <div className="mt-1">
+                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                  🔍 {video.search_keyword}
+                </span>
+              </div>
+            </div>
+
+            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
+          </a>
+        ))}
+      </CardContent>
+    </Card>
   )
 }

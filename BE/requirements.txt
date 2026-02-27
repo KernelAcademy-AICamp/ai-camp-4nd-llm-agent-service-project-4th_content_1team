@@ -25,15 +25,15 @@ pydantic-settings==2.1.0
 pytest==7.4.4
 pytest-asyncio==0.23.6
 
-# LangChain & AI
-langchain
-langchain-core
-langchain-openai
-langchain-anthropic
-langchain-google-genai
-langchain-community
-langgraph
-google-generativeai  # Gemini API
+# LangChain & AI (1.x 계열로 버전 통일 - langchain-core 1.x 호환)
+langchain>=1.0.0
+langchain-core>=1.0.0
+langchain-openai>=0.3.0
+langchain-anthropic>=1.0.0
+langchain-google-genai>=2.0.0
+langchain-community>=0.3.0
+langgraph>=0.2.0
+google-generativeai>=0.8.0  # Gemini API
 
 # Tools & Crawling
 tavily-python

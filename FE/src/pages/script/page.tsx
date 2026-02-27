@@ -18,11 +18,20 @@ function ScriptPageContent() {
   const [scriptData, setScriptData] = useState<GeneratedScript | null>(null)
   const [references, setReferences] = useState<ReferenceArticle[]>([])
   const [citations, setCitations] = useState<Citation[]>([])
+  const [relatedVideos, setRelatedVideos] = useState<RelatedVideo[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProgressInfo | null>(null)
 
   // 자동 생성 트리거 방지 플래그 (useRef: 동기적 즉시 반영 → StrictMode 중복 방지)
   const autoGenRef = useRef(false)
+
+  const normalizeRelatedVideos = (videos: any): RelatedVideo[] => {
+    if (!Array.isArray(videos)) return []
+    return videos.map((v) => ({
+      ...(v as RelatedVideo),
+      search_type: ((v as RelatedVideo).search_type as "relevance" | "popular") || "relevance",
+    }))
+  }
 
   // 페이지 로드 시 DB에서 이전 결과 불러오기 → 없으면 자동 생성
   useEffect(() => {
@@ -36,6 +45,7 @@ function ScriptPageContent() {
             setScriptData(result.script)
             setReferences(result.references || [])
             setCitations(result.citations || [])
+            setRelatedVideos(normalizeRelatedVideos(result.related_videos))
             hasExistingData = true
           }
         } else {
@@ -46,6 +56,7 @@ function ScriptPageContent() {
               setScriptData(latest.script)
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
+              setRelatedVideos(normalizeRelatedVideos(latest.related_videos))
               hasExistingData = true
             }
           }
@@ -86,6 +97,7 @@ function ScriptPageContent() {
         setScriptData(result.script)
         setReferences(result.references || [])
         setCitations(result.citations || [])
+        setRelatedVideos(normalizeRelatedVideos(result.related_videos))
         if (result.topic_request_id) {
           const newParams = new URLSearchParams(searchParams)
           newParams.set("topicId", result.topic_request_id)
@@ -129,7 +141,7 @@ function ScriptPageContent() {
           {/* Right Panel - Resources & Analysis */}
           <div className="w-1/2 overflow-auto">
             <div className="p-6 space-y-6">
-              <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} />
+              <RelatedResources apiReferences={references} activeCitationUrl={activeCitationUrl} relatedVideos={relatedVideos} />
             </div>
           </div>
         </div>
