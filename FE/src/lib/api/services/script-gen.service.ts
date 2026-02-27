@@ -69,10 +69,25 @@ export interface ScriptGenResult {
     topic_request_id?: string;
 }
 
+export interface PipelineStep {
+    key: string;
+    label: string;
+    emoji: string;
+}
+
+export interface ProgressInfo {
+    current_step: string;
+    message: string;
+    completed_steps: string[];
+    total_steps: number;
+    steps: PipelineStep[];
+}
+
 export interface TaskStatusResponse {
     task_id: string;
-    status: 'PENDING' | 'STARTED' | 'SUCCESS' | 'FAILURE';
+    status: 'PENDING' | 'STARTED' | 'PROGRESS' | 'SUCCESS' | 'FAILURE';
     result?: ScriptGenResult;
+    progress?: ProgressInfo;
 }
 
 // 스크립트 생성 시작
@@ -97,7 +112,8 @@ export const checkScriptGenStatus = async (taskId: string): Promise<TaskStatusRe
 // 첫 시도 실패 완화: Celery worker cold start를 위해 최초 2초 대기 후 폴링 시작
 export const pollScriptGenResult = async (
     taskId: string,
-    onStatusChange?: (status: string) => void
+    onStatusChange?: (status: string) => void,
+    onProgress?: (progress: ProgressInfo) => void,
 ): Promise<ScriptGenResult> => {
     await new Promise((r) => setTimeout(r, 2000));
     return new Promise((resolve, reject) => {
@@ -105,6 +121,11 @@ export const pollScriptGenResult = async (
             try {
                 const statusData = await checkScriptGenStatus(taskId);
                 if (onStatusChange) onStatusChange(statusData.status);
+
+                // ★ PROGRESS 상태 → 진행 상황 콜백
+                if (statusData.status === 'PROGRESS' && statusData.progress && onProgress) {
+                    onProgress(statusData.progress);
+                }
 
                 if (statusData.status === 'SUCCESS' && statusData.result) {
                     clearInterval(interval);

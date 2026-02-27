@@ -7,7 +7,7 @@ import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
 import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
-import type { GeneratedScript, ReferenceArticle, Citation, RelatedVideo } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle, Citation, ProgressInfo } from "../../lib/api/services"
 
 function ScriptPageContent() {
   const [searchParams, setSearchParams] = useSearchParams()
@@ -20,6 +20,7 @@ function ScriptPageContent() {
   const [citations, setCitations] = useState<Citation[]>([])
   const [relatedVideos, setRelatedVideos] = useState<RelatedVideo[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
+  const [progress, setProgress] = useState<ProgressInfo | null>(null)
 
   // 자동 생성 트리거 방지 플래그 (useRef: 동기적 즉시 반영 → StrictMode 중복 방지)
   const autoGenRef = useRef(false)
@@ -76,11 +77,22 @@ function ScriptPageContent() {
 
   const handleGenerate = async () => {
     setIsGenerating(true)
+    setProgress(null)
+    setScriptData(null)    // ★ 기존 스크립트 초기화 → 진행 상황 UI 표시
+    setReferences([])
+    setCitations([])
     try {
       const { task_id } = await executeScriptGen(topic, topicId)
-      const result = await pollScriptGenResult(task_id, (status) => {
-        console.log("[FE] 상태:", status)
-      })
+      const result = await pollScriptGenResult(
+        task_id,
+        (status) => {
+          console.log("[FE] 상태:", status)
+        },
+        (progressInfo) => {
+          console.log("[FE] 진행:", progressInfo.message)
+          setProgress(progressInfo)
+        }
+      )
       if (result.success && result.script) {
         setScriptData(result.script)
         setReferences(result.references || [])
@@ -100,6 +112,7 @@ function ScriptPageContent() {
       alert("서버 연결 오류. 백엔드가 실행 중인지 확인해주세요.")
     } finally {
       setIsGenerating(false)
+      setProgress(null)
     }
   }
 
@@ -121,6 +134,7 @@ function ScriptPageContent() {
               onRegenerate={handleGenerate}
               citations={citations}
               onCitationClick={(url) => setActiveCitationUrl(url)}
+              progress={progress}
             />
           </div>
 
