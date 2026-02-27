@@ -53,8 +53,8 @@ export default function LoginPage() {
           // 페르소나 존재 확인 후 라우팅
           try {
             await getMyPersona()
-            // 페르소나가 있으면 대시보드로 이동
-            navigate('/dashboard')
+            // 페르소나가 있으면 주제 탐색으로 이동
+            navigate('/explore')
           } catch {
             // 페르소나가 없으면 온보딩으로 이동
             navigate('/onboarding')

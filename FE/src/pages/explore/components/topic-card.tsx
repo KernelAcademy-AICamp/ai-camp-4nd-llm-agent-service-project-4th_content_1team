@@ -1,4 +1,5 @@
 import { Bookmark } from "lucide-react"
+import { Link } from "react-router-dom"
 import { Button } from "../../../components/ui/button"
 import { cn } from "../../../lib/utils"
 
@@ -8,6 +9,8 @@ interface TopicCardProps {
   title: string
   description: string
   hashtags: string[]
+  topicId?: string
+  topicType?: string
   onClick?: () => void
 }
 
@@ -31,13 +34,15 @@ const BADGE_STYLES = {
   },
 } as const
 
-export function TopicCard({ 
+export function TopicCard({
   id,
-  badge, 
-  title, 
-  description, 
+  badge,
+  title,
+  description,
   hashtags,
-  onClick 
+  topicId,
+  topicType,
+  onClick
 }: TopicCardProps) {
   // 뱃지 스타일 가져오기
   const badgeStyle = BADGE_STYLES[badge as keyof typeof BADGE_STYLES] || BADGE_STYLES["성공 방정식"]
@@ -48,12 +53,10 @@ export function TopicCard({
     onClick?.()
   }
 
-  // 스크립트 작성 핸들러
-  const handleCreateScript = (e: React.MouseEvent) => {
-    e.stopPropagation()
-    console.log("스크립트 작성:", id)
-    // TODO: 스크립트 작성 페이지로 이동
-  }
+  // 스크립트 작성 링크
+  const scriptLink = topicId
+    ? `/script/edit?topic=${encodeURIComponent(title)}&topicId=${topicId}&topicType=${topicType || 'trend'}`
+    : undefined
 
   // 북마크 핸들러
   const handleBookmark = (e: React.MouseEvent) => {
@@ -130,12 +133,23 @@ export function TopicCard({
           >
             상세내용 보기
           </Button>
-          <Button 
-            className="flex-1 h-10 bg-[#6b27d9] hover:bg-[#5b21b6] text-white text-sm font-medium rounded-lg"
-            onClick={handleCreateScript}
-          >
-            스크립트 작성
-          </Button>
+          {scriptLink ? (
+            <Link to={scriptLink} className="flex-1" onClick={(e) => e.stopPropagation()}>
+              <Button
+                className="w-full h-10 bg-[#6b27d9] hover:bg-[#5b21b6] text-white text-sm font-medium rounded-lg"
+              >
+                스크립트 작성
+              </Button>
+            </Link>
+          ) : (
+            <Button
+              className="flex-1 h-10 bg-[#6b27d9] hover:bg-[#5b21b6] text-white text-sm font-medium rounded-lg"
+              onClick={(e) => e.stopPropagation()}
+              disabled
+            >
+              스크립트 작성
+            </Button>
+          )}
         </div>
       </div>
     </div>

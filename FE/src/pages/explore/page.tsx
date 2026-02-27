@@ -1,8 +1,54 @@
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
+import { Loader2 } from "lucide-react"
 import { TopicCard } from "./components/topic-card"
 import { TopicDetailSidebar } from "./components/topic-detail-sidebar"
 import { useSidebar } from "../../contexts/sidebar-context"
+import { getTopics } from "../../lib/api/services"
+import type { TopicResponse } from "../../lib/api/types"
 
+// recommendation_type → badge 매핑
+const BADGE_MAP: Record<string, string> = {
+  hit_pattern: "성공 방정식",
+  viewer_needs: "구독자 관심",
+  trend_driven: "최근 경향성",
+}
+
+// TopicResponse → 카드 표시용 인터페이스
+export interface DisplayTopic {
+  id: string
+  badge: string
+  title: string
+  description: string
+  hashtags: string[]
+  // 사이드바 추가 정보
+  recommendation_direction: string
+  content_angles: string[]
+  trend_basis: string
+  thumbnail_idea: string
+  urgency: string
+  source_layer: string
+  topic_type: string
+}
+
+// TopicResponse → DisplayTopic 변환
+function toDisplayTopic(topic: TopicResponse): DisplayTopic {
+  return {
+    id: topic.id,
+    badge: BADGE_MAP[topic.recommendation_type || ""] || "AI 추천",
+    title: topic.title,
+    description: topic.recommendation_reason || "",
+    hashtags: topic.search_keywords || [],
+    recommendation_direction: topic.recommendation_direction || "",
+    content_angles: topic.content_angles || [],
+    trend_basis: topic.trend_basis || "",
+    thumbnail_idea: topic.thumbnail_idea || "",
+    urgency: topic.urgency || "normal",
+    source_layer: topic.source_layer || "core",
+    topic_type: topic.topic_type || "trend",
+  }
+}
+
+// 기존 Topic 인터페이스 (목데이터 섹션용)
 interface Topic {
   id: string
   badge: string
@@ -11,39 +57,7 @@ interface Topic {
   hashtags: string[]
 }
 
-// Mock 데이터 - 내 채널 강점 키우기
-const MOCK_GROWTH_TOPICS: Topic[] = [
-  {
-    id: "1",
-    badge: "성공 방정식",
-    title: "실패했던 프로젝트에서 배운 5가지 교훈",
-    description: "경쟁 채널들은 성공 스토리만 다루는데, 실패담으로 차별화하면 더 진정성 있게 다가갈 수 있어요!",
-    hashtags: ["창업", "실패극복", "진솔한이야기"],
-  },
-  {
-    id: "2",
-    badge: "구독자 관심",
-    title: "구독자가 가장 궁금해하는 질문 TOP 5",
-    description: "댓글 분석 결과, 구독자들이 가장 많이 물어보는 질문들을 정리했어요!",
-    hashtags: ["구독자", "소통", "Q&A"],
-  },
-  {
-    id: "3",
-    badge: "최근 경향성",
-    title: "최근 영상 스타일로 새로운 시도",
-    description: "최근 인기 있었던 영상 패턴을 분석해서 다음 콘텐츠 아이디어를 제안해요!",
-    hashtags: ["트렌드", "영상분석", "새시도"],
-  },
-  {
-    id: "4",
-    badge: "성공 방정식",
-    title: "지난 히트작 공식 재현하기",
-    description: "과거 인기 영상의 성공 요소를 분석해서 다시 한번 적용해보세요!",
-    hashtags: ["히트작", "성공패턴", "재현"],
-  },
-]
-
-// Mock 데이터 - 경쟁 채널보다 다르게
+// Mock 데이터 - 경쟁 채널보다 다르게 (나중에 API 연결)
 const MOCK_DIFFERENTIATE_TOPICS: Topic[] = [
   {
     id: "5",
@@ -77,11 +91,55 @@ const MOCK_DIFFERENTIATE_TOPICS: Topic[] = [
 
 export default function ExplorePage() {
   const { isDetailSidebarOpen, openDetailSidebar } = useSidebar()
-  const [selectedTopic, setSelectedTopic] = useState<Topic | null>(null)
+  const [selectedTopic, setSelectedTopic] = useState<DisplayTopic | null>(null)
 
-  // 주제 카드 클릭 핸들러
-  const handleTopicClick = (topic: Topic) => {
+  // 트렌드 추천 API 상태
+  const [trendTopics, setTrendTopics] = useState<DisplayTopic[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  const hasCalledRef = useRef(false)
+
+  // 트렌드 추천 조회
+  useEffect(() => {
+    if (hasCalledRef.current) return
+    hasCalledRef.current = true
+
+    const fetchTopics = async () => {
+      try {
+        setIsLoading(true)
+        setLoadError(null)
+        const response = await getTopics()
+        const mapped = response.trend_topics.map(toDisplayTopic)
+        setTrendTopics(mapped)
+      } catch (err: any) {
+        console.error("트렌드 추천 조회 실패:", err)
+        setLoadError("추천 주제를 불러오는데 실패했습니다.")
+      } finally {
+        setIsLoading(false)
+      }
+    }
+
+    fetchTopics()
+  }, [])
+
+  // 트렌드 주제 카드 클릭 핸들러
+  const handleTrendTopicClick = (topic: DisplayTopic) => {
     setSelectedTopic(topic)
+    openDetailSidebar()
+  }
+
+  // 목데이터 주제 카드 클릭 핸들러
+  const handleMockTopicClick = (topic: Topic) => {
+    setSelectedTopic({
+      ...topic,
+      recommendation_direction: "",
+      content_angles: [],
+      trend_basis: "",
+      thumbnail_idea: "",
+      urgency: "normal",
+      source_layer: "core",
+      topic_type: "channel",
+    })
     openDetailSidebar()
   }
 
@@ -101,27 +159,51 @@ export default function ExplorePage() {
 
         {/* 섹션들 컨테이너 */}
         <div className="space-y-12">
-          {/* 내 채널 강점 키우기 */}
+          {/* 내 채널 강점 키우기 - API 연결 */}
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-6">
               내 채널 강점 키우기
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {MOCK_GROWTH_TOPICS.map((topic) => (
-                <TopicCard
-                  key={topic.id}
-                  id={topic.id}
-                  badge={topic.badge}
-                  title={topic.title}
-                  description={topic.description}
-                  hashtags={topic.hashtags}
-                  onClick={() => handleTopicClick(topic)}
-                />
-              ))}
-            </div>
+
+            {isLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <span className="ml-3 text-muted-foreground">추천 주제를 불러오고 있어요...</span>
+              </div>
+            )}
+
+            {!isLoading && loadError && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">{loadError}</p>
+              </div>
+            )}
+
+            {!isLoading && !loadError && trendTopics.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">아직 추천된 주제가 없어요. 잠시 후 다시 확인해 주세요.</p>
+              </div>
+            )}
+
+            {!isLoading && !loadError && trendTopics.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {trendTopics.map((topic) => (
+                  <TopicCard
+                    key={topic.id}
+                    id={topic.id}
+                    badge={topic.badge}
+                    title={topic.title}
+                    description={topic.description}
+                    hashtags={topic.hashtags}
+                    topicId={topic.id}
+                    topicType={topic.topic_type}
+                    onClick={() => handleTrendTopicClick(topic)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
 
-          {/* 경쟁 채널과 다르게 */}
+          {/* 경쟁 채널과 다르게 - 목데이터 유지 */}
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-6">
               경쟁 채널과 다르게
@@ -135,7 +217,7 @@ export default function ExplorePage() {
                   title={topic.title}
                   description={topic.description}
                   hashtags={topic.hashtags}
-                  onClick={() => handleTopicClick(topic)}
+                  onClick={() => handleMockTopicClick(topic)}
                 />
               ))}
             </div>
