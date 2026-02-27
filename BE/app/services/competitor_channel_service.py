@@ -989,14 +989,14 @@ class CompetitorChannelService:
             logger.warning(f"페르소나 조회 실패 (분석은 계속): {e}")
 
         # 5. LLM 프롬프트 구성
-        api_key = settings.openai_api_key
+        api_key = settings.anthropic_api_key
         if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API 키가 설정되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="Anthropic API 키가 설정되지 않았습니다.")
 
-        from langchain_openai import ChatOpenAI
+        from langchain_anthropic import ChatAnthropic
         from langchain_core.messages import HumanMessage
 
-        llm = ChatOpenAI(model="gpt-4.1", api_key=api_key)
+        llm = ChatAnthropic(model="claude-sonnet-4-5", api_key=api_key)
 
         prompt = f"""당신은 유튜브 콘텐츠 전략 분석가입니다.
 
