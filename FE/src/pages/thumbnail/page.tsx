@@ -1,15 +1,12 @@
 
 
 import { Suspense } from "react"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ThumbnailGenerator } from "./components/thumbnail-generator"
 import { ThumbnailHeader } from "./components/thumbnail-header"
 
 export default function ThumbnailPage() {
   return (
     <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
       <main className="flex-1 flex flex-col overflow-hidden">
         <Suspense fallback={<ThumbnailHeaderSkeleton />}>
           <ThumbnailHeader />

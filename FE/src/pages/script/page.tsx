@@ -7,7 +7,7 @@ import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
 import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
-import type { GeneratedScript, ReferenceArticle, Citation, ProgressInfo } from "../../lib/api/services"
+import type { GeneratedScript, ReferenceArticle, Citation, ProgressInfo, RelatedVideo } from "../../lib/api/services"
 
 function ScriptPageContent() {
   const [searchParams, setSearchParams] = useSearchParams()
