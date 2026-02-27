@@ -305,7 +305,80 @@ async def start_script_generation(
 # History Endpoint (새로고침 후 결과 조회)
 # =============================================================================
 
-from sqlalchemy import select, desc
+from sqlalchemy import select, desc, func
+
+
+@router.get("/scripts/list")
+async def get_script_list(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+    page: int = 1,
+    page_size: int = 8,
+):
+    """
+    사용자의 스크립트 목록 조회 (페이지네이션)
+    
+    script_drafts 테이블에서 사용자가 작성한 스크립트 목록을 조회합니다.
+    topic_request를 통해 주제 제목도 함께 가져옵니다.
+    """
+    from app.models.topic_request import TopicRequest
+    from app.models.script_output import ScriptDraft
+
+    try:
+        # 전체 개수 조회
+        count_stmt = (
+            select(func.count())
+            .select_from(ScriptDraft)
+            .join(TopicRequest, ScriptDraft.topic_request_id == TopicRequest.id)
+            .where(TopicRequest.user_id == current_user.id)
+        )
+        total_count = (await db.execute(count_stmt)).scalar() or 0
+
+        # 페이지네이션 계산
+        total_pages = (total_count + page_size - 1) // page_size if total_count > 0 else 1
+        offset = (page - 1) * page_size
+
+        # 스크립트 목록 조회
+        stmt = (
+            select(ScriptDraft, TopicRequest)
+            .join(TopicRequest, ScriptDraft.topic_request_id == TopicRequest.id)
+            .where(TopicRequest.user_id == current_user.id)
+            .order_by(desc(ScriptDraft.generated_at))
+            .offset(offset)
+            .limit(page_size)
+        )
+        rows = (await db.execute(stmt)).all()
+
+        scripts = []
+        for draft, topic_req in rows:
+            metadata = draft.metadata_json or {}
+            scripts.append({
+                "id": str(draft.id),
+                "topic_request_id": str(draft.topic_request_id),
+                "title": topic_req.topic_title,
+                "created_at": draft.generated_at.isoformat() if draft.generated_at else None,
+                "status": topic_req.status,
+                "thumbnail": None,
+                "is_completed": topic_req.status == "verified",
+            })
+
+        return {
+            "success": True,
+            "scripts": scripts,
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_count": total_count,
+                "total_pages": total_pages,
+            }
+        }
+
+    except Exception as e:
+        logger.error(f"Script list fetch failed: {e}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"스크립트 목록 조회 실패: {str(e)}",
+        )
 
 
 @router.get("/scripts/history")
