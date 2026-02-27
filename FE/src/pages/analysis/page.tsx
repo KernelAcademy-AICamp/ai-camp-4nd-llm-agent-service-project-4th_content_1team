@@ -1,7 +1,6 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
 import { Input } from "../../components/ui/input"
@@ -300,8 +299,6 @@ export default function AnalysisPage() {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
       <main className="flex-1 p-6 overflow-auto">
         <div className="max-w-[1400px] mx-auto space-y-6">
           {/* Header */}

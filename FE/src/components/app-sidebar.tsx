@@ -38,15 +38,14 @@ export function AppSidebar() {
   const emailTruncated = truncateEmail(displayEmail)
   const profileImageSrc = user?.avatar_url || "/profile_dummy.png"
 
-  if (!isAppSidebarOpen) {
-    return null
-  }
-
   return (
     <>
       {/* 오버레이 배경 (모바일/태블릿에서만) */}
       <div 
-        className="fixed inset-0 bg-black/50 z-40 lg:hidden"
+        className={cn(
+          "fixed inset-0 bg-black/50 z-40 lg:hidden transition-opacity duration-300",
+          isAppSidebarOpen ? "opacity-100" : "opacity-0 pointer-events-none"
+        )}
         onClick={toggleAppSidebar}
         aria-hidden="true"
       />
@@ -54,8 +53,9 @@ export function AppSidebar() {
       {/* 사이드바 */}
       <aside className={cn(
         "h-full w-[300px] bg-black border-r border-[#131520] flex flex-col",
-        "lg:relative", // Desktop: 일반 레이아웃
-        "fixed z-50 inset-y-0 left-0" // Tablet/Mobile: 오버레이
+        "fixed z-50 inset-y-0 left-0",
+        "transition-transform duration-300 ease-in-out",
+        isAppSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
       {/* 상단: 로고 + 토글 */}
       <div className="h-[66px] px-4 border-b border-[#131520] flex items-center">

@@ -11,7 +11,7 @@ interface FullLayoutProps {
 }
 
 export function FullLayout({ children, breadcrumb, actions }: FullLayoutProps) {
-  const { isDetailSidebarOpen } = useSidebar()
+  const { isDetailSidebarOpen, isAppSidebarOpen } = useSidebar()
 
   return (
     <div className="flex h-screen">
@@ -21,7 +21,9 @@ export function FullLayout({ children, breadcrumb, actions }: FullLayoutProps) {
       {/* 가운데: Header + Main */}
       <div
         className={cn(
-          "flex-1 flex flex-col transition-all duration-300",
+          "flex-1 flex flex-col transition-all duration-300 ease-in-out",
+          // AppSidebar 열릴 때 왼쪽 공간 확보
+          isAppSidebarOpen ? "ml-[300px]" : "ml-0",
           // DetailSidebar 열릴 때 우측 공간 확보
           isDetailSidebarOpen && "mr-[400px]"
         )}

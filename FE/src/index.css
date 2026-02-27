@@ -83,4 +83,35 @@
     body {
         @apply bg-background text-foreground;
     }
+
+    /* 커스텀 스크롤바 - 남색 둥근 스타일 */
+    ::-webkit-scrollbar {
+        width: 6px;
+        height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+        background: transparent;
+        border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb {
+        background: hsl(222.2 47.4% 25%);
+        border-radius: 3px;
+        transition: background 0.2s ease;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+        background: hsl(263 70% 50%);
+    }
+
+    ::-webkit-scrollbar-corner {
+        background: transparent;
+    }
+
+    /* Firefox 스크롤바 */
+    * {
+        scrollbar-width: thin;
+        scrollbar-color: hsl(222.2 47.4% 25%) transparent;
+    }
 }

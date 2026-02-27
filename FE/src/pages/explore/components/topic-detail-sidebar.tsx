@@ -120,7 +120,7 @@ export function TopicDetailSidebar({ topic }: TopicDetailSidebarProps) {
         )}
 
         {/* 스크립트 생성 버튼 */}
-        <Link to={scriptLink}>
+        <Link to={scriptLink} onClick={closeDetailSidebar}>
           <Button
             className="w-full bg-primary hover:bg-primary/90"
             size="lg"
