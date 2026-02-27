@@ -27,7 +27,8 @@ from src.script_gen.nodes.news_research import news_research_node
 from src.script_gen.nodes.article_analyzer import article_analyzer_node
 from src.script_gen.nodes.yt_fetcher import yt_fetcher_node
 from src.script_gen.nodes.competitor_anal import competitor_anal_node
-from src.script_gen.nodes.insight_builder import insight_builder_node
+# from src.script_gen.nodes.insight_builder import insight_builder_node
+from src.script_gen.nodes.insight_builder_2 import insight_builder_node  
 from src.script_gen.nodes.writer import writer_node
 from src.script_gen.nodes.verifier import verifier_node
 # from src.script_gen.nodes.trend_scout import trend_scout_node  # 주석처리: topic_recommendations로 대체
@@ -90,10 +91,34 @@ def create_script_gen_graph():
 # Execution Function
 # =============================================================================
 
+# =============================================================================
+# 노드 이름 → 사용자 표시용 매핑
+# =============================================================================
+
+PIPELINE_STEPS = [
+    {"key": "intent_analyzer",  "label": "시청자 의도 분석",                   "emoji": "🎯", "nodes": ["intent_analyzer"]},
+    {"key": "planner",          "label": "콘텐츠 기획안 작성",                 "emoji": "📋", "nodes": ["planner"]},
+    {"key": "research",         "label": "뉴스 기사 수집 및 유튜브 영상 검색", "emoji": "📰", "nodes": ["news_research", "yt_fetcher"]},
+    {"key": "analysis",         "label": "기사 심층 분석 및 경쟁 영상 분석",   "emoji": "🔍", "nodes": ["article_analyzer", "competitor_anal"]},
+    {"key": "insight_builder",  "label": "전략 인사이트 수립",                 "emoji": "💡", "nodes": ["insight_builder"]},
+    {"key": "writer",           "label": "스크립트 작성",                      "emoji": "✍️", "nodes": ["writer"]},
+    {"key": "verifier",         "label": "팩트 체크 검증",                     "emoji": "✅", "nodes": ["verifier"]},
+]
+
+# 노드 이름 → 스텝 key 역매핑
+_NODE_TO_STEP = {}
+for _step in PIPELINE_STEPS:
+    for _node in _step["nodes"]:
+        _NODE_TO_STEP[_node] = _step["key"]
+
+ALL_NODE_NAMES = list(_NODE_TO_STEP.keys())
+
+
 async def generate_script(
     topic: str,
     channel_profile: dict,
     topic_request_id: str = None,
+    progress_callback=None,
 ) -> dict:
     """
     주제를 입력받아 전체 파이프라인을 실행합니다.
@@ -102,6 +127,7 @@ async def generate_script(
         topic: 사용자가 입력한 주제 (예: "AI 반도체 시장 동향")
         channel_profile: 채널 정보 (name, tone, target_audience 등)
         topic_request_id: 요청 ID (선택)
+        progress_callback: 진행 상황 콜백 (step_key, status) → Celery update_state용
 
     Returns:
         ScriptDraft dict (최종 대본, news_data, competitor_data 포함)
@@ -127,17 +153,118 @@ async def generate_script(
     }
 
     logger.info(f"Script Generation 시작: {topic!r}")
+    logger.info(f"[Graph] 노드 목록: intent_analyzer → planner → [news_research + yt_fetcher 병렬] → ...")
     app = create_script_gen_graph()
 
     try:
-        final_state = await app.ainvoke(initial_state)
+        # astream_events로 노드 진입/완료 이벤트를 실시간 수신
+        final_state = None
+        completed_nodes = set()    # 개별 노드 완료 추적
+        completed_steps = []       # UI 스텝 완료 추적
+
+        def _notify(current_step_key, message):
+            """진행 상황을 콜백으로 전달"""
+            if progress_callback:
+                progress_callback(
+                    current_step=current_step_key,
+                    message=message,
+                    completed_steps=list(completed_steps),
+                )
+
+        async for event in app.astream_events(initial_state, version="v2"):
+            kind = event.get("event", "")
+            name = event.get("name", "")
+
+            if name not in ALL_NODE_NAMES:
+                # 최종 결과 수집
+                if kind == "on_chain_end" and event.get("data", {}).get("output"):
+                    output = event["data"]["output"]
+                    if isinstance(output, dict) and "script_draft" in output:
+                        final_state = output
+                continue
+
+            step_key = _NODE_TO_STEP[name]
+            step_info = next(s for s in PIPELINE_STEPS if s["key"] == step_key)
+
+            # 노드 시작 이벤트
+            if kind == "on_chain_start":
+                if step_key not in completed_steps:
+                    _notify(step_key, f"{step_info['emoji']} {step_info['label']} 중...")
+                logger.info(f"▶ Node 시작: {name}")
+
+            # 노드 완료 이벤트
+            elif kind == "on_chain_end":
+                completed_nodes.add(name)
+                logger.info(f"✓ Node 완료: {name}")
+
+                # 그룹 내 모든 노드가 완료되었는지 확인
+                group_nodes = set(step_info["nodes"])
+                if group_nodes.issubset(completed_nodes) and step_key not in completed_steps:
+                    completed_steps.append(step_key)
+                    _notify(step_key, f"{step_info['emoji']} {step_info['label']} 완료")
+
+        if final_state is None:
+            raise RuntimeError("파이프라인이 결과를 반환하지 않았습니다.")
+
         logger.info("Script Generation 완료")
+
+        # yt_fetcher 실행 여부 확인 및 관련 영상 정리
+        yt_data = final_state.get("youtube_data") or {}
+        logger.info(f"[Graph] youtube_data 존재: {bool(yt_data)}")
+
+        related_videos: list[dict] = []
+        try:
+            from datetime import datetime, timezone
+
+            videos = yt_data.get("videos", []) or []
+            queries_used = yt_data.get("search_queries_used", []) or []
+
+            # 인기순(조회수) + 키워드 관련도(검색 쿼리) + 기간당 조회수(view_velocity) 계산
+            for idx, v in enumerate(videos[:2]):  # 상위 2개만 사용
+                vid = v.get("video_id")
+                if not vid:
+                    continue
+
+                published_at = v.get("published_at") or ""
+                view_count = int(v.get("view_count", 0) or 0)
+
+                velocity = 0.0
+                if published_at:
+                    try:
+                        pub_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                        days = max((datetime.now(timezone.utc) - pub_dt).days, 1)
+                        velocity = view_count / days
+                    except Exception:
+                        velocity = 0.0
+
+                search_keyword = queries_used[idx] if idx < len(queries_used) else ""
+
+                related_videos.append(
+                    {
+                        "video_id": vid,
+                        "title": v.get("title", ""),
+                        "channel": v.get("channel_title", ""),
+                        "url": v.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                        "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                        "view_count": view_count,
+                        "published_at": published_at,
+                        "view_velocity": round(velocity, 1),
+                        "search_keyword": search_keyword,
+                        "search_type": "popular",
+                    }
+                )
+
+            logger.info(f"[Graph] related_videos 구성: {len(related_videos)}개")
+        except Exception as e:
+            logger.warning(f"[Graph] related_videos 생성 실패: {e}")
 
         # 전체 파이프라인 결과
         result = final_state["script_draft"].copy()
         result["verifier_output"] = final_state.get("verifier_output")
         result["news_data"] = final_state.get("news_data")
         result["competitor_data"] = final_state.get("competitor_data")
+        result["youtube_data"] = yt_data
+        result["related_videos"] = related_videos
         return result
 
     except Exception as e:

@@ -1,10 +1,10 @@
 """
-Insight Builder Node - 콘텐츠 전략 설계자 (2-Pass Architecture)
-"내 영상만의 차별화 포인트(Insight)"를 도출하고, Writer가 대본을 쓸 수 있도록 구체적인 설계도(Blueprint)를 생성합니다.
+Insight Builder Node v2 - Claude Sonnet 4.5 버전
+insight_builder.py 와 동일한 로직, LLM만 교체 (GPT-4o → Claude Sonnet 4.5)
 
-Architecture (2-Pass):
-    1. Pass 1 (Draft): 창의적인 전략과 차별화 포인트 도출 (Creative Mode)
-    2. Pass 2 (Critic): 경쟁사 중복 체크, 팩트 검증, 톤 보정 (Strict Mode)
+A/B 테스트용: graph.py에서 import를 바꿔 두 버전 비교
+  - v1: from src.script_gen.nodes.insight_builder import insight_builder_node
+  - v2: from src.script_gen.nodes.insight_builder_2 import insight_builder_node
 """
 
 import logging
@@ -12,31 +12,28 @@ import uuid
 import json
 from typing import Dict, Any, List, Optional
 
-from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import SystemMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
 
 from src.script_gen.schemas.insight import InsightPack
 from src.script_gen.schemas.competitor import CompetitorAnalysisResult
 
-# .env 로드
 from dotenv import load_dotenv
 load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-# 모델 설정 (Pass 1은 창의성, Pass 2는 논리성)
-MODEL_NAME = "gpt-4o"
+MODEL_NAME = "claude-sonnet-4-5"
+
 
 def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
-    logger.info("🧠 Insight Builder Node (2-Pass) 시작")
+    logger.info("🤖 Insight Builder v2 (Claude Sonnet 4.5) 시작")
 
-    # Fan-in Guard: competitor_data가 아직 없으면 skip (GPT 호출 낭비 방지)
+    # Fan-in Guard
     if state.get("competitor_data") is None:
-        logger.info("🧠 Insight Builder: competitor 분석 대기 중, skip")
+        logger.info("🤖 Insight Builder v2: competitor 분석 대기 중, skip")
         return {}
 
-    # --- 1. 입력 데이터 파싱 및 안전한 변환 ---
     topic = state.get("topic", "Unknown Topic")
     channel_profile = state.get("channel_profile", {})
 
@@ -46,14 +43,14 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
     raw_comp_data = state.get("competitor_data", {})
     competitor_result = _parse_competitor_data(raw_comp_data)
 
-    logger.info(f"🧠 [입력] 주제: {topic}")
-    logger.info(f"🧠 [입력] 팩트 수: {len(facts)}개")
-    logger.info(f"🧠 [입력] 경쟁사 데이터 존재: {competitor_result is not None}")
+    logger.info(f"🤖 [입력] 주제: {topic}")
+    logger.info(f"🤖 [입력] 팩트 수: {len(facts)}개")
+    logger.info(f"🤖 [입력] 경쟁사 데이터 존재: {competitor_result is not None}")
 
     context_str = _build_context_string(topic, channel_profile, facts, competitor_result)
 
-    # --- 2. Pass 1: Draft Generation (Creative) with Retry ---
-    logger.info("🧠 Pass 1: Creating Strategy Draft...")
+    # --- Pass 1: Draft Generation ---
+    logger.info("🤖 Pass 1: Creating Strategy Draft (Claude)...")
     draft_pack = None
     max_retries = 3
 
@@ -62,14 +59,14 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
             draft_pack = _generate_draft(context_str)
             break
         except Exception as e:
-            logger.warning(f"🧠 Draft 생성 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+            logger.warning(f"🤖 Draft 생성 실패 (시도 {attempt + 1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 raise
 
-    logger.info(f"🧠 [Pass1 결과] thesis: {draft_pack.positioning.thesis}")
+    logger.info(f"🤖 [Pass1 결과] thesis: {draft_pack.positioning.thesis}")
 
-    # --- 3. Pass 2: Critic & Repair (Strict) with Retry ---
-    logger.info("🧠 Pass 2: Critiquing and Refining...")
+    # --- Pass 2: Critic & Repair ---
+    logger.info("🤖 Pass 2: Critiquing and Refining (Claude)...")
     final_pack = None
 
     for attempt in range(max_retries):
@@ -77,16 +74,16 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
             final_pack = _critique_and_refine(context_str, draft_pack)
             break
         except Exception as e:
-            logger.warning(f"🧠 Refine 실패 (시도 {attempt + 1}/{max_retries}): {e}")
+            logger.warning(f"🤖 Refine 실패 (시도 {attempt + 1}/{max_retries}): {e}")
             if attempt == max_retries - 1:
                 raise
 
-    # --- 4. Finalize ---
+    # --- Finalize ---
     if not final_pack.insight_pack_id:
         final_pack.insight_pack_id = f"ins_{uuid.uuid4().hex[:8]}"
 
     # =========================================================
-    # 🧠 최종 결과 로그
+    # 🤖 최종 결과 로그
     # =========================================================
     pos = final_pack.positioning
     hook = final_pack.hook_plan
@@ -94,34 +91,34 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
     diffs = final_pack.differentiators
     wi = final_pack.writer_instructions
 
-    logger.info("🧠 ==================== Insight Builder 결과 ====================")
-    logger.info(f"🧠 [포지셔닝] thesis: {pos.thesis}")
-    logger.info(f"🧠 [포지셔닝] promise: {pos.one_sentence_promise}")
-    logger.info(f"🧠 [포지셔닝] 타겟: {pos.who_is_this_for}")
-    logger.info(f"🧠 [포지셔닝] 시청 후 이득: {pos.what_they_will_get}")
+    logger.info("🤖 ==================== Insight Builder v2 결과 ====================")
+    logger.info(f"🤖 [포지셔닝] thesis: {pos.thesis}")
+    logger.info(f"🤖 [포지셔닝] promise: {pos.one_sentence_promise}")
+    logger.info(f"🤖 [포지셔닝] 타겟: {pos.who_is_this_for}")
+    logger.info(f"🤖 [포지셔닝] 시청 후 이득: {pos.what_they_will_get}")
 
-    logger.info(f"🧠 [훅 플랜] 유형: {hook.hook_type}")
+    logger.info(f"🤖 [훅 플랜] 유형: {hook.hook_type}")
     for hs in hook.hook_scripts:
-        logger.info(f"🧠 [훅 스크립트 {hs.id}] {hs.text[:80]}... (팩트: {hs.uses_fact_ids})")
+        logger.info(f"🤖 [훅 스크립트 {hs.id}] {hs.text[:80]}... (팩트: {hs.uses_fact_ids})")
     thumb = hook.thumbnail_angle
-    logger.info(f"🧠 [썸네일] 컨셉: {thumb.concept}")
-    logger.info(f"🧠 [썸네일] 문구 후보: {thumb.copy_candidates}")
+    logger.info(f"🤖 [썸네일] 컨셉: {thumb.concept}")
+    logger.info(f"🤖 [썸네일] 문구 후보: {thumb.copy_candidates}")
 
-    logger.info(f"🧠 [챕터 구성] 총 {len(chapters)}개")
+    logger.info(f"🤖 [챕터 구성] 총 {len(chapters)}개")
     for ch in chapters:
         logger.info(
-            f"🧠   챕터 [{ch.chapter_id}] '{ch.title}' | "
+            f"🤖   챕터 [{ch.chapter_id}] '{ch.title}' | "
             f"팩트: {ch.required_facts} | 핵심포인트 {len(ch.key_points)}개"
         )
 
-    logger.info(f"🧠 [차별화] {len(diffs)}개")
+    logger.info(f"🤖 [차별화] {len(diffs)}개")
     for d in diffs:
-        logger.info(f"🧠   [{d.type}] {d.title}: {d.description[:60]}...")
+        logger.info(f"🤖   [{d.type}] {d.title}: {d.description[:60]}...")
 
-    logger.info(f"🧠 [작성 지침] 톤: {wi.tone} | 수준: {wi.reading_level}")
-    logger.info(f"🧠   반드시 포함: {wi.must_include}")
-    logger.info(f"🧠   반드시 피하기: {wi.must_avoid}")
-    logger.info("🧠 ===============================================================")
+    logger.info(f"🤖 [작성 지침] 톤: {wi.tone} | 수준: {wi.reading_level}")
+    logger.info(f"🤖   반드시 포함: {wi.must_include}")
+    logger.info(f"🤖   반드시 피하기: {wi.must_avoid}")
+    logger.info("🤖 ===================================================================")
 
     return {
         "insight_pack": final_pack.model_dump()
@@ -129,14 +126,14 @@ def insight_builder_node(state: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # =============================================================================
-# Helper Functions (Logic)
+# Helper Functions
 # =============================================================================
 
 def _generate_draft(context_str: str) -> InsightPack:
     """Pass 1: 창의적인 초안 생성 (Temperature 높게)"""
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0.7)
+    llm = ChatAnthropic(model=MODEL_NAME, temperature=0.7)
     structured_llm = llm.with_structured_output(InsightPack)
-    
+
     system_prompt = """You are a visionary 'Content Strategist' for YouTube.
 Your goal is to find a 'Blue Ocean' strategy in a crowded market.
 
@@ -155,17 +152,16 @@ Draft a Content Blueprint (InsightPack) based on the research provided.
 Focus on finding a unique 'Thesis' that contradicts or expands on the competitors.
 
 **CRITICAL REQUIREMENTS**:
-1. **Hook Plan**: 
+1. **Hook Plan**:
    - hook_scripts MUST include 'uses_fact_ids' with at least 1 Fact ID
    - Choose the most compelling/shocking facts for the hook
    - **MANDATORY: thumbnail_angle** - MUST include concept, copy_candidates (list), avoid (list)
-   
+
 2. **Story Structure - Chapters**:
    - Each chapter should have 'required_facts' with 1-3 specific Fact IDs (when available)
    - Prioritize quality over quantity - only assign facts that truly support the chapter
    - These facts should directly support the chapter's key_points
-   - Example: If a chapter is about "Market Growth", required_facts should include statistics about growth
-   
+
 3. **Fact Selection Strategy**:
    - Prioritize Statistic and Key Event type facts
    - Ensure facts are distributed across chapters (don't use all facts in one chapter)
@@ -182,7 +178,7 @@ Focus on finding a unique 'Thesis' that contradicts or expands on the competitor
 **INSTRUCTION**:
 Generate the Draft Insight Pack. Risk-taking is encouraged regarding the angle/hook.
 
-**REMINDER**: 
+**REMINDER**:
 - Assign 'required_facts' (1-3 Fact IDs per chapter) based on what's available. Quality over quantity!
 - DO NOT forget thumbnail_angle and writer_instructions - these are REQUIRED!
 """
@@ -194,12 +190,11 @@ Generate the Draft Insight Pack. Risk-taking is encouraged regarding the angle/h
 
 def _critique_and_refine(context_str: str, draft: InsightPack) -> InsightPack:
     """Pass 2: 비평 및 수정 (Temperature 낮게)"""
-    llm = ChatOpenAI(model=MODEL_NAME, temperature=0.2) # 논리적 검증을 위해 낮춤
+    llm = ChatAnthropic(model=MODEL_NAME, temperature=0.2)
     structured_llm = llm.with_structured_output(InsightPack)
-    
-    # Draft를 JSON 문자로 변환 (Context로 넣기 위해)
+
     draft_json = draft.model_dump_json(indent=2)
-    
+
     system_prompt = """You are a strict 'Content Editor'.
 Your job is to review the Strategist's Draft and fix any logical flaws, clichés, or hallucinations.
 
@@ -210,7 +205,7 @@ Your job is to review the Strategist's Draft and fix any logical flaws, clichés
 **CHECKLIST**:
 1. **Cliché Check**: Check the 'Common Gaps' in the research. Does the Draft's thesis actually address them? If it repeats competitors, REWRITE it.
 2. **Fact Check**: Verify 'fact_ids' and 'required_facts'. Do NOT invent IDs. If a claim lacks a fact ID, remove it or mark it as an opinion.
-3. **REQUIRED_FACTS VALIDATION**: 
+3. **REQUIRED_FACTS VALIDATION**:
    - Each chapter should have 1-3 Fact IDs in 'required_facts' (when available)
    - If a chapter has empty required_facts, ADD appropriate Fact IDs from the available facts
    - Ensure the selected facts actually support the chapter's content
@@ -237,56 +232,40 @@ Critique and Refine this draft. Output the Final Insight Pack.
 
 
 def _calculate_fact_priority(fact: Dict) -> int:
-    """팩트 우선순위 점수 계산 (높을수록 중요)"""
     score = 0
-    
     category = fact.get("category", "")
-    
-    # 1. 카테고리별 기본 점수
     if category == "Statistic":
-        score += 10  # 숫자는 여전히 중요
+        score += 10
     elif category == "Event":
-        score += 10  # 사건도 동급 (유튜브는 스토리가 강함)
+        score += 10
     elif category == "Quote":
-        score += 7   # 인용문도 훅에 좋음
+        score += 7
     else:
-        score += 5   # 일반 Fact
-    
-    # 2. Value(수치) 있으면 보너스
+        score += 5
     if fact.get("value") and fact.get("value") != "N/A":
         score += 3
-    
-    # 3. Visual Proposal 있으면 보너스 (영상용으로 좋음)
     if fact.get("visual_proposal") and fact.get("visual_proposal") != "None":
         score += 2
-    
     return score
 
 
 def _parse_competitor_data(raw_data: Dict) -> Optional[CompetitorAnalysisResult]:
-    """Dict 데이터를 Pydantic 모델로 변환 (실패 시 None 처리하여 로직 방어)"""
     if not raw_data:
         return None
     try:
         return CompetitorAnalysisResult(**raw_data)
     except Exception as e:
-        logger.warning(f"Competitor Data Schema Mismatch: {e}")
-        # 데이터가 있지만 스키마가 안 맞을 경우, 최대한 살리거나 None 반활
-        # 여기서는 안전하게 None 반환하고 Context Builder에서 처리
+        logger.warning(f"🤖 Competitor Data Schema Mismatch: {e}")
         return None
 
 
 def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competitor: Optional[CompetitorAnalysisResult]) -> str:
-    """LLM 입력용 컨텍스트 조립 (Context 길이 제한 적용)"""
-    
-    # 0. Topic (가장 중요!)
     t_str = f"""
 ## TOPIC (Main Subject)
 **Video Topic**: {topic}
 **IMPORTANT**: All strategy and content MUST be specifically about this topic.
 """
-    
-    # 1. Channel
+
     c_str = f"""
 ## A. CHANNEL PROFILE
 - Name: {channel.get('name', 'Unknown')}
@@ -294,7 +273,6 @@ def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competit
 - Target: {channel.get('target_audience', 'General Public')}
 - Tone: {channel.get('tone', 'Informative')}
 """
-    # 추가 페르소나 정보 (있을 때만)
     if channel.get("one_liner"):
         c_str += f"- Identity: {channel['one_liner']}\n"
     if channel.get("persona_summary"):
@@ -308,58 +286,47 @@ def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competit
     if channel.get("main_topics"):
         c_str += f"- Main Topics: {', '.join(channel['main_topics'])}\n"
 
-    # 2. Facts (상위 15개로 제한 - Context 폭발 방지)
     f_str = "\n## B. FACT PACK (Available Evidence)\n"
     if facts:
-        # [FIX] ID 없는 팩트는 먼저 제거 (MISSING_ID 폭탄 방지)
         valid_facts = [f for f in facts if f.get("id")]
         if len(valid_facts) < len(facts):
             dropped_count = len(facts) - len(valid_facts)
-            logger.warning(f"Dropped {dropped_count} facts without IDs (출처 불명 팩트 제외)")
-        
-        # [FIX] 개선된 우선순위 점수로 정렬하되, 각 기사(source_index)별 최소 1개 팩트 보장
-        # 기사별 최소 1개 → 나머지 우선순위로 채우기 (15개 상한)
-        # 이렇게 해야 Insight Builder가 모든 기사의 팩트를 볼 수 있음
-        source_best: Dict[Any, Dict] = {}  # source_index → 해당 기사 최고 점수 팩트
+            logger.warning(f"🤖 Dropped {dropped_count} facts without IDs")
+
+        source_best: Dict[Any, Dict] = {}
         for f in valid_facts:
             src_idx = f.get("source_index", -1)
             if src_idx not in source_best or _calculate_fact_priority(f) > _calculate_fact_priority(source_best[src_idx]):
                 source_best[src_idx] = f
-        
-        # 1단계: 기사별 대표 팩트 확보
+
         guaranteed = list(source_best.values())
         guaranteed_ids = {f["id"] for f in guaranteed}
-        
-        # 2단계: 나머지 팩트를 우선순위로 정렬하여 채우기
+
         remaining = [f for f in valid_facts if f["id"] not in guaranteed_ids]
         remaining_sorted = sorted(remaining, key=_calculate_fact_priority, reverse=True)
-        
+
         prioritized_facts = guaranteed + remaining_sorted
-        prioritized_facts = prioritized_facts[:15]  # 최대 15개
-        
+        prioritized_facts = prioritized_facts[:15]
+
         for f in prioritized_facts:
-            f_id = f["id"]  # 이제 확실히 존재함
-            content = f.get("content", "")[:300]  # 길이 제한 (문맥 보존)
+            f_id = f["id"]
+            content = f.get("content", "")[:300]
             val = f.get("value", "N/A")
             f_str += f"- [ID: {f_id}] {content} (Value: {val})\n"
     else:
         f_str += "(No specific facts found.)\n"
 
-    # 3. Competitors (Schema 기반 안전 접근)
     comp_str = "\n## C. COMPETITOR ANALYSIS\n"
     if competitor:
-        # Cross Insights
         ci = competitor.cross_insights
-        comp_str += f"1. Common Gaps (Must Address): {', '.join(ci.common_gaps[:5])}\n"  # 상위 5개만
-        comp_str += f"2. Formatting Do's/Don'ts: {', '.join(ci.do_and_dont[:3])}\n"  # 상위 3개만
-        
-        # Individual Videos (Top 3만, 각 필드 길이 제한)
+        comp_str += f"1. Common Gaps (Must Address): {', '.join(ci.common_gaps[:5])}\n"
+        comp_str += f"2. Formatting Do's/Don'ts: {', '.join(ci.do_and_dont[:3])}\n"
         comp_str += "3. Competitor Videos:\n"
         for v in competitor.video_analyses[:3]:
-            hook_short = v.hook_analysis[:100]  # 100자 제한
-            weak_short = ', '.join(v.weak_points[:2])  # 약점 2개만
+            hook_short = v.hook_analysis[:100]
+            weak_short = ', '.join(v.weak_points[:2])
             comp_str += f"   - [{v.title[:50]}] Hook: {hook_short} | Weakness: {weak_short}\n"
     else:
         comp_str += "(Competitor analysis not available or schema mismatch)\n"
-        
+
     return t_str + c_str + f_str + comp_str
