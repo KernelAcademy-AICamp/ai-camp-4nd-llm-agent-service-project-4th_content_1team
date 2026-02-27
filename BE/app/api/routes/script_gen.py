@@ -99,30 +99,46 @@ async def execute_pipeline_async(
         )
 
 
-@router.get("/status/{task_id}", response_model=ScriptGenTaskResponse)
+@router.get("/status/{task_id}")
 async def get_task_status(task_id: str):
     """
     [비동기] 작업 상태 및 결과 조회
+    
+    상태값:
+        PENDING  - 대기 중
+        PROGRESS - 실행 중 (진행 상황 포함)
+        SUCCESS  - 완료
+        FAILURE  - 실패
     """
     try:
         task_result = AsyncResult(task_id)
         
-        response = ScriptGenTaskResponse(
-            task_id=task_id,
-            status=task_result.status
-        )
+        response = {
+            "task_id": task_id,
+            "status": task_result.status,
+        }
         
-        if task_result.state == 'SUCCESS':
-            # task_result.result는 worker가 반환한 dict
+        if task_result.state == 'PROGRESS':
+            # ★ 진행 상황 정보 포함
+            meta = task_result.info or {}
+            response["progress"] = {
+                "current_step": meta.get("current_step", ""),
+                "message": meta.get("message", ""),
+                "completed_steps": meta.get("completed_steps", []),
+                "total_steps": meta.get("total_steps", 9),
+                "steps": meta.get("steps", []),
+            }
+        
+        elif task_result.state == 'SUCCESS':
             result_data = task_result.result
-            response.result = ScriptGenExecuteResponse(**result_data)
+            response["result"] = result_data
             
         elif task_result.state == 'FAILURE':
-            response.result = ScriptGenExecuteResponse(
-                success=False,
-                message="Celery Task Failure",
-                error=str(task_result.result)
-            )
+            response["result"] = {
+                "success": False,
+                "message": "Celery Task Failure",
+                "error": str(task_result.result),
+            }
             
         return response
         
