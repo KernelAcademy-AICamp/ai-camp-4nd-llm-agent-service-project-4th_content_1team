@@ -1,154 +1,161 @@
 """
-Recommender Node - LLM-based Topic Recommendation
+Recommender Node - LLM-based 3-Type Topic Recommendation
 
-페르소나의 preferred_categories/subcategories를 기반으로
-계층 구조 클러스터에서 관련 트렌드를 필터링하여 추천합니다.
+페르소나 풀데이터 + core/adjacent 트렌드 그룹 요약을 기반으로
+3가지 관점(viewer_needs, hit_pattern, channel_expansion)에서 추천합니다.
 """
 
 import json
 import re
-import requests
+from datetime import date
 from typing import List, Dict
 
+from langchain_openai import ChatOpenAI
 from app.core.config import settings
-from src.topic_rec.state import (
-    TopicRecState, TopicCluster, Recommendation,
-    CategoryCluster, SubCategoryCluster,
-)
-
-# Optional: Google GenAI
-try:
-    import google.generativeai as genai
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
+from src.topic_rec.state import TopicRecState, TopicCluster
 
 
-# Persona presets
-PERSONA_PRESETS = {
-    "tech_kr": {
-        "channel_name": "TechExplorer KR",
-        "topic": "IT Device & Tech News",
-        "target_audience": "Tech enthusiasts, Early adopters",
-        "style": "Deep analysis, comparison reviews, easy explanations",
-        "preferred_categories": ["Technology"],
-        "preferred_subcategories": ["AI", "Hardware", "Software"],
-    },
-    "ai_dev_kr": {
-        "channel_name": "AI Developer Korea",
-        "topic": "AI/ML Development & News",
-        "target_audience": "AI engineers, ML researchers, developers",
-        "style": "Technical deep-dive, code examples, paper reviews",
-        "preferred_categories": ["Technology"],
-        "preferred_subcategories": ["AI", "Software"],
-    },
-    "finance_kr": {
-        "channel_name": "MoneyTalk",
-        "topic": "Investment & Financial News",
-        "target_audience": "Workers in 20-40s, investment beginners",
-        "style": "Easy explanations, practical advice",
-        "preferred_categories": ["Economy"],
-        "preferred_subcategories": ["Finance", "Investment", "Crypto"],
-    },
-    "general_kr": {
-        "channel_name": "IssuePick",
-        "topic": "Daily Hot Issues & Trends",
-        "target_audience": "General Korean audience",
-        "style": "Fast information delivery, fun editing",
-        "preferred_categories": ["Society", "Entertainment", "Technology"],
-        "preferred_subcategories": [],  # 전체 서브카테고리
-    }
+RECOMMENDATION_TYPES = {
+    "viewer_needs": "구독자 니즈",
+    "hit_pattern": "성공방정식",
+    "trend_driven": "최신경향성",
 }
 
 
 class LLMRecommender:
-    """LLM-based recommender supporting Ollama and Gemini"""
+    """LLM-based recommender - 3타입 추천"""
 
     def __init__(self):
-        self.ollama_model = "llama3.2"
-        self.gemini_key = settings.gemini_api_key
-
-        self.provider = None
-        self.model = None
-
-        if self.gemini_key and HAS_GENAI:
-            self.provider = "gemini"
-            genai.configure(api_key=self.gemini_key)
-            self.model = genai.GenerativeModel('gemini-2.0-flash')
-            print("[Recommender] Using Google Gemini")
+        api_key = settings.openai_api_key
+        if api_key:
+            self.model = ChatOpenAI(model="gpt-4o", api_key=api_key, temperature=0.7)
+            print("[Recommender] Using GPT-4o")
         else:
-            self.provider = "ollama"
-            print(f"[Recommender] Using Ollama ({self.ollama_model})")
+            self.model = None
+            print("[Recommender] No OpenAI API key")
 
     def recommend(
         self,
         clusters: List[TopicCluster],
         persona: dict,
-        top_n: int = 3
     ) -> List[Dict]:
-
         if not clusters:
             return []
 
-        cluster_summary = self._build_summary(clusters[:5])
-        prompt = self._build_prompt(cluster_summary, persona, top_n)
+        trend_summary = self._build_summary(clusters[:10])
+        prompt = self._build_prompt(trend_summary, persona)
+
+        if not self.model:
+            print("[Recommender] No LLM available")
+            return self._fallback(clusters)
 
         try:
-            if self.provider == "ollama":
-                response_text = self._call_ollama(prompt)
-            else:
-                response_obj = self.model.generate_content(prompt)
-                response_text = response_obj.text
-
-            return self._parse_response(response_text, clusters)
+            response = self.model.invoke(prompt)
+            return self._parse_response(response.content)
 
         except Exception as e:
             print(f"[Recommender] Error: {e}")
-            return self._fallback(clusters, top_n)
+            return self._fallback(clusters)
 
     def _build_summary(self, clusters: List[TopicCluster]) -> str:
-        lines = []
-        for c in clusters:
-            top_items = sorted(c.items, key=lambda x: x.trend_score, reverse=True)[:2]
-            items_str = " / ".join([item.title[:40] for item in top_items])
-            urgency = "URGENT" if c.avg_score > 0.05 else "Normal"
+        """클러스터의 trend_summary를 core/adjacent로 나눠서 합침"""
+        core_summaries = []
+        adjacent_summaries = []
 
-            lines.append(
-                f"[{c.name}] {c.item_count} items, score:{c.cluster_score:.3f} {urgency}\n"
-                f"  Keywords: {', '.join(c.keywords[:5])}\n"
-                f"  Top: {items_str}"
+        for c in clusters:
+            if c.name == "기타":
+                continue
+
+            summary = c.trend_summary if c.trend_summary else f"[{c.name}] ({c.item_count}건)"
+
+            core_count = sum(
+                1 for item in c.items
+                if getattr(item, "source_layer", None) == "core"
             )
+            adj_count = sum(
+                1 for item in c.items
+                if getattr(item, "source_layer", None) == "adjacent"
+            )
+
+            if adj_count > core_count:
+                adjacent_summaries.append(summary)
+            else:
+                core_summaries.append(summary)
+
+        lines = []
+        if core_summaries:
+            lines.append("## Core 트렌드 (채널 핵심 분야)")
+            lines.extend(core_summaries)
+        if adjacent_summaries:
+            if lines:
+                lines.append("")
+            lines.append("## Adjacent 트렌드 (확장 가능 분야)")
+            lines.extend(adjacent_summaries)
+
         return "\n\n".join(lines)
 
-    def _build_prompt(self, cluster_summary: str, persona: dict, top_n: int) -> str:
-        # 채널 스타일 결정
-        channel_style = persona.get('content_style', '')
-        preferred_cats = persona.get('preferred_categories', [])
+    def _build_prompt(self, trend_summary: str, persona: dict) -> str:
+        persona_summary = persona.get("persona_summary", "")
+        main_topics = persona.get("main_topics", [])
+        target_audience = persona.get("target_audience", "일반 시청자")
+        hit_patterns = persona.get("hit_patterns", [])
+        audience_needs = persona.get("audience_needs", "")
+        viewer_likes = persona.get("viewer_likes", [])
+        tone = persona.get("tone_manner", "")
+        recent_videos = persona.get("recent_video_titles", [])
 
-        # 카테고리 기반 스타일 가이드
-        style_guide = "정보 전달 중심의 명확한 제목"  # 기본값
-        if any(cat in ['entertainment', 'gaming', 'Entertainment', 'Gaming'] for cat in preferred_cats):
-            style_guide = "호기심을 유발하는 재미있는 제목"
-        elif any(cat in ['education', 'Education', 'technology', 'Technology'] for cat in preferred_cats):
-            style_guide = "정보 전달 중심의 명확하고 신뢰감 있는 제목"
-        elif any(cat in ['business', 'Business', 'finance', 'Finance'] for cat in preferred_cats):
-            style_guide = "전문성이 느껴지는 구체적인 제목"
+        today = date.today().strftime("%Y년 %m월 %d일")
 
-        return f"""You are a YouTube content strategist for Korean creators. Recommend video topics.
+        return f"""당신은 YouTube 크리에이터를 위한 콘텐츠 전략가입니다.
+트렌드 데이터와 채널 페르소나를 분석하여 영상 주제를 추천합니다.
+오늘 날짜: {today}
 
-## Channel Info
-- Name: {persona.get('channel_name', 'Unknown')}
-- Category: {', '.join(preferred_cats) if preferred_cats else 'General'}
-- Target: {persona.get('target_audience', 'General audience')}
-- Style: {channel_style if channel_style else 'Not specified'}
+## 채널 정보
+- 채널 설명: {persona_summary if persona_summary else persona.get("channel_name", "Unknown")}
+- 주요 주제: {", ".join(main_topics) if main_topics else "알 수 없음"}
+- 타겟 시청자: {target_audience}
+- 톤앤매너: {tone if tone else "지정 없음"}
 
-## This Week's Trends
-{cluster_summary}
+## 채널 성공 패턴
+{chr(10).join(f"- {p}" for p in hit_patterns) if hit_patterns else "- 데이터 없음"}
 
-## Request
-Recommend {top_n} topics. For each provide:
-- title: 한국어, {style_guide}
-- based_on_topic: 어떤 트렌드 기반인지
+## 시청자 니즈
+- 시청자 특성: {audience_needs if audience_needs else "데이터 없음"}
+- 시청자가 좋아하는 것: {chr(10).join(f"  - {v}" for v in viewer_likes) if viewer_likes else "데이터 없음"}
+
+## 채널의 최근 영상 (최신순)
+{chr(10).join(f"- {t}" for t in recent_videos[:50]) if recent_videos else "- 데이터 없음"}
+
+**중요: 추천 주제는 위 최근 영상의 방향성과 자연스럽게 이어져야 합니다. 채널이 최근 다루는 주제와 너무 동떨어진 추천은 하지 마세요.**
+
+## 트렌드 데이터
+{trend_summary}
+
+## 추천 요청
+아래 3가지 관점에서 각 1개씩, 총 3개의 영상 주제를 추천해주세요.
+**각 추천은 반드시 서로 다른 트렌드 그룹에서 선택해야 합니다.**
+
+### 1. viewer_needs (구독자 니즈)
+- 시청자 니즈/좋아하는 것 + 지금 핫한 트렌드를 결합
+- 시청자가 "이거 궁금했는데!" 할 만한 주제
+- **제목 스타일**: 시청자 눈높이에 맞춘 친근한 제목
+
+### 2. hit_pattern (성공방정식)
+- 이 채널에서 잘 됐던 패턴(성공 패턴)을 트렌드와 결합
+- 기존에 성공한 포맷/주제를 새 트렌드에 적용
+- **제목 스타일**: 이 채널의 톤앤매너를 반영
+
+### 3. trend_driven (최신경향성)
+- 트렌드 데이터에서 지금 가장 뜨거운 주제
+- 이 채널의 주요 주제 분야에서 다룰 수 있는 최신 트렌드
+- 채널 확장이 아니라, 채널 분야 안에서의 최신 흐름
+- **제목 스타일**: 시의성을 강조하는 제목 (숫자, 날짜, "지금" 등 활용)
+
+각 추천에 포함할 항목:
+- title: 한국어 영상 제목 (반드시 위 '채널의 최근 영상' 제목 톤과 유사한 스타일로 작성. 채널 이름은 넣지 말 것)
+- recommendation_type: "viewer_needs" / "hit_pattern" / "trend_driven"
+- source_layer: 주로 참고한 트렌드가 "core" / "adjacent" 중 어디인지
+- based_on_topic: 어떤 트렌드 그룹 기반인지
 - trend_basis: 왜 지금 핫한지 (구체적 데이터 포함)
 - recommendation_reason: 왜 이 채널에 적합한지
 - search_keywords: 스크립트 자료조사용 검색 키워드 (3~5개, 배열)
@@ -157,54 +164,31 @@ Recommend {top_n} topics. For each provide:
   "이 스크립트를 쓰려면 어떤 자료가 필요하지?" 먼저 생각하고,
   그 자료를 실제로 찾을 수 있는 검색어를 도출할 것
 
-  [좋은 키워드 기준]
-  1. 실제 검색 시 관련 영상/기사/자료가 충분히 존재함
-  2. 검색 결과가 이 스크립트 작성에 직접 도움됨
-  3. 너무 광범위하지 않고 적절히 구체적임
-
   [금지]
   - 검색해도 결과 없을 키워드
   - 주제와 연결 약한 범용 키워드
-  - 개수 채우기용 filler
-
-  [참고]
-  - title에 있는 핵심 개념 포함
   - 좋은 키워드가 3개뿐이면 3개만 (억지로 채우지 말 것)
 
+- recommendation_direction: 이 영상을 어떤 방향으로 만들면 좋을지 구체적 제안 (예: "GPT-5의 달라진 점을 초보자 눈높이에서 데모 중심으로 풀어보세요")
 - content_angles: 2-3개의 구체적인 콘텐츠 접근 방식
 - thumbnail_idea: 썸네일 구성 아이디어
 - urgency: urgent(즉시)/normal(1주내)/evergreen(상시)
 
-## Respond in JSON only (Korean)
-[{{"title":"..","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"urgent"}}]"""
+## 반드시 JSON 배열만 출력 (한국어)
+[{{"title":"..","recommendation_type":"viewer_needs","source_layer":"core","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","recommendation_direction":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"normal"}}]"""
 
-    def _call_ollama(self, prompt: str) -> str:
-        url = "http://localhost:11434/api/generate"
-        payload = {
-            "model": self.ollama_model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_predict": 1500,
-                "temperature": 0.7,
-            }
-        }
-        response = requests.post(url, json=payload, timeout=600)
-        response.raise_for_status()
-        return response.json().get("response", "")
-
-    def _parse_response(self, response_text: str, clusters: List[TopicCluster]) -> List[Dict]:
+    def _parse_response(self, response_text: str) -> List[Dict]:
         text = response_text.strip()
-        text = re.sub(r'```json\s*', '', text)
-        text = re.sub(r'```\s*', '', text)
+        text = re.sub(r"```json\s*", "", text)
+        text = re.sub(r"```\s*", "", text)
 
-        match = re.search(r'\[\s*\{[\s\S]*\}\s*\]', text)
+        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", text)
 
         if match:
             json_str = match.group(0)
             try:
-                json_str = re.sub(r',\s*\]', ']', json_str)
-                json_str = re.sub(r',\s*\}', '}', json_str)
+                json_str = re.sub(r",\s*\]", "]", json_str)
+                json_str = re.sub(r",\s*\}", "}", json_str)
 
                 result = json.loads(json_str)
 
@@ -212,26 +196,33 @@ Recommend {top_n} topics. For each provide:
                     valid = []
                     for item in result:
                         if isinstance(item, dict) and "title" in item:
-                            # search_keywords 파싱 (단순 배열 형식)
+                            # search_keywords 파싱
                             raw_keywords = item.get("search_keywords", [])
-
-                            # 배열이면 그대로, 객체면 모든 값 합쳐서 배열로
                             if isinstance(raw_keywords, list):
                                 search_keywords = raw_keywords
                             elif isinstance(raw_keywords, dict):
-                                # 레거시 호환: 객체면 모든 키워드 합침
                                 search_keywords = []
-                                for key in ["youtube_main", "youtube_reference", "google_news", "google_research", "youtube", "google"]:
-                                    search_keywords.extend(raw_keywords.get(key, []))
-                                search_keywords = list(set(search_keywords))[:5]  # 중복 제거 후 최대 5개
+                                for vals in raw_keywords.values():
+                                    if isinstance(vals, list):
+                                        search_keywords.extend(vals)
+                                search_keywords = list(set(search_keywords))[:5]
                             else:
                                 search_keywords = []
 
+                            # recommendation_type 검증
+                            rec_type = item.get("recommendation_type", "viewer_needs")
+                            if rec_type not in RECOMMENDATION_TYPES:
+                                rec_type = "viewer_needs"
+
                             valid.append({
                                 "title": item.get("title", "N/A"),
+                                "recommendation_type": rec_type,
+                                "recommendation_type_label": RECOMMENDATION_TYPES[rec_type],
+                                "source_layer": item.get("source_layer", "core"),
                                 "based_on_topic": item.get("based_on_topic", "N/A"),
                                 "trend_basis": item.get("trend_basis", "N/A"),
                                 "recommendation_reason": item.get("recommendation_reason", "N/A"),
+                                "recommendation_direction": item.get("recommendation_direction", "N/A"),
                                 "search_keywords": search_keywords,
                                 "content_angles": item.get("content_angles", []),
                                 "thumbnail_idea": item.get("thumbnail_idea", "N/A"),
@@ -242,105 +233,45 @@ Recommend {top_n} topics. For each provide:
             except json.JSONDecodeError as e:
                 print(f"[Recommender] JSON parse error: {e}")
 
-        return self._fallback(clusters, 3)
+        return self._fallback([])
 
-    def _fallback(self, clusters: List[TopicCluster], top_n: int) -> List[Dict]:
+    def _fallback(self, clusters: List[TopicCluster]) -> List[Dict]:
+        types = ["viewer_needs", "hit_pattern", "trend_driven"]
         results = []
-        for c in clusters[:top_n]:
-            if c.name == "Other":
+
+        for i, c in enumerate(clusters[:3]):
+            if c.name == "기타":
                 continue
+            rec_type = types[i] if i < len(types) else "viewer_needs"
             results.append({
                 "title": f"[Auto] {c.name} 트렌드 분석",
+                "recommendation_type": rec_type,
+                "recommendation_type_label": RECOMMENDATION_TYPES[rec_type],
+                "source_layer": "core",
                 "based_on_topic": c.name,
                 "trend_basis": f"{c.item_count}개 항목, 점수 {c.cluster_score:.3f}",
                 "recommendation_reason": "자동 생성 (LLM 실패)",
-                "search_keywords": c.keywords[:5],  # 단순 배열로 변경
+                "recommendation_direction": "자동 생성 (LLM 실패)",
+                "search_keywords": c.keywords[:5],
                 "content_angles": ["트렌드 요약", "심층 분석", "향후 전망"],
                 "thumbnail_idea": f"{c.name} 관련 이미지",
                 "urgency": "normal",
             })
-        return results[:top_n]
 
-
-def filter_clusters_by_persona(
-    category_clusters: List[CategoryCluster],
-    clusters: List[TopicCluster],
-    persona: dict
-) -> List[TopicCluster]:
-    """
-    페르소나의 preferred_categories/subcategories에 맞는 클러스터만 필터링합니다.
-    """
-    preferred_cats = persona.get("preferred_categories", [])
-    preferred_subs = persona.get("preferred_subcategories", [])
-
-    if not preferred_cats:
-        return clusters  # 카테고리 제한 없음
-
-    # category_clusters가 있으면 계층 구조 기반으로 필터링
-    if category_clusters:
-        filtered_items = []
-
-        for cat_cluster in category_clusters:
-            if cat_cluster.category not in preferred_cats:
-                continue
-
-            for sub_cluster in cat_cluster.sub_categories:
-                # 서브카테고리 필터링 (비어있으면 전체)
-                if preferred_subs and sub_cluster.sub_category not in preferred_subs:
-                    continue
-                filtered_items.extend(sub_cluster.items)
-
-        # 필터링된 아이템들이 속한 클러스터만 반환
-        if filtered_items:
-            filtered_item_ids = {id(item) for item in filtered_items}
-            filtered_clusters = []
-
-            for cluster in clusters:
-                matching_items = [item for item in cluster.items if id(item) in filtered_item_ids]
-                if matching_items:
-                    # 클러스터 복사 후 필터링된 아이템만 유지
-                    filtered_cluster = TopicCluster(
-                        cluster_id=cluster.cluster_id,
-                        name=cluster.name,
-                        keywords=cluster.keywords,
-                        items=matching_items,
-                        item_count=len(matching_items),
-                        total_engagement=sum(item.engagement for item in matching_items),
-                        avg_score=sum(item.trend_score for item in matching_items) / len(matching_items) if matching_items else 0,
-                        cluster_score=cluster.cluster_score,
-                        source_distribution=cluster.source_distribution,
-                        trend_summary=cluster.trend_summary,
-                        rank=cluster.rank,
-                    )
-                    filtered_clusters.append(filtered_cluster)
-
-            if filtered_clusters:
-                return sorted(filtered_clusters, key=lambda c: c.cluster_score, reverse=True)
-
-    # Fallback: 기존 방식 - 클러스터 내 아이템의 카테고리로 필터링
-    filtered = []
-    for cluster in clusters:
-        cat_match = any(
-            item.ai_category in preferred_cats
-            for item in cluster.items
-        )
-        if cat_match:
-            filtered.append(cluster)
-
-    return filtered if filtered else clusters[:5]
+        return results
 
 
 def recommend_node(state: TopicRecState) -> dict:
     """
-    Generate topic recommendations using LLM.
+    Generate 3-type topic recommendations using LLM.
 
-    페르소나 기반으로 클러스터를 필터링한 후 LLM 추천을 생성합니다.
+    Source Selector가 이미 채널 맞춤 데이터를 수집했으므로
+    카테고리 필터링 없이 전체 클러스터를 LLM에 전달합니다.
     """
-    print("[Recommender] Generating recommendations...")
+    print("[Recommender] Generating 3-type recommendations...")
 
     clusters = state.get("clusters", [])
-    category_clusters = state.get("category_clusters", [])
-    persona = state.get("persona", PERSONA_PRESETS["tech_kr"])
+    persona = state.get("persona", {})
 
     if not clusters:
         print("[Recommender] No clusters available")
@@ -350,20 +281,15 @@ def recommend_node(state: TopicRecState) -> dict:
             "error": "No clusters to recommend from",
         }
 
-    # 페르소나 기반 필터링
-    preferred_cats = persona.get("preferred_categories", [])
-    preferred_subs = persona.get("preferred_subcategories", [])
-    print(f"[Recommender] Filtering for: {preferred_cats} / {preferred_subs}")
-
-    filtered_clusters = filter_clusters_by_persona(category_clusters, clusters, persona)
-    print(f"[Recommender] Filtered clusters: {len(filtered_clusters)} / {len(clusters)}")
+    print(f"[Recommender] {len(clusters)} groups available")
 
     recommender = LLMRecommender()
-    recommendations = recommender.recommend(filtered_clusters, persona, top_n=3)
+    recommendations = recommender.recommend(clusters, persona)
 
     print(f"[Recommender] Generated {len(recommendations)} recommendations")
     for i, rec in enumerate(recommendations, 1):
-        print(f"    {i}. {rec.get('title', 'N/A')}")
+        label = rec.get("recommendation_type_label", "")
+        print(f"    {i}. [{label}] {rec.get('title', 'N/A')}")
 
     return {
         "recommendations": recommendations,

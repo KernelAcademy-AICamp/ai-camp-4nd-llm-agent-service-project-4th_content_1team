@@ -31,6 +31,9 @@ class TrendItem:
     trend_score: float = 0.0
     cluster_id: Optional[str] = None
 
+    # 소스 레이어 (core / adjacent)
+    source_layer: Optional[str] = None
+
 
 @dataclass
 class TrendTopic:
@@ -108,6 +111,9 @@ class TopicRecState(TypedDict, total=False):
     """
     # 입력
     persona: dict                           # 유저 페르소나
+
+    # 소스 선택 단계 (Source Selector Agent 결과)
+    source_config: dict                     # {"core": {...}, "adjacent": {...}}
 
     # 수집 단계
     trends: list[TrendItem]                 # 수집된 트렌드

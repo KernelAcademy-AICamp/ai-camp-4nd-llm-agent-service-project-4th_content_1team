@@ -1,17 +1,17 @@
-from .category_mapper import (
-    map_categories,
-    get_category_stats,
-    filter_by_categories,
-    map_subcategories,
-    get_subcategory_stats,
+from .keyword_extractor import (
+    extract_keywords_tfidf,
+    enrich_with_keywords,
+    extract_keywords,
 )
-from .keyword_extractor import enrich_with_keywords, extract_keywords
-from .scoring import apply_trend_scores, calculate_trend_score, SOURCE_WEIGHTS
+from .scoring import (
+    apply_trend_scores,
+    calculate_trend_score,
+    calculate_base_score,
+    SOURCE_WEIGHTS,
+)
 from .topic_clustering import (
-    cluster_trends,
-    get_cluster_summary,
-    cluster_by_hierarchy,
-    get_hierarchy_summary,
+    cluster_by_keywords,
+    build_group_summary,
 )
 from .trend_analyzer import (
     enrich_clusters_with_flow,
@@ -20,24 +20,18 @@ from .trend_analyzer import (
 )
 
 __all__ = [
-    # Category mapping
-    "map_categories",
-    "get_category_stats",
-    "filter_by_categories",
-    "map_subcategories",
-    "get_subcategory_stats",
-    # Keywords
+    # Keywords (TF-IDF)
+    "extract_keywords_tfidf",
     "enrich_with_keywords",
     "extract_keywords",
     # Scoring
     "apply_trend_scores",
     "calculate_trend_score",
+    "calculate_base_score",
     "SOURCE_WEIGHTS",
     # Clustering
-    "cluster_trends",
-    "get_cluster_summary",
-    "cluster_by_hierarchy",
-    "get_hierarchy_summary",
+    "cluster_by_keywords",
+    "build_group_summary",
     # Analysis
     "enrich_clusters_with_flow",
     "get_trend_insights",

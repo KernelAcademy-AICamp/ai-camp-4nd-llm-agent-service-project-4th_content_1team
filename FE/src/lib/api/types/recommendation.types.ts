@@ -4,6 +4,9 @@ export interface TopicBase {
     based_on_topic: string | null;
     trend_basis: string | null;
     recommendation_reason: string | null;
+    recommendation_type: 'viewer_needs' | 'hit_pattern' | 'trend_driven' | null;
+    recommendation_direction: string | null;
+    source_layer: 'core' | 'adjacent' | null;
     urgency: 'urgent' | 'normal' | 'evergreen';
     search_keywords: string[];  // ["키워드1", "키워드2", ...]
     content_angles: string[];
