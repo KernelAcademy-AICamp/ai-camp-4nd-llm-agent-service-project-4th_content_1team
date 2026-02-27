@@ -998,7 +998,11 @@ class CompetitorChannelService:
 
         llm = ChatAnthropic(model="claude-sonnet-4-5", api_key=api_key)
 
+        from datetime import date as _date
+        today_str = _date.today().strftime("%Y년 %m월 %d일")
+
         prompt = f"""당신은 유튜브 콘텐츠 전략 분석가입니다.
+오늘 날짜: {today_str} (반드시 이 날짜 기준으로 추천하세요. 2024년이 아닌 {today_str[:4]}년 현재 시점입니다.)
 
 아래 경쟁 유튜버 채널 데이터와 내 채널 페르소나를 종합 분석하여, 내 채널에 최적화된 콘텐츠 주제 4개를 추천해주세요.
 
