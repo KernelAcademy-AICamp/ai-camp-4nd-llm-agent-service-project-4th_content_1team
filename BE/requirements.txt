@@ -29,6 +29,7 @@ pytest-asyncio==0.23.6
 langchain
 langchain-core
 langchain-openai
+langchain-anthropic
 langchain-google-genai
 langchain-community
 langgraph
