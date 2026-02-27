@@ -132,7 +132,7 @@ class LLMRecommender:
 {trend_summary}
 
 ## 추천 요청
-아래 3가지 관점에서 각 1개씩, 총 3개의 영상 주제를 추천해주세요.
+아래 4가지 관점에서 총 4개의 영상 주제를 추천해주세요.
 **각 추천은 반드시 서로 다른 트렌드 그룹에서 선택해야 합니다.**
 
 ### 1. viewer_needs (구독자 니즈)
@@ -145,11 +145,16 @@ class LLMRecommender:
 - 기존에 성공한 포맷/주제를 새 트렌드에 적용
 - **제목 스타일**: 이 채널의 톤앤매너를 반영
 
-### 3. trend_driven (최신경향성)
+### 3. trend_driven (최신경향성 - 1)
 - 트렌드 데이터에서 지금 가장 뜨거운 주제
 - 이 채널의 주요 주제 분야에서 다룰 수 있는 최신 트렌드
 - 채널 확장이 아니라, 채널 분야 안에서의 최신 흐름
-- **제목 스타일**: 시의성을 강조하는 제목 (숫자, 날짜, "지금" 등 활용)
+- **제목 스타일**: 채널의 톤앤매너에 맞게 자연스럽게 작성
+
+### 4. trend_driven (최신경향성 - 2)
+- 3번과는 다른 트렌드 그룹에서 선택
+- 채널 분야와 연관되면서 아직 다루지 않은 새로운 트렌드
+- **제목 스타일**: 채널의 톤앤매너에 맞게 자연스럽게 작성
 
 각 추천에 포함할 항목:
 - title: 한국어 영상 제목 (반드시 위 '채널의 최근 영상' 제목 톤과 유사한 스타일로 작성. 채널 이름은 넣지 말 것)
@@ -174,8 +179,8 @@ class LLMRecommender:
 - thumbnail_idea: 썸네일 구성 아이디어
 - urgency: urgent(즉시)/normal(1주내)/evergreen(상시)
 
-## 반드시 JSON 배열만 출력 (한국어)
-[{{"title":"..","recommendation_type":"viewer_needs","source_layer":"core","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","recommendation_direction":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"normal"}}]"""
+## 반드시 JSON 배열 4개만 출력 (한국어)
+[{{"title":"..","recommendation_type":"viewer_needs","source_layer":"core","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","recommendation_direction":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"normal"}},{{"title":"..","recommendation_type":"hit_pattern",...}},{{"title":"..","recommendation_type":"trend_driven",...}},{{"title":"..","recommendation_type":"trend_driven",...}}]"""
 
     def _parse_response(self, response_text: str) -> List[Dict]:
         text = response_text.strip()

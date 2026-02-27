@@ -1,3 +1,4 @@
+import { useRef, useEffect, useState } from "react"
 import { Bookmark } from "lucide-react"
 import { Link } from "react-router-dom"
 import { Button } from "../../../components/ui/button"
@@ -58,6 +59,36 @@ export function TopicCard({
     ? `/script/edit?topic=${encodeURIComponent(title)}&topicId=${topicId}&topicType=${topicType || 'trend'}`
     : undefined
 
+  // 해시태그: 컨테이너 폭에 맞는 태그만 표시
+  const hashtagRef = useRef<HTMLDivElement>(null)
+  const [visibleTags, setVisibleTags] = useState<string[]>(hashtags)
+  useEffect(() => {
+    const el = hashtagRef.current
+    if (!el) return
+    const computeVisible = () => {
+      const availableWidth = el.clientWidth - 32 // px-4 양쪽 패딩 제외
+      const gap = 6 // gap-1.5
+      const canvas = document.createElement('canvas')
+      const ctx = canvas.getContext('2d')
+      if (!ctx) return
+      ctx.font = getComputedStyle(el).font
+      let used = 0
+      const result: string[] = []
+      for (const tag of hashtags) {
+        const tagWidth = ctx.measureText(`#${tag}`).width
+        const needed = used + (result.length > 0 ? gap : 0) + tagWidth
+        if (needed > availableWidth) break
+        used = needed
+        result.push(tag)
+      }
+      setVisibleTags(result)
+    }
+    computeVisible()
+    const observer = new ResizeObserver(computeVisible)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [hashtags])
+
   // 북마크 핸들러
   const handleBookmark = (e: React.MouseEvent) => {
     e.stopPropagation()
@@ -113,11 +144,14 @@ export function TopicCard({
         </div>
         
         {/* 해시태그 (하단 버튼 위) */}
-        <div className="px-4 pb-3 flex items-center gap-1.5 flex-wrap">
-          {hashtags.map((tag, index) => (
-            <span 
-              key={index} 
-              className="text-xs text-[#8c9bb0] tracking-tight"
+        <div
+          ref={hashtagRef}
+          className="px-4 pb-3 flex items-center gap-1.5 flex-nowrap"
+        >
+          {visibleTags.map((tag, index) => (
+            <span
+              key={index}
+              className="text-sm text-[#8c9bb0] whitespace-nowrap"
             >
               #{tag}
             </span>
