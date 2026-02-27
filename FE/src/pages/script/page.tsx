@@ -5,7 +5,7 @@ import { useSearchParams } from "react-router-dom"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
-import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById } from "../../lib/api/services"
+import { executeScriptGen, pollScriptGenResult, getScriptHistory, getScriptById, generateTrendTopics } from "../../lib/api/services"
 import type { GeneratedScript, ReferenceArticle, Citation, ProgressInfo, RelatedVideo } from "../../lib/api/services"
 
 function ScriptPageContent() {
@@ -105,6 +105,9 @@ function ScriptPageContent() {
           newParams.set("topicId", result.topic_request_id)
           setSearchParams(newParams, { replace: true })
         }
+        // 스크립트 완료 → 백그라운드에서 주제 추천 에이전트 실행
+        generateTrendTopics().catch(() => {})
+        console.log("[FE] 스크립트 완료 → 백그라운드 주제 추천 시작")
       } else {
         const errMsg = result.error || result.message || "알 수 없는 오류"
         alert(`생성 실패: ${errMsg}`)
