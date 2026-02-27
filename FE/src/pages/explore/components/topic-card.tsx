@@ -12,6 +12,7 @@ interface TopicCardProps {
   topicId?: string
   topicType?: string
   onClick?: () => void
+  onScriptWrite?: () => void
 }
 
 // 뱃지별 색상 매핑
@@ -42,7 +43,8 @@ export function TopicCard({
   hashtags,
   topicId,
   topicType,
-  onClick
+  onClick,
+  onScriptWrite,
 }: TopicCardProps) {
   // 뱃지 스타일 가져오기
   const badgeStyle = BADGE_STYLES[badge as keyof typeof BADGE_STYLES] || BADGE_STYLES["성공 방정식"]
@@ -134,7 +136,14 @@ export function TopicCard({
             상세내용 보기
           </Button>
           {scriptLink ? (
-            <Link to={scriptLink} className="flex-1" onClick={(e) => e.stopPropagation()}>
+            <Link
+              to={scriptLink}
+              className="flex-1"
+              onClick={(e) => {
+                e.stopPropagation()
+                onScriptWrite?.()
+              }}
+            >
               <Button
                 className="w-full h-10 bg-[#6b27d9] hover:bg-[#5b21b6] text-white text-sm font-medium rounded-lg"
               >

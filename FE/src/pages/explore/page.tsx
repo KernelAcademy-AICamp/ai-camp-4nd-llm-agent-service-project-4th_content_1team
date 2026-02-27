@@ -3,7 +3,7 @@ import { Loader2 } from "lucide-react"
 import { TopicCard } from "./components/topic-card"
 import { TopicDetailSidebar } from "./components/topic-detail-sidebar"
 import { useSidebar } from "../../contexts/sidebar-context"
-import { getTopics } from "../../lib/api/services"
+import { getTopics, skipTopic } from "../../lib/api/services"
 import type { TopicResponse } from "../../lib/api/types"
 
 // recommendation_type → badge 매핑
@@ -103,6 +103,30 @@ export default function ExplorePage() {
     openDetailSidebar()
   }
 
+  // 스크립트 작성 클릭 시: 해당 주제 skip → 새 주제로 교체
+  const handleScriptWrite = async (topicId: string, topicType: string, isCompetitor: boolean) => {
+    try {
+      const type = topicType === "channel" ? "channel" : "trend"
+      const result = await skipTopic(type, topicId)
+
+      const newTopic = result.new_topic ? toDisplayTopic(result.new_topic as TopicResponse) : null
+
+      if (isCompetitor) {
+        setCompetitorTopics((prev) => {
+          const filtered = prev.filter((t) => t.id !== topicId)
+          return newTopic ? [...filtered, newTopic] : filtered
+        })
+      } else {
+        setTrendTopics((prev) => {
+          const filtered = prev.filter((t) => t.id !== topicId)
+          return newTopic ? [...filtered, newTopic] : filtered
+        })
+      }
+    } catch (err) {
+      console.error("주제 skip 실패:", err)
+    }
+  }
+
   return (
     <div className="min-h-full w-full bg-background px-4 py-6 md:p-6">
       {/* 전체 컨테이너 */}
@@ -157,6 +181,7 @@ export default function ExplorePage() {
                     topicId={topic.id}
                     topicType={topic.topic_type}
                     onClick={() => handleTopicClick(topic)}
+                    onScriptWrite={() => handleScriptWrite(topic.id, topic.topic_type, false)}
                   />
                 ))}
               </div>
@@ -195,6 +220,7 @@ export default function ExplorePage() {
                     topicId={topic.id}
                     topicType={topic.topic_type}
                     onClick={() => handleTopicClick(topic)}
+                    onScriptWrite={() => handleScriptWrite(topic.id, topic.topic_type, true)}
                   />
                 ))}
               </div>

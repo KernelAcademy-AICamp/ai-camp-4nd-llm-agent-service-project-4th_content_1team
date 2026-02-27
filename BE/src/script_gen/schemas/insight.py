@@ -39,7 +39,7 @@ class InsightHookPlan(BaseModel):
 
 class InsightChapterVisual(BaseModel):
     """챕터 내 시각자료 제안"""
-    type: Literal["table", "chart", "timeline", "article_image", "text_overlay"]
+    type: Literal["table", "chart", "timeline", "article_image", "text_overlay", "checklist"]
     ref: Optional[str] = Field(None, description="참조할 데이터나 이미지 소스")
     caption: str = Field(description="화면에 띄울 텍스트나 설명")
 
