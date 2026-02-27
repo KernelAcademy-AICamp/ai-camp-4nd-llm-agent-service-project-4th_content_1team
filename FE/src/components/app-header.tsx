@@ -1,4 +1,4 @@
-import { ReactNode } from "react"
+import type { ReactNode } from "react"
 import { useSidebar } from "../contexts/sidebar-context"
 import { PanelLeft } from "lucide-react"
 
@@ -25,7 +25,7 @@ export function AppHeader({ breadcrumb, actions }: AppHeaderProps) {
               <PanelLeft className="w-5 h-5 text-foreground" />
             </button>
           )}
-          
+
           {/* Breadcrumb */}
           <div className="flex items-center gap-2 text-sm text-muted-foreground">
             {breadcrumb || (

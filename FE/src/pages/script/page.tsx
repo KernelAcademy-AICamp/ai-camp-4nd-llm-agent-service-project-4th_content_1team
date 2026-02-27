@@ -2,7 +2,6 @@
 
 import { Suspense, useState, useEffect, useRef } from "react"
 import { useSearchParams } from "react-router-dom"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { ScriptEditor } from "./components/script-editor"
 import { RelatedResources } from "./components/related-resources"
 import { ScriptHeader } from "./components/script-header"
@@ -21,6 +20,7 @@ function ScriptPageContent() {
   const [relatedVideos, setRelatedVideos] = useState<RelatedVideo[]>([])
   const [activeCitationUrl, setActiveCitationUrl] = useState<string | null>(null)
   const [progress, setProgress] = useState<ProgressInfo | null>(null)
+  const [topicTitle, setTopicTitle] = useState<string | null>(null)
 
   // 자동 생성 트리거 방지 플래그 (useRef: 동기적 즉시 반영 → StrictMode 중복 방지)
   const autoGenRef = useRef(false)
@@ -46,6 +46,7 @@ function ScriptPageContent() {
             setReferences(result.references || [])
             setCitations(result.citations || [])
             setRelatedVideos(normalizeRelatedVideos(result.related_videos))
+            setTopicTitle(result.topic_title || null)
             hasExistingData = true
           }
         } else {
@@ -57,6 +58,7 @@ function ScriptPageContent() {
               setReferences(latest.references || [])
               setCitations(latest.citations || [])
               setRelatedVideos(normalizeRelatedVideos(latest.related_videos))
+              setTopicTitle(latest.topic_title || null)
               hasExistingData = true
             }
           }
@@ -118,11 +120,9 @@ function ScriptPageContent() {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
       <main className="flex-1 flex flex-col overflow-hidden">
         <Suspense fallback={<ScriptHeaderSkeleton />}>
-          <ScriptHeader />
+          <ScriptHeader title={topicTitle || undefined} />
         </Suspense>
 
         <div className="flex-1 flex overflow-hidden">
