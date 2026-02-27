@@ -24,6 +24,14 @@ EXTRA_STOPWORDS = {
     "says", "said", "sources", "source", "news", "article", "update",
     # URL 잔해
     "https", "http", "www", "com", "org", "html", "github", "amp",
+    # 날짜/시간 잔해
+    "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    "january", "february", "march", "april", "june", "july", "august",
+    "september", "october", "november", "december",
+    "mon", "tue", "wed", "thu", "fri", "sat", "sun",
+    "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+    "gmt", "utc", "est", "pst", "kst",
+    "2024", "2025", "2026", "2027",
     # 범용 테크 용어 (어디서나 등장 → 구분력 없음)
     "model", "models", "data", "code", "using", "based", "app",
     "tool", "tools", "user", "users", "work", "works", "working",
@@ -112,7 +120,7 @@ def extract_keywords_tfidf(
 
 def _filter_short_tokens(text: str) -> str:
     """소문자 변환 + 3글자 미만 영어 토큰 제거. 코딩 관련 2글자 약어는 예외."""
-    KEEP_SHORT = {"ai", "go", "js", "ui", "ux", "ml", "db", "os", "ci", "cd", "qa", "ar", "vr", "3d"}
+    KEEP_SHORT = {"go", "js", "ui", "ux", "db", "os", "ci", "cd", "qa", "ar", "vr", "3d"}
     text = text.lower()
     words = text.split()
     filtered = []

@@ -18,6 +18,9 @@ class TopicBase(BaseModel):
     based_on_topic: Optional[str] = None
     trend_basis: Optional[str] = None
     recommendation_reason: Optional[str] = None
+    recommendation_type: Optional[str] = None  # viewer_needs | hit_pattern | trend_driven
+    recommendation_direction: Optional[str] = None  # 영상 방향성 제안
+    source_layer: Optional[str] = None  # core | adjacent
     urgency: str = "normal"  # urgent / normal / evergreen
     search_keywords: List[str] = Field(default_factory=list)  # ["키워드1", "키워드2", ...]
     content_angles: List[str] = Field(default_factory=list)   # ["관점1", "관점2"]

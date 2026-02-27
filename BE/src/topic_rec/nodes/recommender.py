@@ -7,18 +7,12 @@ Recommender Node - LLM-based 3-Type Topic Recommendation
 
 import json
 import re
-import requests
 from datetime import date
 from typing import List, Dict
 
+from langchain_openai import ChatOpenAI
 from app.core.config import settings
 from src.topic_rec.state import TopicRecState, TopicCluster
-
-try:
-    import google.generativeai as genai
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
 
 
 RECOMMENDATION_TYPES = {
@@ -32,19 +26,13 @@ class LLMRecommender:
     """LLM-based recommender - 3타입 추천"""
 
     def __init__(self):
-        self.gemini_key = settings.gemini_api_key
-        self.provider = None
-        self.model = None
-
-        if self.gemini_key and HAS_GENAI:
-            self.provider = "gemini"
-            genai.configure(api_key=self.gemini_key)
-            self.model = genai.GenerativeModel("gemini-2.0-flash")
-            print("[Recommender] Using Google Gemini")
+        api_key = settings.openai_api_key
+        if api_key:
+            self.model = ChatOpenAI(model="gpt-4o", api_key=api_key, temperature=0.7)
+            print("[Recommender] Using GPT-4o")
         else:
-            self.provider = "ollama"
-            self.ollama_model = "llama3.2"
-            print(f"[Recommender] Using Ollama ({self.ollama_model})")
+            self.model = None
+            print("[Recommender] No OpenAI API key")
 
     def recommend(
         self,
@@ -57,14 +45,13 @@ class LLMRecommender:
         trend_summary = self._build_summary(clusters[:10])
         prompt = self._build_prompt(trend_summary, persona)
 
-        try:
-            if self.provider == "gemini":
-                response_obj = self.model.generate_content(prompt)
-                response_text = response_obj.text
-            else:
-                response_text = self._call_ollama(prompt)
+        if not self.model:
+            print("[Recommender] No LLM available")
+            return self._fallback(clusters)
 
-            return self._parse_response(response_text)
+        try:
+            response = self.model.invoke(prompt)
+            return self._parse_response(response.content)
 
         except Exception as e:
             print(f"[Recommender] Error: {e}")
@@ -137,7 +124,7 @@ class LLMRecommender:
 - 시청자가 좋아하는 것: {chr(10).join(f"  - {v}" for v in viewer_likes) if viewer_likes else "데이터 없음"}
 
 ## 채널의 최근 영상 (최신순)
-{chr(10).join(f"- {t}" for t in recent_videos[:15]) if recent_videos else "- 데이터 없음"}
+{chr(10).join(f"- {t}" for t in recent_videos[:50]) if recent_videos else "- 데이터 없음"}
 
 **중요: 추천 주제는 위 최근 영상의 방향성과 자연스럽게 이어져야 합니다. 채널이 최근 다루는 주제와 너무 동떨어진 추천은 하지 마세요.**
 
@@ -189,21 +176,6 @@ class LLMRecommender:
 
 ## 반드시 JSON 배열만 출력 (한국어)
 [{{"title":"..","recommendation_type":"viewer_needs","source_layer":"core","based_on_topic":"..","trend_basis":"..","recommendation_reason":"..","recommendation_direction":"..","search_keywords":["키워드1","키워드2","키워드3"],"content_angles":["..",".."],"thumbnail_idea":"..","urgency":"normal"}}]"""
-
-    def _call_ollama(self, prompt: str) -> str:
-        url = "http://localhost:11434/api/generate"
-        payload = {
-            "model": self.ollama_model,
-            "prompt": prompt,
-            "stream": False,
-            "options": {
-                "num_predict": 2000,
-                "temperature": 0.7,
-            },
-        }
-        response = requests.post(url, json=payload, timeout=600)
-        response.raise_for_status()
-        return response.json().get("response", "")
 
     def _parse_response(self, response_text: str) -> List[Dict]:
         text = response_text.strip()

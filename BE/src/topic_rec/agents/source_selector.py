@@ -7,14 +7,9 @@ Source Selector Agent - 채널 페르소나 기반 트렌드 소스 동적 선�
 import json
 import re
 
+from langchain_openai import ChatOpenAI
 from app.core.config import settings
 from src.topic_rec.state import TopicRecState
-
-try:
-    import google.generativeai as genai
-    HAS_GENAI = True
-except ImportError:
-    HAS_GENAI = False
 
 
 # LLM 실패 시 기본 매핑
@@ -38,15 +33,13 @@ class SourceSelector:
     """채널 페르소나 기반으로 트렌드 소스를 선택하는 Agent"""
 
     def __init__(self):
-        self.gemini_key = settings.gemini_api_key
-
-        if self.gemini_key and HAS_GENAI:
-            genai.configure(api_key=self.gemini_key)
-            self.model = genai.GenerativeModel("gemini-2.0-flash")
-            print("[SourceSelector] Using Google Gemini")
+        api_key = settings.openai_api_key
+        if api_key:
+            self.model = ChatOpenAI(model="gpt-4o", api_key=api_key, temperature=0.3)
+            print("[SourceSelector] Using GPT-4o")
         else:
             self.model = None
-            print("[SourceSelector] No Gemini API key, will use default sources")
+            print("[SourceSelector] No OpenAI API key, will use default sources")
 
     def select_sources(self, persona: dict) -> dict:
         """
@@ -65,8 +58,8 @@ class SourceSelector:
         prompt = self._build_prompt(persona)
 
         try:
-            response = self.model.generate_content(prompt)
-            result = self._parse_response(response.text)
+            response = self.model.invoke(prompt)
+            result = self._parse_response(response.content)
             if result:
                 print("[SourceSelector] LLM source selection successful")
                 return result
@@ -82,33 +75,37 @@ class SourceSelector:
         recent_videos = persona.get("recent_video_titles", [])
 
         return f"""당신은 YouTube 크리에이터를 위한 트렌드 소스 선택 전문가입니다.
+이 채널에 트렌드한 영상 주제를 추천하기 위해, 어떤 소스에서 어떤 키워드로 검색할지 결정합니다.
 
 ## 채널 정보
 - 채널: {persona_summary}
 - 주요 주제: {', '.join(main_topics) if main_topics else '알 수 없음'}
 
-## 채널의 최근 영상 (최신순)
-{chr(10).join(f'- {t}' for t in recent_videos[:15]) if recent_videos else '- 데이터 없음'}
+## 채널의 영상 목록 (최신순)
+{chr(10).join(f'- {t}' for t in recent_videos[:50]) if recent_videos else '- 데이터 없음'}
 
-## 트렌드 소스 구조
+## 분석 순서
+1단계: 위 채널 정보와 영상 제목을 분석하여 이 채널의 **카테고리**와 **콘텐츠 방향성**을 파악하세요.
+  - 이 채널이 속한 분야는? (예: AI 코딩 도구, 게임 리뷰, 재테크 등)
+  - 최근 어떤 방향으로 콘텐츠를 만들고 있는가?
+  - 시청자가 기대하는 콘텐츠는?
 
-### Core (채널 핵심 트렌드)
-최근 영상의 동일/하위 카테고리에서 **채널 방향성에 딱 맞는** 트렌드를 수집합니다.
+2단계: 파악한 방향성을 기반으로, 이 채널에 **트렌드한 영상 주제를 추천하기 위해** 아래 소스에서 무엇을 검색할지 결정하세요.
+
+## 사용 가능한 소스
+
+### Core (채널 핵심 트렌드) — 채널 방향성에 딱 맞는 트렌드 수집
 - **Reddit keywords** (영어, 최대 5개): 채널 주제에 맞는 구체적 키워드로 Reddit 전체 검색
-  예: 바이브코딩 채널 → "AI coding", "Cursor AI", "vibe coding", "code generation", "AI agent"
 - **Hacker News keywords** (영어, 최대 5개): 동일한 방식으로 HN 검색
 - **Google News**: 카테고리 선택 (TECHNOLOGY, BUSINESS, SCIENCE, ENTERTAINMENT, SPORTS, HEALTH, LIFESTYLE 중)
 - **Google Trends** (한국어, 최대 5개): 한국 트렌드 검색 키워드
 
-### Adjacent (확장 트렌드 발굴)
-채널의 상위 카테고리에서 **새로운 트렌드를 발굴**합니다.
-- **Reddit subreddits** (최대 3개): 넓은 대형 커뮤니티에서 전반적 트렌드 수집
-  예: 바이브코딩 채널 → technology, programming, Futurology
-  (채널 주제의 상위 카테고리에 해당하는 대형 서브레딧)
+### Adjacent (확장 트렌드 발굴) — 채널의 상위 카테고리에서 새로운 트렌드 발굴
+- **Reddit subreddits** (최대 3개): 채널 상위 카테고리의 대형 커뮤니티에서 전반적 트렌드 수집
 - **Google News**: 카테고리 선택
 - **Google Trends** (한국어, 최대 5개): 더 넓은 범위의 트렌드 키워드
 
-## 출력 형식 (반드시 유효한 JSON만 출력)
+## 출력 형식 (분석 결과 없이, 반드시 유효한 JSON만 출력)
 {{"core":{{"reddit":{{"subreddits":[],"keywords":["kw1","kw2","kw3"]}},"google_news":["CATEGORY1"],"hacker_news":{{"use":true,"keywords":["kw1","kw2"]}},"google_trends":["키워드1","키워드2"]}},"adjacent":{{"reddit":{{"subreddits":["technology","Futurology"],"keywords":[]}},"google_news":["CATEGORY1"],"hacker_news":{{"use":false,"keywords":[]}},"google_trends":["키워드1","키워드2"]}}}}"""
 
     def _parse_response(self, response_text: str) -> dict | None:
@@ -131,6 +128,7 @@ class SourceSelector:
                 result = json.loads(match.group(0))
             except json.JSONDecodeError as e:
                 print(f"[SourceSelector] JSON parse error: {e}")
+                print(f"[SourceSelector] Raw response:\n{response_text[:500]}")
                 return None
 
         # 구조 검증

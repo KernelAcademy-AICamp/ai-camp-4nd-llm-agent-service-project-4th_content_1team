@@ -218,7 +218,7 @@ async def generate_trend_topics(
         select(YTChannelVideo.title)
         .where(YTChannelVideo.channel_id == channel_id)
         .order_by(YTChannelVideo.published_at.desc())
-        .limit(15)
+        .limit(50)
     )
     video_result = await db.execute(video_stmt)
     recent_titles = [row[0] for row in video_result.all()]
