@@ -27,7 +27,8 @@ from src.script_gen.nodes.news_research import news_research_node
 from src.script_gen.nodes.article_analyzer import article_analyzer_node
 from src.script_gen.nodes.yt_fetcher import yt_fetcher_node
 from src.script_gen.nodes.competitor_anal import competitor_anal_node
-from src.script_gen.nodes.insight_builder import insight_builder_node
+# from src.script_gen.nodes.insight_builder import insight_builder_node
+from src.script_gen.nodes.insight_builder_2 import insight_builder_node  
 from src.script_gen.nodes.writer import writer_node
 from src.script_gen.nodes.verifier import verifier_node
 # from src.script_gen.nodes.trend_scout import trend_scout_node  # 주석처리: topic_recommendations로 대체
@@ -127,17 +128,70 @@ async def generate_script(
     }
 
     logger.info(f"Script Generation 시작: {topic!r}")
+    logger.info(f"[Graph] 노드 목록: intent_analyzer → planner → [news_research + yt_fetcher 병렬] → ...")
     app = create_script_gen_graph()
 
     try:
         final_state = await app.ainvoke(initial_state)
         logger.info("Script Generation 완료")
 
+        # yt_fetcher 실행 여부 확인 및 관련 영상 정리
+        yt_data = final_state.get("youtube_data") or {}
+        logger.info(f"[Graph] youtube_data 존재: {bool(yt_data)}")
+
+        related_videos: list[dict] = []
+        try:
+            from datetime import datetime, timezone
+
+            videos = yt_data.get("videos", []) or []
+            queries_used = yt_data.get("search_queries_used", []) or []
+
+            # 인기순(조회수) + 키워드 관련도(검색 쿼리) + 기간당 조회수(view_velocity) 계산
+            for idx, v in enumerate(videos[:2]):  # 상위 2개만 사용
+                vid = v.get("video_id")
+                if not vid:
+                    continue
+
+                published_at = v.get("published_at") or ""
+                view_count = int(v.get("view_count", 0) or 0)
+
+                velocity = 0.0
+                if published_at:
+                    try:
+                        pub_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                        days = max((datetime.now(timezone.utc) - pub_dt).days, 1)
+                        velocity = view_count / days
+                    except Exception:
+                        velocity = 0.0
+
+                search_keyword = queries_used[idx] if idx < len(queries_used) else ""
+
+                related_videos.append(
+                    {
+                        "video_id": vid,
+                        "title": v.get("title", ""),
+                        "channel": v.get("channel_title", ""),
+                        "url": v.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                        "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                        "view_count": view_count,
+                        "published_at": published_at,
+                        "view_velocity": round(velocity, 1),
+                        "search_keyword": search_keyword,
+                        "search_type": "popular",
+                    }
+                )
+
+            logger.info(f"[Graph] related_videos 구성: {len(related_videos)}개")
+        except Exception as e:
+            logger.warning(f"[Graph] related_videos 생성 실패: {e}")
+
         # 전체 파이프라인 결과
         result = final_state["script_draft"].copy()
         result["verifier_output"] = final_state.get("verifier_output")
         result["news_data"] = final_state.get("news_data")
         result["competitor_data"] = final_state.get("competitor_data")
+        result["youtube_data"] = yt_data
+        result["related_videos"] = related_videos
         return result
 
     except Exception as e:
