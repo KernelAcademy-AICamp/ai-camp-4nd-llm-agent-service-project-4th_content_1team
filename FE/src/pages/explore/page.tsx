@@ -48,46 +48,10 @@ function toDisplayTopic(topic: TopicResponse): DisplayTopic {
   }
 }
 
-// 기존 Topic 인터페이스 (목데이터 섹션용)
-interface Topic {
-  id: string
-  badge: string
-  title: string
-  description: string
-  hashtags: string[]
+// 경쟁자 분석 기반 추천인지 확인
+function isCompetitorBasedTopic(topic: TopicResponse): boolean {
+  return topic.based_on_topic?.startsWith("competitor_analysis") ?? false
 }
-
-// Mock 데이터 - 경쟁 채널보다 다르게 (나중에 API 연결)
-const MOCK_DIFFERENTIATE_TOPICS: Topic[] = [
-  {
-    id: "5",
-    badge: "차별화 기회",
-    title: "경쟁사가 놓친 틈새 시장 공략",
-    description: "경쟁 채널들이 다루지 않는 주제로 새로운 시청자층을 확보하세요!",
-    hashtags: ["차별화", "틈새", "전략"],
-  },
-  {
-    id: "6",
-    badge: "차별화 기회",
-    title: "시청자들이 원하지만 없는 콘텐츠",
-    description: "댓글과 검색 데이터를 분석해서 수요는 있지만 공급이 부족한 주제를 찾았어요!",
-    hashtags: ["수요분석", "콘텐츠기획", "기회"],
-  },
-  {
-    id: "7",
-    badge: "차별화 기회",
-    title: "트렌드를 거꾸로 활용하는 역발상",
-    description: "모두가 따라하는 트렌드를 반대로 접근해서 주목받는 방법!",
-    hashtags: ["역발상", "독창성", "트렌드"],
-  },
-  {
-    id: "8",
-    badge: "차별화 기회",
-    title: "경쟁 채널의 약점을 내 강점으로",
-    description: "경쟁 채널 분석 결과, 시청자들이 아쉬워하는 부분을 찾아냈어요!",
-    hashtags: ["경쟁분석", "강점", "개선"],
-  },
-]
 
 export default function ExplorePage() {
   const { isDetailSidebarOpen, openDetailSidebar } = useSidebar()
@@ -95,11 +59,13 @@ export default function ExplorePage() {
 
   // 트렌드 추천 API 상태
   const [trendTopics, setTrendTopics] = useState<DisplayTopic[]>([])
+  // 경쟁자 분석 기반 추천 상태
+  const [competitorTopics, setCompetitorTopics] = useState<DisplayTopic[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [loadError, setLoadError] = useState<string | null>(null)
   const hasCalledRef = useRef(false)
 
-  // 트렌드 추천 조회
+  // 주제 추천 조회
   useEffect(() => {
     if (hasCalledRef.current) return
     hasCalledRef.current = true
@@ -109,10 +75,19 @@ export default function ExplorePage() {
         setIsLoading(true)
         setLoadError(null)
         const response = await getTopics()
-        const mapped = response.trend_topics.map(toDisplayTopic)
-        setTrendTopics(mapped)
+
+        // 모든 주제 합치기
+        const allTopics = [...response.channel_topics, ...response.trend_topics]
+
+        // 경쟁자 분석 기반 추천 필터링
+        const competitorBased = allTopics.filter(isCompetitorBasedTopic)
+        // 나머지 트렌드/채널 추천
+        const otherTopics = allTopics.filter((t) => !isCompetitorBasedTopic(t))
+
+        setCompetitorTopics(competitorBased.map(toDisplayTopic))
+        setTrendTopics(otherTopics.map(toDisplayTopic))
       } catch (err: any) {
-        console.error("트렌드 추천 조회 실패:", err)
+        console.error("추천 조회 실패:", err)
         setLoadError("추천 주제를 불러오는데 실패했습니다.")
       } finally {
         setIsLoading(false)
@@ -122,24 +97,9 @@ export default function ExplorePage() {
     fetchTopics()
   }, [])
 
-  // 트렌드 주제 카드 클릭 핸들러
-  const handleTrendTopicClick = (topic: DisplayTopic) => {
+  // 주제 카드 클릭 핸들러
+  const handleTopicClick = (topic: DisplayTopic) => {
     setSelectedTopic(topic)
-    openDetailSidebar()
-  }
-
-  // 목데이터 주제 카드 클릭 핸들러
-  const handleMockTopicClick = (topic: Topic) => {
-    setSelectedTopic({
-      ...topic,
-      recommendation_direction: "",
-      content_angles: [],
-      trend_basis: "",
-      thumbnail_idea: "",
-      urgency: "normal",
-      source_layer: "core",
-      topic_type: "channel",
-    })
     openDetailSidebar()
   }
 
@@ -196,31 +156,49 @@ export default function ExplorePage() {
                     hashtags={topic.hashtags}
                     topicId={topic.id}
                     topicType={topic.topic_type}
-                    onClick={() => handleTrendTopicClick(topic)}
+                    onClick={() => handleTopicClick(topic)}
                   />
                 ))}
               </div>
             )}
           </section>
 
-          {/* 경쟁 채널과 다르게 - 목데이터 유지 */}
+          {/* 경쟁 채널과 다르게 - 경쟁자 분석 기반 추천 */}
           <section>
             <h2 className="text-xl font-semibold text-foreground mb-6">
               경쟁 채널과 다르게
             </h2>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              {MOCK_DIFFERENTIATE_TOPICS.map((topic) => (
-                <TopicCard
-                  key={topic.id}
-                  id={topic.id}
-                  badge={topic.badge}
-                  title={topic.title}
-                  description={topic.description}
-                  hashtags={topic.hashtags}
-                  onClick={() => handleMockTopicClick(topic)}
-                />
-              ))}
-            </div>
+
+            {isLoading && (
+              <div className="flex items-center justify-center py-12">
+                <Loader2 className="w-8 h-8 text-primary animate-spin" />
+                <span className="ml-3 text-muted-foreground">경쟁자 분석 추천을 불러오고 있어요...</span>
+              </div>
+            )}
+
+            {!isLoading && competitorTopics.length === 0 && (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">경쟁자 분석 기반 추천이 없어요. 경쟁 채널을 등록하고 분석해 보세요.</p>
+              </div>
+            )}
+
+            {!isLoading && competitorTopics.length > 0 && (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {competitorTopics.map((topic) => (
+                  <TopicCard
+                    key={topic.id}
+                    id={topic.id}
+                    badge="차별화 기회"
+                    title={topic.title}
+                    description={topic.trend_basis || topic.description}
+                    hashtags={topic.hashtags}
+                    topicId={topic.id}
+                    topicType={topic.topic_type}
+                    onClick={() => handleTopicClick(topic)}
+                  />
+                ))}
+              </div>
+            )}
           </section>
         </div>
       </div>
