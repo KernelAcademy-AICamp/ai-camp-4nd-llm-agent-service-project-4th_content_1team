@@ -13,11 +13,13 @@
 ## 1. 전체 플로우 개요
 
 ```
-OAuth 로그인
+OAuth 로그인 (Google 계정 = 유튜브 계정)
   ↓
-채널 조회 (영상 길이 + 개수)
-  ├─ 초보 퍼널: Step 1-4 입력 → 분석 로딩 → 결과 → 탐색
-  └─ 숙련 퍼널: 자동 분석 → 결과 → 탐색
+분기 전 3가지 확인: 유튜브 계정 여부 · 채널 여부 · 영상 여부
+  ↓
+채널·영상 있을 때만 영상 길이/개수 조회
+  ├─ 분기 1 (숙련 퍼널): Step 1-4 생략, 자동 분석 → 결과 → 탐색
+  └─ 분기 2 (초보 퍼널): Step 1-4 입력 → 분석 로딩 → 결과 → 탐색
 ```
 
 ### Quota 사용량
@@ -29,8 +31,37 @@ OAuth 로그인
 
 ## 2. 분기 처리 로직
 
-### 처리 순서
+분기 전에 **OAuth 로그인 시점**에 다음 3가지를 고려한다.
+
+1. **유튜브 계정 여부** — Google 계정 = 유튜브 계정 (OAuth로 로그인한 계정)
+2. **채널 여부** — 해당 계정에 연결된 YouTube 채널 존재 여부
+3. **영상 여부** — 채널에 공개 영상이 있는지 (영상 길이·개수 조회 대상)
+
+- **분기 1 (숙련 퍼널)**: 채널·영상이 있고, 영상 기준을 충족하는 경우
+- **분기 2 (초보 퍼널)**: 채널 없음, 영상 없음, 또는 영상 기준 미충족
+
+### 분기 조건 요약
+
+| 유튜브 계정 | 채널 | 영상 | 결과 |
+|------------|------|------|------|
+| O | O | O | 영상 길이·개수 조회 후 판단 (아래 참고) |
+| O | X | X | **분기 2** (초보) |
+| O | O | X | **분기 2** (초보) |
+
+**채널 O · 영상 O**인 경우에만 아래 기준 적용:
+
+| 영상 길이 | 영상 개수 | 결과 |
+|----------|----------|------|
+| 90분 이상 | — | **분기 1** (숙련, 개수 조회 생략) |
+| 90분 미만 | 50개 이상 | **분기 1** (숙련) |
+| 90분 미만 | 50개 미만 | **분기 2** (초보) |
+
+### 처리 순서 (채널 O · 영상 O일 때)
+
 ```typescript
+// 사전: OAuth 로그인 → 유튜브 계정 O 전제
+// 채널 없음 or 영상 없음 → 즉시 { type: "beginner" }
+
 // Step 1: 영상 길이 조회 (Quota: 2)
 const totalDuration = await getRecentVideosDuration()
 
@@ -49,9 +80,9 @@ if (videoCount >= 50) {
 }
 ```
 
-### 결과
-- **숙련 퍼널**: 영상 >= 90분 OR (영상 < 90분 AND 개수 >= 50개)
-- **초보 퍼널**: 영상 < 90분 AND 개수 < 50개
+### 결과 정리
+- **분기 1 (숙련 퍼널)**: 유튜브 계정 O · 채널 O · 영상 O 이면서 (영상 >= 90분 OR 개수 >= 50개)
+- **분기 2 (초보 퍼널)**: 유튜브 계정 O · 채널 X · 영상 X **OR** 채널 O · 영상 X **OR** 채널 O · 영상 O 이면서 (영상 < 90분 AND 개수 < 50개)
 
 ---
 
@@ -281,46 +312,42 @@ interface StepChannelConceptProps {
 
 ### Agentic UX 구성
 
-#### Progress Timeline
+- **표시 범위**: **내 채널 분석** 진행만 표시. 경쟁 채널 분석은 백그라운드에서 실행되며 **프론트에는 노출하지 않음**.
+- **UI 크기**: 전체 화면이 아닌 **Popover 수준** (작은 패널). 진행률·단계는 한눈에 보이되 화면을 가득 채우지 않음.
+
+#### Progress UI (Popover 크기)
 
 ```tsx
-<div className="min-h-screen flex items-center justify-center bg-background px-4">
-  <div className="max-w-md w-full">
-    {/* Progress Bar */}
-    <div className="mb-6">
-      <div className="flex justify-between text-sm mb-2">
-        <span>분석 진행률</span>
-        <span>{progress}%</span>
-      </div>
-      <div className="w-full bg-muted rounded-full h-2">
-        <div className="bg-primary h-2 rounded-full" style={{ width: `${progress}%` }} />
-      </div>
-      <div className="text-xs text-muted-foreground mt-1">
-        예상 남은 시간: {estimatedTime}초
-      </div>
+{/* Popover/패널 크기: max-w-[320px] 또는 w-80 수준, 필요 시 화면 중앙 또는 상단 고정 */}
+<div className="rounded-lg border bg-card p-4 shadow-lg max-w-[320px] w-full">
+  {/* Progress Bar */}
+  <div className="mb-3">
+    <div className="flex justify-between text-xs mb-1">
+      <span>분석 진행률</span>
+      <span>{progress}%</span>
     </div>
-    
-    {/* Timeline */}
-    <div className="space-y-3">
-      <Phase title="내 채널 분석">
-        <StepItem status="completed" icon={Search} label="채널 정보 수집" time="3초" />
-        <StepItem status="processing" icon={FileText} label="영상 데이터 읽는 중" detail="최신 50개 영상 로드 중..." />
-        <StepItem status="pending" icon={BarChart} label="영상 패턴 분석 대기" />
-        <StepItem status="pending" icon={MessageSquare} label="시청자 반응 분석 대기" />
-        <StepItem status="pending" icon={Brain} label="페르소나 생성 대기" />
-        <StepItem status="pending" icon={Check} label="결과 저장 대기" />
-      </Phase>
-      
-      <Phase title="경쟁 채널 분석 (백그라운드)">
-        <StepItem status="pending" icon={RefreshCw} label="경쟁 영상 업데이트" />
-        <StepItem status="pending" icon={Target} label="경쟁 영상 분석 (0/3)" />
-        <StepItem status="pending" icon={Zap} label="차별화 포인트 도출" />
-      </Phase>
-      {/* 본인 채널 분석 완료 시 결과 화면 즉시 표시, 경쟁 채널 분석은 백그라운드 계속 실행 */}
+    <div className="w-full bg-muted rounded-full h-1.5">
+      <div className="bg-primary h-1.5 rounded-full" style={{ width: `${progress}%` }} />
     </div>
+    <div className="text-[10px] text-muted-foreground mt-0.5">
+      예상 남은 시간: {estimatedTime}초
+    </div>
+  </div>
+  
+  {/* Timeline - 내 채널 분석만 (경쟁 채널 분석은 백그라운드, UI 미표시) */}
+  <div className="space-y-1.5">
+    <p className="text-[10px] font-medium text-muted-foreground uppercase tracking-wide">내 채널 분석</p>
+    <StepItem status="completed" icon={Search} label="채널 정보 수집" time="3초" />
+    <StepItem status="processing" icon={FileText} label="영상 데이터 읽는 중" detail="최신 50개 영상 로드 중..." />
+    <StepItem status="pending" icon={BarChart} label="영상 패턴 분석 대기" />
+    <StepItem status="pending" icon={MessageSquare} label="시청자 반응 분석 대기" />
+    <StepItem status="pending" icon={Brain} label="페르소나 생성 대기" />
+    <StepItem status="pending" icon={Check} label="결과 저장 대기" />
   </div>
 </div>
 ```
+
+- **배치**: 로딩 중인 메인 화면 위에 작은 패널로 띄우거나, 상단/코너에 고정. 전체 레이아웃은 `min-h-screen` 없이 기존 페이지 흐름 유지 가능.
 
 #### 단계 아이콘
 
@@ -411,10 +438,6 @@ useEffect(() => {
    - `success_formula`
    - 그라데이션 배경 + 상단 accent line
 
-2. **대표 구조 1개** (성공한 것만)
-   - `content_structures` 중 1개 선택
-   - 플로우 차트 (화살표 연결)
-
 **UI**:
 ```tsx
 <Card>
@@ -423,12 +446,6 @@ useEffect(() => {
     <div className="h-0.5 bg-gradient-to-r from-primary to-green mb-3" />
     <p className="text-xs text-muted-foreground uppercase">성공 공식</p>
     <p className="font-semibold">{successFormula}</p>
-  </div>
-  
-  {/* 대표 구조 */}
-  <div>
-    <p className="text-sm font-medium mb-2">튜토리얼형</p>
-    <StructureFlow steps={["문제 제기", "개념 설명", "실습", "추가 정보"]} />
   </div>
   
   {/* 토글 */}
@@ -456,7 +473,6 @@ useEffect(() => {
   <TopicTypePreview 
     color="green"
     title="성공 방정식"
-    description="과거 히트작 공식 재현"
     detail="조회수가 높았던 영상의 패턴을 분석해서 유사한 주제를 추천해요"
   />
   
@@ -464,7 +480,6 @@ useEffect(() => {
   <TopicTypePreview 
     color="blue"
     title="구독자 관심"
-    description="댓글에서 요청이 많은 주제"
     detail="시청자들이 가장 궁금해하는 질문을 주제로 만들어요"
   />
   
@@ -472,7 +487,6 @@ useEffect(() => {
   <TopicTypePreview 
     color="purple"
     title="최근 경향성"
-    description="최근 영상 패턴 기반"
     detail="최근 인기 있었던 영상 스타일로 새로운 시도를 제안해요"
   />
   
@@ -480,7 +494,6 @@ useEffect(() => {
   <TopicTypePreview 
     color="amber"
     title="차별화 기회"
-    description="경쟁 채널이 안 다루는 주제"
     detail="경쟁 채널 분석 결과 틈새 시장을 찾아드려요"
   />
 </div>
@@ -493,7 +506,6 @@ useEffect(() => {
     <div className="w-1 h-8 bg-gradient-to-b from-{color}-500 to-{color}-600 rounded" />
     <div>
       <div className="text-xs text-{color}-400 font-medium">{title}</div>
-      <div className="text-sm text-muted-foreground">{description}</div>
     </div>
   </div>
   <p className="text-xs text-muted-foreground">{detail}</p>
