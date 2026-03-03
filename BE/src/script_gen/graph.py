@@ -258,6 +258,26 @@ async def generate_script(
         except Exception as e:
             logger.warning(f"[Graph] related_videos 생성 실패: {e}")
 
+        # related_videos에 competitor 분석 결과 매칭 (같은 youtube_data에서 왔으므로 video_id 동일)
+        competitor_data = final_state.get("competitor_data") or {}
+        if competitor_data:
+            video_analyses = competitor_data.get("video_analyses", [])
+            # video_id → 분석 결과 매핑
+            analysis_map = {}
+            for va in video_analyses:
+                vid = va.get("video_id")
+                if vid:
+                    analysis_map[vid] = va
+            
+            for rv in related_videos:
+                analysis = analysis_map.get(rv["video_id"])
+                if analysis:
+                    rv["strengths"] = analysis.get("strengths", [])
+                    rv["weaknesses"] = analysis.get("weaknesses", [])
+                    rv["applicable_points"] = analysis.get("applicable_points", [])
+                    rv["comment_insights"] = analysis.get("comment_insights", {})
+                    logger.info(f"[Graph] related_video '{rv['title'][:30]}' 에 분석 결과 매칭 완료")
+
         # 전체 파이프라인 결과
         result = final_state["script_draft"].copy()
         result["verifier_output"] = final_state.get("verifier_output")

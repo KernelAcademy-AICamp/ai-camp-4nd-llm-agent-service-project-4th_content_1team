@@ -251,9 +251,10 @@ def task_generate_script(self, topic: str, channel_profile: dict, topic_request_
                         "channel": video.get("channel"),
                         "url": video.get("url"),
                         "thumbnail": video.get("thumbnail"),
-                        "hook_analysis": video.get("hook_analysis", ""),
-                        "weak_points": video.get("weak_points", []),
-                        "strong_points": video.get("strong_points", [])
+                        "strengths": video.get("strengths", []),
+                        "weaknesses": video.get("weaknesses", []),
+                        "applicable_points": video.get("applicable_points", []),
+                        "comment_insights": video.get("comment_insights", {}),
                     })
 
             # yt_fetcher에서 가져온 관련 영상 (키워드별 상위 영상)

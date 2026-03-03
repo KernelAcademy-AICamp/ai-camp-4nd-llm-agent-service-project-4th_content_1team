@@ -119,6 +119,7 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                 maxResults=15,
                 type="video",
                 order="relevance",
+                regionCode="KR",
                 relevanceLanguage="ko",
                 videoDuration="medium",
             ).execute()
@@ -134,6 +135,7 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                     maxResults=15,
                     type="video",
                     order="relevance",
+                    regionCode="KR",
                     relevanceLanguage="ko",
                     videoDuration="long",
                 ).execute()
@@ -262,7 +264,9 @@ def _search_youtube_videos(queries: List[str], max_results: int = 5) -> List[Dic
                     part="snippet",
                     maxResults=max_results,
                     type="video",
-                    order="viewCount"
+                    order="viewCount",
+                    regionCode="KR",
+                    relevanceLanguage="ko",
                 )
                 res = req.execute()
                 

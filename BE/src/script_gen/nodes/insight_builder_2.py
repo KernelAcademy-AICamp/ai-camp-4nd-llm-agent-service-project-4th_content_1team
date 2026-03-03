@@ -319,13 +319,17 @@ def _build_context_string(topic: str, channel: Dict, facts: List[Dict], competit
     comp_str = "\n## C. COMPETITOR ANALYSIS\n"
     if competitor:
         ci = competitor.cross_insights
-        comp_str += f"1. Common Gaps (Must Address): {', '.join(ci.common_gaps[:5])}\n"
-        comp_str += f"2. Formatting Do's/Don'ts: {', '.join(ci.do_and_dont[:3])}\n"
+        if ci:
+            comp_str += f"1. Common Gaps (Must Address): {', '.join(ci.common_gaps[:5])}\n"
+            comp_str += f"2. Formatting Do's/Don'ts: {', '.join(ci.do_and_dont[:3])}\n"
         comp_str += "3. Competitor Videos:\n"
         for v in competitor.video_analyses[:3]:
-            hook_short = v.hook_analysis[:100]
-            weak_short = ', '.join(v.weak_points[:2])
-            comp_str += f"   - [{v.title[:50]}] Hook: {hook_short} | Weakness: {weak_short}\n"
+            # 새 스키마: strengths/weaknesses, 이전 스키마: hook_analysis/weak_points 호환
+            strengths = v.strengths if hasattr(v, 'strengths') else []
+            weaknesses = v.weaknesses if hasattr(v, 'weaknesses') else []
+            strength_short = ', '.join(strengths[:2]) if strengths else 'N/A'
+            weakness_short = ', '.join(weaknesses[:2]) if weaknesses else 'N/A'
+            comp_str += f"   - [{v.title[:50]}] Strengths: {strength_short} | Weakness: {weakness_short}\n"
     else:
         comp_str += "(Competitor analysis not available or schema mismatch)\n"
 
