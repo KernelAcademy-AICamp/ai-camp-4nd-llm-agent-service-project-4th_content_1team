@@ -1,178 +1,400 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { useNavigate } from "react-router-dom"
-import { Button } from "../../components/ui/button"
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "../../components/ui/card"
-import { Play, Check, Loader2 } from "lucide-react"
-import { generatePersona } from "../../lib/api"
-import { generateTrendTopics } from "../../lib/api/services"
-import type { PersonaResponse } from "../../lib/api/types"
+import { Loader2 } from "lucide-react"
 
+// API
+import { generatePersona, generateManualPersona, getMyPersona } from "../../lib/api/services"
+import { getChannelStatus } from "../../lib/api/services"
+import { generateTrendTopics, getTopics } from "../../lib/api/services"
+import type { PersonaResponse, ManualPersonaRequest, TopicResponse } from "../../lib/api/types"
+
+// 컴포넌트
+import { StepIndicator } from "./components/step-indicator"
+import { LoadingChannelAnalysis } from "./components/loading-channel-analysis"
+import { ChannelAnalysisResult, type AnalysisResultData, type TrendPreviewItem } from "./components/channel-analysis-result"
+import { StepCategorySelect } from "./components/step-category-select"
+import { StepTargetAudience, type Gender } from "./components/step-target-audience"
+import { StepBenchmarkChannels, type BenchmarkChannel } from "./components/step-benchmark-channels"
+import { StepChannelConcept } from "./components/step-channel-concept"
+import { LoadingTrendRecommendation } from "./components/loading-trend-recommendation"
+
+// ─── 상태머신 Phase 타입 ─────────────────────────────────────
+type OnboardingPhase =
+  | "checking"                // 공통: 채널 상태 확인 중
+  | "loading-analysis"        // Branch A: 채널 분석 로딩
+  | "analysis-result"         // Branch A: 분석 결과 화면
+  | "step-category"           // Branch B: 1단계
+  | "step-audience"           // Branch B: 2단계
+  | "step-benchmark"          // Branch B: 3단계
+  | "step-concept"            // Branch B: 4단계
+  | "loading-recommendation"  // Branch B: 트렌드 추천 로딩
+
+// ─── Branch B 입력값 누적 타입 ───────────────────────────────
+interface ManualInputData {
+  categories: string[]
+  gender: Gender
+  ageGroup: number
+  benchmarkChannels: BenchmarkChannel[]
+  topicKeywords: string[]
+  styleKeywords: string[]
+}
+
+// ─── 메인 컴포넌트 ──────────────────────────────────────────
 export default function OnboardingPage() {
   const navigate = useNavigate()
 
-  // 상태
-  const [isAnalyzing, setIsAnalyzing] = useState(true)
-  const [isGeneratingTopics, setIsGeneratingTopics] = useState(false)
-  const [persona, setPersona] = useState<PersonaResponse | null>(null)
+  // 상태머신
+  const [phase, setPhase] = useState<OnboardingPhase>("checking")
   const [error, setError] = useState<string | null>(null)
+
+  // Branch A: 페르소나 데이터 (결과 화면에서 사용)
+  const [persona, setPersona] = useState<PersonaResponse | null>(null)
+  const [trendPreviews, setTrendPreviews] = useState<TrendPreviewItem[]>([])
+
+  // Branch B: 4단계 입력값 누적
+  const [manualInput, setManualInput] = useState<Partial<ManualInputData>>({})
+
+  // API 진행 단계 (0=시작전, 1=첫번째API중, 2=첫번째완료+두번째중, 3=전부완료)
+  const [apiStep, setApiStep] = useState(0)
+
+  // API 완료 / 애니메이션 완료 동기화
+  const apiDoneRef = useRef(false)
+  const animDoneRef = useRef(false)
+  const nextPhaseRef = useRef<OnboardingPhase | "navigate-explore">("checking")
 
   // StrictMode 중복 호출 방지
   const hasCalledRef = useRef(false)
 
-  // 페이지 진입 시 페르소나 생성 → 트렌드 추천 생성
+  // ─── 공통: 진입 시 채널 상태 확인 ──────────────────────
   useEffect(() => {
     if (hasCalledRef.current) return
     hasCalledRef.current = true
 
-    const initializeChannel = async () => {
+    const checkStatus = async () => {
       try {
-        // 1단계: 페르소나 생성
-        setIsAnalyzing(true)
-        setError(null)
+        const status = await getChannelStatus()
 
-        const personaResponse = await generatePersona()
-
-        if (!personaResponse.success || !personaResponse.persona) {
-          setError(personaResponse.message || "채널 분석에 실패했습니다.")
-          setIsAnalyzing(false)
-          return
+        if (status.has_enough_videos) {
+          // Branch A: 자동 분석
+          setPhase("loading-analysis")
+        } else {
+          // Branch B: 수동 4단계
+          setPhase("step-category")
         }
-
-        setPersona(personaResponse.persona)
-        setIsAnalyzing(false)
-
-        // 2단계: 트렌드 추천 생성
-        setIsGeneratingTopics(true)
-
-        const topicsResponse = await generateTrendTopics()
-
-        if (!topicsResponse.success) {
-          console.error("트렌드 추천 생성 실패:", topicsResponse.message)
-          // 추천 실패해도 진행 가능 (explore에서 빈 상태 표시)
-        }
-
-        setIsGeneratingTopics(false)
       } catch (err: any) {
-        console.error("초기화 실패:", err)
-        setError(err.response?.data?.detail || "채널 분석 중 오류가 발생했습니다.")
-        setIsAnalyzing(false)
-        setIsGeneratingTopics(false)
+        console.error("채널 상태 확인 실패:", err)
+        // 실패 시 Branch B로 fallback
+        setPhase("step-category")
       }
     }
 
-    initializeChannel()
+    checkStatus()
   }, [])
 
-  // 분석된 카테고리 텍스트
-  const getAnalyzedCategoryText = () => {
-    if (!persona?.analyzed_categories || persona.analyzed_categories.length === 0) {
-      return "분석된 카테고리 없음"
+  // ─── Branch A: 분석 로딩 phase 진입 시 API 호출 ────────
+  useEffect(() => {
+    if (phase !== "loading-analysis") return
+
+    apiDoneRef.current = false
+    animDoneRef.current = false
+    nextPhaseRef.current = "analysis-result"
+    setApiStep(0)
+
+    const runAnalysis = async () => {
+      try {
+        // 1. 페르소나 생성
+        setApiStep(1)
+        await generatePersona()
+        setApiStep(2)
+
+        // 2. 트렌드 추천 생성
+        await generateTrendTopics()
+        setApiStep(3)
+      } catch (err: any) {
+        console.error("Branch A 분석 실패:", err)
+        setError(err.response?.data?.detail || "채널 분석 중 오류가 발생했습니다.")
+      } finally {
+        setApiStep(3)
+        apiDoneRef.current = true
+        if (animDoneRef.current) {
+          setPhase("analysis-result")
+        }
+      }
     }
-    return persona.analyzed_categories.join(", ")
+
+    runAnalysis()
+  }, [phase])
+
+  // ─── Branch B: 추천 로딩 phase 진입 시 API 호출 ────────
+  useEffect(() => {
+    if (phase !== "loading-recommendation") return
+
+    apiDoneRef.current = false
+    animDoneRef.current = false
+    nextPhaseRef.current = "navigate-explore"
+    setApiStep(0)
+
+    const runManual = async () => {
+      try {
+        const input = manualInput as ManualInputData
+
+        // 연령대 → BE 포맷 변환 (10 → "10-19", 50 → "50+")
+        const ageGroupStr = input.ageGroup >= 50
+          ? "50+"
+          : `${input.ageGroup}-${input.ageGroup + 9}`
+
+        // 1. 수동 페르소나 생성
+        setApiStep(1)
+        const request: ManualPersonaRequest = {
+          categories: input.categories,
+          gender: input.gender,
+          age_group: ageGroupStr,
+          topic_keywords: input.topicKeywords,
+          style_keywords: input.styleKeywords,
+          benchmark_channel_ids: input.benchmarkChannels.map((ch) => ch.channelId),
+        }
+
+        await generateManualPersona(request)
+        setApiStep(2)
+
+        // 2. 트렌드 추천 생성
+        await generateTrendTopics()
+        setApiStep(3)
+      } catch (err: any) {
+        console.error("Branch B 처리 실패:", err)
+        // 실패해도 explore로 이동 (빈 상태 표시)
+      } finally {
+        setApiStep(3)
+        apiDoneRef.current = true
+        if (animDoneRef.current) {
+          navigate("/explore")
+        }
+      }
+    }
+
+    runManual()
+  }, [phase, manualInput, navigate])
+
+  // ─── Branch A: 결과 화면 진입 시 DB에서 페르소나 + 추천 조회 ───
+  useEffect(() => {
+    if (phase !== "analysis-result") return
+
+    const fetchData = async () => {
+      try {
+        const [personaData, topicsData] = await Promise.all([
+          getMyPersona(),
+          getTopics(),
+        ])
+        setPersona(personaData)
+
+        // 추천 타입별 대표 1개씩 추출
+        const typeOrder: TrendPreviewItem["type"][] = ["hit_pattern", "viewer_needs", "trend_driven"]
+        const previews: TrendPreviewItem[] = []
+        for (const type of typeOrder) {
+          const topic = topicsData.trend_topics.find(
+            (t: TopicResponse) => t.recommendation_type === type
+          )
+          if (topic) {
+            previews.push({
+              type,
+              topicTitle: topic.title,
+              reason: topic.recommendation_reason || "",
+            })
+          }
+        }
+        setTrendPreviews(previews)
+      } catch (err) {
+        console.error("결과 데이터 조회 실패:", err)
+      }
+    }
+
+    fetchData()
+  }, [phase])
+
+  // ─── 로딩 애니메이션 완료 콜백 ─────────────────────────
+  const handleLoadingComplete = useCallback(() => {
+    animDoneRef.current = true
+    if (apiDoneRef.current) {
+      if (nextPhaseRef.current === "navigate-explore") {
+        navigate("/explore")
+      } else {
+        setPhase(nextPhaseRef.current)
+      }
+    }
+    // API 아직 안 끝났으면 API 완료 시 전환됨
+  }, [navigate])
+
+  // ─── Branch A: 결과 화면 → explore ────────────────────
+  const handleAnalysisResultComplete = () => {
+    navigate("/explore")
   }
 
-  // 시작하기 클릭
-  const handleStart = () => {
-    navigate('/explore')
+  // ─── Branch B: 4단계 핸들러 ────────────────────────────
+  const handleCategoryNext = (categories: string[]) => {
+    setManualInput((prev) => ({ ...prev, categories }))
+    setPhase("step-audience")
   }
 
-  const isLoading = isAnalyzing || isGeneratingTopics
+  const handleAudienceNext = (data: { gender: Gender; ageGroup: number }) => {
+    setManualInput((prev) => ({ ...prev, gender: data.gender, ageGroup: data.ageGroup }))
+    setPhase("step-benchmark")
+  }
 
+  const handleBenchmarkNext = (channels: BenchmarkChannel[]) => {
+    setManualInput((prev) => ({ ...prev, benchmarkChannels: channels }))
+    setPhase("step-concept")
+  }
+
+  const handleBenchmarkSkip = () => {
+    setManualInput((prev) => ({ ...prev, benchmarkChannels: [] }))
+    setPhase("step-concept")
+  }
+
+  const handleConceptNext = (data: { topicKeywords: string[]; styleKeywords: string[] }) => {
+    setManualInput((prev) => ({
+      ...prev,
+      topicKeywords: data.topicKeywords,
+      styleKeywords: data.styleKeywords,
+    }))
+    setPhase("loading-recommendation")
+  }
+
+  // ─── Branch B: 이전 버튼 핸들러 ───────────────────────
+  const handleAudiencePrev = () => setPhase("step-category")
+  const handleBenchmarkPrev = () => setPhase("step-audience")
+  const handleConceptPrev = () => setPhase("step-benchmark")
+
+  // ─── 분석 결과 데이터 변환 (Branch A) ──────────────────
+  const buildAnalysisData = (): AnalysisResultData => {
+    if (!persona) {
+      return {
+        channelName: "내 채널",
+        mainTopics: [],
+        contentStyle: "",
+        toneSamples: [],
+        toneManner: "",
+        successFormula: "",
+        hitPatterns: [],
+        videoTypes: {},
+        contentStructures: {},
+        trendPreviews: [],
+      }
+    }
+    return {
+      channelName: persona.one_liner || "내 채널",
+      mainTopics: persona.main_topics || [],
+      contentStyle: persona.content_style || "",
+      toneSamples: persona.tone_samples || [],
+      toneManner: persona.tone_manner || "",
+      successFormula: persona.success_formula || "",
+      hitPatterns: persona.hit_patterns || [],
+      videoTypes: persona.video_types || {},
+      contentStructures: persona.content_structures || {},
+      trendPreviews,
+    }
+  }
+
+  // ─── Branch B: 현재 스텝 번호 (StepIndicator용) ───────
+  const getManualStep = (): number => {
+    switch (phase) {
+      case "step-category": return 1
+      case "step-audience": return 2
+      case "step-benchmark": return 3
+      case "step-concept": return 4
+      default: return 0
+    }
+  }
+
+  const isManualStep = phase.startsWith("step-")
+
+  // ─── 렌더링 ───────────────────────────────────────────
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      {/* Header */}
-      <header className="p-6 flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-primary flex items-center justify-center">
-            <Play className="w-5 h-5 text-primary-foreground fill-current" />
+    <div className="min-h-screen bg-background">
+      {/* checking: 채널 상태 확인 중 */}
+      {phase === "checking" && (
+        <div className="min-h-screen flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <Loader2 className="w-10 h-10 text-primary animate-spin" />
+            <p className="text-sm text-muted-foreground">채널 정보를 확인하고 있어요...</p>
           </div>
-          <span className="text-xl font-bold text-foreground">CreatorHub</span>
         </div>
-      </header>
+      )}
 
-      {/* Main Content */}
-      <main className="flex-1 flex items-center justify-center p-6">
-        <Card className="w-full max-w-2xl border-border/50 bg-card/50 backdrop-blur">
-          <CardHeader className="text-center">
-            <CardTitle className="text-2xl">
-              {isAnalyzing
-                ? "채널을 분석하고 있어요"
-                : isGeneratingTopics
-                ? "맞춤 주제를 찾고 있어요"
-                : error
-                ? "분석 중 문제가 발생했어요"
-                : "준비가 완료되었어요!"}
-            </CardTitle>
-            <CardDescription>
-              {isAnalyzing
-                ? "잠시만 기다려 주세요..."
-                : isGeneratingTopics
-                ? "트렌드를 분석하여 최적의 주제를 추천해 드릴게요"
-                : error
-                ? error
-                : "채널 분석과 주제 추천이 완료되었습니다"}
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            {/* 로딩 상태 */}
-            {isLoading && (
-              <div className="flex flex-col items-center justify-center py-12">
-                <Loader2 className="w-16 h-16 text-primary animate-spin mb-6" />
-                <p className="text-muted-foreground text-center">
-                  {isAnalyzing
-                    ? <>채널의 영상 데이터를 분석하여<br />맞춤형 콘텐츠를 추천해 드릴게요</>
-                    : <>트렌드 데이터를 수집하고<br />최적의 주제를 찾고 있어요</>
-                  }
-                </p>
-              </div>
-            )}
+      {/* Branch A: 채널 분석 로딩 */}
+      {phase === "loading-analysis" && (
+        <LoadingChannelAnalysis
+          onComplete={handleLoadingComplete}
+          hasCompetitors={false}
+          apiStep={apiStep}
+        />
+      )}
 
-            {/* 에러 상태 */}
-            {!isLoading && error && (
-              <div className="flex flex-col items-center justify-center py-8">
-                <Button
-                  onClick={() => window.location.reload()}
-                  className="bg-primary hover:bg-primary/90"
-                >
-                  다시 시도하기
-                </Button>
-              </div>
-            )}
+      {/* Branch A: 분석 결과 화면 */}
+      {phase === "analysis-result" && (
+        <ChannelAnalysisResult
+          onComplete={handleAnalysisResultComplete}
+          hasCompetitors={false}
+          data={buildAnalysisData()}
+        />
+      )}
 
-            {/* 완료 상태 */}
-            {!isLoading && !error && (
-              <div className="p-4 rounded-xl bg-primary/10 border border-primary/20">
-                <div className="flex items-start gap-3">
-                  <div className="w-10 h-10 rounded-lg bg-primary/20 flex items-center justify-center flex-shrink-0">
-                    <Check className="w-5 h-5 text-primary" />
-                  </div>
-                  <div>
-                    <p className="font-semibold text-foreground">분석 완료</p>
-                    <p className="text-sm text-muted-foreground mt-1">
-                      채널 카테고리: <span className="text-primary font-medium">{getAnalyzedCategoryText()}</span>
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-          </CardContent>
-
-          {/* 하단 버튼 - 모든 처리 완료 후에만 표시 */}
-          {!isLoading && !error && (
-            <div className="p-6 pt-0 flex justify-end">
-              <Button
-                onClick={handleStart}
-                className="gap-2 bg-primary hover:bg-primary/90"
-              >
-                시작하기
-                <Check className="w-4 h-4" />
-              </Button>
+      {/* Branch B: 수동 4단계 */}
+      {isManualStep && (
+        <div className="min-h-screen bg-background flex items-center justify-center p-4">
+          <div className="w-full max-w-[520px]">
+            {/* 스텝 인디케이터 */}
+            <div className="mb-8">
+              <StepIndicator currentStep={getManualStep()} totalSteps={4} />
             </div>
-          )}
-        </Card>
-      </main>
+
+            {phase === "step-category" && (
+              <StepCategorySelect
+                onNext={handleCategoryNext}
+                initialData={manualInput.categories}
+              />
+            )}
+
+            {phase === "step-audience" && (
+              <StepTargetAudience
+                onNext={handleAudienceNext}
+                onPrev={handleAudiencePrev}
+                initialData={{
+                  gender: manualInput.gender,
+                  ageGroup: manualInput.ageGroup,
+                }}
+              />
+            )}
+
+            {phase === "step-benchmark" && (
+              <StepBenchmarkChannels
+                onNext={handleBenchmarkNext}
+                onSkip={handleBenchmarkSkip}
+                onPrev={handleBenchmarkPrev}
+                initialData={manualInput.benchmarkChannels}
+              />
+            )}
+
+            {phase === "step-concept" && (
+              <StepChannelConcept
+                onNext={handleConceptNext}
+                onPrev={handleConceptPrev}
+                initialData={{
+                  topicKeywords: manualInput.topicKeywords,
+                  styleKeywords: manualInput.styleKeywords,
+                }}
+                selectedCategories={manualInput.categories}
+              />
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Branch B: 트렌드 추천 로딩 */}
+      {phase === "loading-recommendation" && (
+        <LoadingTrendRecommendation onComplete={handleLoadingComplete} apiStep={apiStep} />
+      )}
     </div>
   )
 }

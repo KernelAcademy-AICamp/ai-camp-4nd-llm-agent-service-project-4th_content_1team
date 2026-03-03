@@ -17,3 +17,11 @@ export interface ChannelSearchResponse {
     total_results: number;
     channels: ChannelSearchResult[];
 }
+
+export interface ChannelStatusResponse {
+    has_channel: boolean;
+    channel_id?: string;
+    video_count: number;
+    total_duration_minutes: number;
+    has_enough_videos: boolean;
+}

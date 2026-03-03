@@ -37,6 +37,15 @@ export interface PersonaResponse {
     topic_keywords?: string[];
     style_keywords?: string[];
 
+    // 영상 분석 결과 (자막 기반)
+    video_types?: Record<string, number>;
+    content_structures?: Record<string, string>;
+    tone_manner?: string;
+    tone_samples?: string[];
+    hit_patterns?: string[];
+    low_patterns?: string[];
+    success_formula?: string;
+
     // 메타
     created_at?: string;
     updated_at?: string;
@@ -47,6 +56,16 @@ export interface PersonaGenerateResponse {
     success: boolean;
     message: string;
     persona?: PersonaResponse;
+}
+
+// 수동 온보딩 페르소나 생성 요청
+export interface ManualPersonaRequest {
+    categories: string[];
+    gender: string;           // "male" | "female" | "any"
+    age_group: string;        // "10-19" | "20-29" | "30-39" | "40-49" | "50+"
+    benchmark_channel_ids?: string[];
+    topic_keywords: string[];
+    style_keywords: string[];
 }
 
 // 페르소나 수정 요청

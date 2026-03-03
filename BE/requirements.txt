@@ -25,7 +25,7 @@ pydantic-settings>=2.3.0
 pytest==7.4.4
 pytest-asyncio==0.23.6
 
-# LangChain & AI (1.x 계열로 버전 통일 - langchain-core 1.x 호환)
+# LangChain & AI
 langchain>=1.0.0
 langchain-core>=1.0.0
 langchain-openai>=0.3.0
@@ -34,7 +34,7 @@ langchain-google-genai>=2.0.0
 langchain-community>=0.3.0
 langgraph>=0.2.0
 google-generativeai>=0.8.0  # Gemini API
-scikit-learn         # TF-IDF 키워드 추출
+scikit-learn         # TF-IDF keyword extraction
 
 # Tools & Crawling
 tavily-python
