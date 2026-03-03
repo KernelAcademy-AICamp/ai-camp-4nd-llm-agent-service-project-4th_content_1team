@@ -77,6 +77,13 @@ async def google_callback(
             await YouTubeService.sync_user_channel(db, user.id, token_data["access_token"])
         except Exception as yt_exc:  # pragma: no cover - 방어적 로깅
             print(f"Warning: Failed to sync YouTube data: {yt_exc}")
+
+        # 경쟁 채널 최신 영상 백그라운드 동기화 (best-effort)
+        try:
+            from app.worker import task_sync_user_competitor_videos
+            task_sync_user_competitor_videos.delay(str(user.id))
+        except Exception as comp_exc:
+            print(f"Warning: Failed to queue competitor video sync: {comp_exc}")
         
         return LoginResponse(
             user=UserResponse(
