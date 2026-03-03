@@ -27,9 +27,9 @@ export function TopicDetailSidebar({ topic }: TopicDetailSidebarProps) {
   const scriptLink = `/script/edit?topic=${encodeURIComponent(topic.title)}&topicId=${topic.id}&topicType=${topic.topic_type || 'trend'}`
 
   return (
-    <div className="fixed right-0 top-0 h-full w-[400px] bg-card border-l border-border shadow-lg z-50 overflow-y-auto">
+    <div className="fixed right-0 top-0 h-full w-[400px] bg-card border-l border-border shadow-lg z-50 flex flex-col">
       {/* 헤더 */}
-      <div className="sticky top-0 bg-card border-b border-border p-4 flex items-center justify-between">
+      <div className="bg-card border-b border-border p-4 flex items-center justify-between shrink-0">
         <h2 className="text-lg font-semibold text-foreground">주제 상세</h2>
         <button
           onClick={closeDetailSidebar}
@@ -40,8 +40,8 @@ export function TopicDetailSidebar({ topic }: TopicDetailSidebarProps) {
         </button>
       </div>
 
-      {/* 내용 */}
-      <div className="p-6 space-y-6">
+      {/* 내용 (스크롤 영역) */}
+      <div className="flex-1 overflow-y-auto p-6 space-y-6">
         {/* 뱃지 */}
         <Badge
           variant="secondary"
@@ -85,26 +85,6 @@ export function TopicDetailSidebar({ topic }: TopicDetailSidebarProps) {
           </div>
         )}
 
-        {/* 트렌드 근거 */}
-        {topic.trend_basis && (
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-foreground">트렌드 근거</h4>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {topic.trend_basis}
-            </p>
-          </div>
-        )}
-
-        {/* 썸네일 아이디어 */}
-        {topic.thumbnail_idea && (
-          <div className="space-y-2">
-            <h4 className="text-sm font-semibold text-foreground">썸네일 아이디어</h4>
-            <p className="text-sm text-muted-foreground leading-relaxed">
-              {topic.thumbnail_idea}
-            </p>
-          </div>
-        )}
-
         {/* 해시태그 */}
         {topic.hashtags.length > 0 && (
           <div className="space-y-3">
@@ -119,7 +99,10 @@ export function TopicDetailSidebar({ topic }: TopicDetailSidebarProps) {
           </div>
         )}
 
-        {/* 스크립트 생성 버튼 */}
+      </div>
+
+      {/* 스크립트 생성 버튼 (하단 고정) */}
+      <div className="shrink-0 bg-card border-t border-border p-4">
         <Link to={scriptLink} onClick={closeDetailSidebar}>
           <Button
             className="w-full bg-primary hover:bg-primary/90"

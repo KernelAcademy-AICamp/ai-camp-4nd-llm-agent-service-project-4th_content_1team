@@ -12,6 +12,7 @@ from app.schemas.persona import (
     PersonaResponse,
     PersonaUpdateRequest,
     PersonaGenerateResponse,
+    ManualPersonaRequest,
 )
 from app.services.persona_service import (
     generate_persona,
@@ -85,6 +86,13 @@ async def get_my_persona(
         preferred_subcategories=persona.preferred_subcategories,
         topic_keywords=persona.topic_keywords,
         style_keywords=persona.style_keywords,
+        video_types=persona.video_types,
+        content_structures=persona.content_structures,
+        tone_manner=persona.tone_manner,
+        tone_samples=persona.tone_samples,
+        hit_patterns=persona.hit_patterns,
+        low_patterns=persona.low_patterns,
+        success_formula=persona.success_formula,
         created_at=persona.created_at,
         updated_at=persona.updated_at,
     )
@@ -148,6 +156,13 @@ async def generate_my_persona(
                 preferred_subcategories=persona.preferred_subcategories,
                 topic_keywords=persona.topic_keywords,
                 style_keywords=persona.style_keywords,
+                video_types=persona.video_types,
+                content_structures=persona.content_structures,
+                tone_manner=persona.tone_manner,
+                tone_samples=persona.tone_samples,
+                hit_patterns=persona.hit_patterns,
+                low_patterns=persona.low_patterns,
+                success_formula=persona.success_formula,
                 created_at=persona.created_at,
                 updated_at=persona.updated_at,
             ),
@@ -162,6 +177,115 @@ async def generate_my_persona(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"페르소나 생성 중 오류가 발생했습니다: {str(e)}",
+        )
+
+
+@router.post("/generate-from-manual", response_model=PersonaGenerateResponse)
+async def generate_manual_persona(
+    request: ManualPersonaRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    수동 온보딩 페르소나 생성 (Branch B).
+
+    LLM 호출 없이 유저 입력값을 템플릿으로 매핑하여 페르소나를 생성합니다.
+    채널이 없는 유저는 placeholder 채널을 자동 생성합니다.
+    """
+    from app.services.persona_service import _save_persona
+
+    try:
+        # 1. 유저의 채널 조회 → 없으면 placeholder 생성
+        stmt = select(YouTubeChannel).where(YouTubeChannel.user_id == current_user.id)
+        result = await db.execute(stmt)
+        channel = result.scalar_one_or_none()
+
+        if not channel:
+            placeholder_id = f"manual_{current_user.id}"
+            channel = YouTubeChannel(
+                channel_id=placeholder_id,
+                user_id=current_user.id,
+                title="수동 입력 채널",
+                description="온보딩 수동 입력으로 생성된 플레이스홀더",
+                raw_channel_json={"type": "manual_placeholder"},
+            )
+            db.add(channel)
+            await db.commit()
+
+        # 2. 타겟 시청자 문자열 생성
+        gender_map = {"male": "남성", "female": "여성", "any": "전체"}
+        gender_kr = gender_map.get(request.gender, request.gender)
+        target_audience = f"{request.age_group}세 {gender_kr}"
+
+        # 3. 템플릿으로 persona_summary 생성
+        categories_str = ", ".join(request.categories)
+        topics_str = ", ".join(request.topic_keywords)
+        styles_str = ", ".join(request.style_keywords)
+        persona_summary = (
+            f"{categories_str} 분야에서 {topics_str}을(를) 주제로 "
+            f"{styles_str} 스타일의 콘텐츠를 제작하는 채널입니다. "
+            f"주요 타겟은 {target_audience} 시청자입니다."
+        )
+
+        # 4. 입력값 → 페르소나 필드 매핑
+        persona_data = {
+            "persona_summary": persona_summary,
+            "one_liner": f"{categories_str} 크리에이터",
+            "main_topics": request.topic_keywords,
+            "content_style": styles_str,
+            "target_audience": target_audience,
+            "analyzed_categories": request.categories,
+            "topic_keywords": request.topic_keywords,
+            "style_keywords": request.style_keywords,
+            "preferred_categories": request.categories,
+        }
+
+        # 5. DB 저장 (기존 _save_persona 재사용)
+        persona = await _save_persona(db, channel.channel_id, persona_data)
+
+        # 6. Redis 캐시 무효화
+        await SharedStateService.invalidate_channel_profile(str(current_user.id))
+
+        return PersonaGenerateResponse(
+            success=True,
+            message="수동 온보딩 페르소나가 생성되었습니다.",
+            persona=PersonaResponse(
+                id=str(persona.id),
+                channel_id=persona.channel_id,
+                persona_summary=persona.persona_summary,
+                one_liner=persona.one_liner,
+                main_topics=persona.main_topics,
+                content_style=persona.content_style,
+                differentiator=persona.differentiator,
+                target_audience=persona.target_audience,
+                audience_needs=persona.audience_needs,
+                hit_topics=persona.hit_topics,
+                title_patterns=persona.title_patterns,
+                optimal_duration=persona.optimal_duration,
+                growth_opportunities=persona.growth_opportunities,
+                evidence=persona.evidence,
+                analyzed_categories=persona.analyzed_categories,
+                analyzed_subcategories=persona.analyzed_subcategories,
+                preferred_categories=persona.preferred_categories,
+                preferred_subcategories=persona.preferred_subcategories,
+                topic_keywords=persona.topic_keywords,
+                style_keywords=persona.style_keywords,
+                video_types=persona.video_types,
+                content_structures=persona.content_structures,
+                tone_manner=persona.tone_manner,
+                tone_samples=persona.tone_samples,
+                hit_patterns=persona.hit_patterns,
+                low_patterns=persona.low_patterns,
+                success_formula=persona.success_formula,
+                created_at=persona.created_at,
+                updated_at=persona.updated_at,
+            ),
+        )
+
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"수동 페르소나 생성 중 오류가 발생했습니다: {str(e)}",
         )
 
 
@@ -260,6 +384,13 @@ async def update_my_persona(
         preferred_subcategories=persona.preferred_subcategories,
         topic_keywords=persona.topic_keywords,
         style_keywords=persona.style_keywords,
+        video_types=persona.video_types,
+        content_structures=persona.content_structures,
+        tone_manner=persona.tone_manner,
+        tone_samples=persona.tone_samples,
+        hit_patterns=persona.hit_patterns,
+        low_patterns=persona.low_patterns,
+        success_formula=persona.success_formula,
         created_at=persona.created_at,
         updated_at=persona.updated_at,
     )
