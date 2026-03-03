@@ -9,15 +9,24 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
-import { Play, Sparkles, TrendingUp, Calendar, ImageIcon } from "lucide-react"
+import { Play, Sparkles, TrendingUp, Calendar, ImageIcon, Loader2 } from "lucide-react"
 import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
 import { googleLogin, getMyPersona } from "../../lib/api/index"
+import { useAuth } from "../../hooks/useAuth"
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("login")
   const navigate = useNavigate()
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth()
+
+  // 이미 로그인된 세션이 있으면 /explore로 리다이렉트
+  useEffect(() => {
+    if (!isAuthLoading && isAuthenticated) {
+      navigate('/explore', { replace: true })
+    }
+  }, [isAuthenticated, isAuthLoading, navigate])
 
   // 로그인 폼 상태
   const [loginEmail, setLoginEmail] = useState("")
@@ -122,6 +131,15 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // 세션 확인 중 — 로그인 폼 노출 방지
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    )
   }
 
   return (
