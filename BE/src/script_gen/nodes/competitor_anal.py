@@ -205,7 +205,8 @@ async def _analyze_single_video(video: Dict, topic: str, channel_profile: Dict) 
         else '댓글이 없으면 자막 내용에서 예상되는 시청자 반응과 니즈를 추론해주세요.'
     )
 
-    prompt = f"""당신은 전문 유튜브 콘텐츠 분석가입니다. 경쟁 유튜버의 영상 자막과 시청자 댓글을 분석하여 4가지를 알려주세요.
+    prompt = f"""당신은 전문 유튜브 콘텐츠 분석가입니다.
+주제 "{topic}"에 관한 경쟁 유튜버의 영상 자막을 분석하여 4가지를 알려주세요.
 
 분석 대상 영상 제목: {title}
 

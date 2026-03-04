@@ -196,7 +196,9 @@ def _search_related_videos_for_display(keywords: List[str], topic: str = "") -> 
                         days = max((datetime.now(timezone.utc) - pub_date).days, 1)
                         velocity = view_count / days
                     except Exception:
-                        pass
+                        logger.debug(
+                            f"[관련 영상] published_at 파싱 실패: video_id={vid}, published_at={published_at}"
+                        )
 
                 candidates.append({
                     "video_id": vid,
@@ -235,7 +237,9 @@ def _search_related_videos_for_display(keywords: List[str], topic: str = "") -> 
                             days = max((datetime.now(timezone.utc) - pub_date).days, 1)
                             velocity = view_count / days
                         except Exception:
-                            pass
+                            logger.debug(
+                                f"[관련 영상] published_at 파싱 실패: video_id={vid}, published_at={published_at}"
+                            )
                     candidates.append({
                         "video_id": vid,
                         "title": snippet["title"],

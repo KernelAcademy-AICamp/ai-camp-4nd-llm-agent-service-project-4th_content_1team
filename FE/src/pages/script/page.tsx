@@ -87,7 +87,7 @@ function ScriptPageContent() {
             if (saved.topicId) newParams.set("topicId", saved.topicId)
             setSearchParams(newParams, { replace: true })
           }
-          resumePolling(saved.taskId)
+          await resumePolling(saved.taskId)
           return
         } catch {
           sessionStorage.removeItem(TASK_STORAGE_KEY)
