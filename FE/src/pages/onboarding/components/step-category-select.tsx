@@ -21,7 +21,7 @@ const CATEGORIES: { id: string; label: string; icon: React.ElementType }[] = [
   { id: "education", label: "교육/정보", icon: GraduationCap },
   { id: "food", label: "먹방/요리", icon: UtensilsCrossed },
   { id: "fitness", label: "운동/건강", icon: Dumbbell },
-  { id: "art", label: "예술/창작", icon: Palette },
+  { id: "news", label: "뉴스/정치", icon: Palette },
   { id: "music", label: "음악", icon: Music },
   { id: "vlog", label: "브이로그", icon: Camera },
   { id: "business", label: "비즈니스", icon: Briefcase },
