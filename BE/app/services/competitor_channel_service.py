@@ -203,6 +203,9 @@ class CompetitorChannelService:
                     cue_count = sum(len(t.get("cues", [])) for t in caption_result.get("tracks", []))
                     logger.info(f"자막 프리페치 완료: {youtube_video_id}, cues={cue_count}")
                 except Exception as e:
+                    from app.services.subtitle_service import YouTubeIPBlockedError
+                    if isinstance(e, YouTubeIPBlockedError):
+                        raise  # IP 차단 → 상위로 즉시 전파, Celery 작업 중단
                     logger.warning(f"자막 프리페치 실패 (분석 시 재시도): {youtube_video_id}: {e}")
 
         except Exception as e:
