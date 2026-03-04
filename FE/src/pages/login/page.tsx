@@ -13,17 +13,20 @@ import { Play, Sparkles, TrendingUp, Calendar, ImageIcon, Loader2 } from "lucide
 import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
 import { googleLogin, getMyPersona } from "../../lib/api/index"
 import { useAuth } from "../../hooks/useAuth"
+import { useQueryClient } from "@tanstack/react-query"
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("login")
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
   const { isAuthenticated, isLoading: isAuthLoading } = useAuth()
 
-  // 이미 로그인된 세션이 있으면 /explore로 리다이렉트
+  // OAuth 콜백 진행 중이 아닐 때만 기존 세션으로 /explore 리다이렉트
   useEffect(() => {
-    if (!isAuthLoading && isAuthenticated) {
+    const hasOAuthCode = !!getGoogleAuthCode()
+    if (!isAuthLoading && isAuthenticated && !hasOAuthCode) {
       navigate('/explore', { replace: true })
     }
   }, [isAuthenticated, isAuthLoading, navigate])
@@ -58,6 +61,9 @@ export default function LoginPage() {
             localStorage.setItem('accessToken', response.tokens.accessToken)
             localStorage.setItem('refreshToken', response.tokens.refreshToken)
           }
+
+          // 세션 캐시 갱신: ProtectedRoute가 최신 인증 상태를 받도록
+          await queryClient.invalidateQueries({ queryKey: ['current-user'] })
 
           // 페르소나 존재 확인 후 라우팅
           try {
