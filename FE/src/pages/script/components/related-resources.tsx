@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "../../../components/ui
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../../components/ui/tabs"
 import { Badge } from "../../../components/ui/badge"
 import { Button } from "../../../components/ui/button"
-import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Lightbulb, Globe, Building2, Play, TrendingUp, Star } from "lucide-react"
+import { ExternalLink, Target, MessageSquare, FileText, ImageIcon, Clock, Eye, Copy, X, Lightbulb, Globe, Building2, Play, TrendingUp, Star, ThumbsUp, ThumbsDown, Zap, Users, ChevronDown, ChevronUp, Crosshair, Heart } from "lucide-react"
 import { ScrollArea } from "../../../components/ui/scroll-area"
 
 // --- Data Types ---
@@ -65,7 +65,17 @@ interface RelatedVideoData {
   view_velocity: number
   search_keyword: string
   search_type: "relevance" | "popular"
+  // 분석 데이터 (분석 페이지와 동일한 구조)
+  strengths?: string[]
+  weaknesses?: string[]
+  applicable_points?: string[]
+  comment_insights?: {
+    reactions: string[]
+    needs: string[]
+  }
 }
+
+
 
 // --- Helper Components ---
 
@@ -342,10 +352,8 @@ export function RelatedResources({ apiReferences, activeCitationUrl, relatedVide
         </div>
       )}
 
-      {/* --- 관련 영상 섹션 --- */}
-      {relatedVideos.length > 0 && (
-        <RelatedVideosSection videos={relatedVideos} />
-      )}
+      {/* --- 관련 영상 섹션 (분석 결과 포함) --- */}
+      <RelatedVideosSection videos={relatedVideos} />
     </div>
   )
 }
@@ -368,7 +376,7 @@ function ArticleDetailModal({
 
   const handleCopyFacts = () => {
     const text = facts.map((f, i) => `${i + 1}. ${f}`).join("\n")
-    navigator.clipboard.writeText(text).catch(() => {})
+    navigator.clipboard.writeText(text).catch(() => { })
   }
 
   return (
@@ -678,6 +686,11 @@ function ImageCard({
 
 function RelatedVideosSection({ videos }: { videos: RelatedVideoData[] }) {
   console.log("[RelatedVideosSection] 렌더링, videos:", videos)
+  const [expandedId, setExpandedId] = useState<string | null>(null)
+
+  const toggleExpand = (videoId: string) => {
+    setExpandedId(expandedId === videoId ? null : videoId)
+  }
 
   const formatViewCount = (count: number) => {
     if (count >= 100000000) return `${(count / 100000000).toFixed(1)}억`
@@ -705,71 +718,218 @@ function RelatedVideosSection({ videos }: { videos: RelatedVideoData[] }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-3">
-        {videos.map((video) => (
-          <a
-            key={video.video_id}
-            href={video.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex gap-3 p-3 rounded-lg bg-muted/30 hover:bg-muted/60 border border-transparent hover:border-border/50 transition-colors group"
-          >
-            {/* 썸네일 */}
-            <div className="relative flex-shrink-0 w-28 aspect-video rounded-md overflow-hidden bg-muted">
-              <img
-                src={video.thumbnail}
-                alt={video.title}
-                className="w-full h-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLImageElement).style.display = "none"
-                }}
-              />
-              <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
-                <Play className="w-6 h-6 text-white fill-white" />
-              </div>
-              {/* 검색 유형 뱃지 */}
-              <div className="absolute top-1 left-1">
-                {video.search_type === "relevance" ? (
-                  <Badge className="text-[9px] px-1 py-0 bg-blue-500/90 text-white flex items-center gap-0.5">
-                    <Star className="w-2.5 h-2.5" />
-                    관련도
-                  </Badge>
-                ) : (
-                  <Badge className="text-[9px] px-1 py-0 bg-orange-500/90 text-white flex items-center gap-0.5">
-                    <TrendingUp className="w-2.5 h-2.5" />
-                    인기
-                  </Badge>
+        {videos.length === 0 ? (
+          <div className="flex items-center justify-center py-12">
+            <div className="text-center space-y-3 p-8">
+              <div className="text-4xl">🎬</div>
+              <p className="text-muted-foreground text-sm">
+                스크립트 생성 시<br />관련 영상이 표시됩니다
+              </p>
+            </div>
+          </div>
+        ) : (
+          videos.map((video) => {
+            const isExpanded = expandedId === video.video_id
+            const hasAnalysis = !!(video.strengths?.length || video.weaknesses?.length || video.applicable_points?.length)
+
+            return (
+              <div
+                key={video.video_id}
+                className="rounded-lg border border-border/50 overflow-hidden transition-all"
+              >
+                {/* 영상 헤더 */}
+                <div className="flex gap-3 p-3 bg-muted/30 hover:bg-muted/60 transition-colors group">
+                  {/* 썸네일 (클릭 시 유튜브 이동) */}
+                  <a
+                    href={video.url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="relative flex-shrink-0 w-28 aspect-video rounded-md overflow-hidden bg-muted"
+                  >
+                    <img
+                      src={video.thumbnail}
+                      alt={video.title}
+                      className="w-full h-full object-cover"
+                      onError={(e) => {
+                        (e.target as HTMLImageElement).style.display = "none"
+                      }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-black/30 opacity-0 group-hover:opacity-100 transition-opacity">
+                      <Play className="w-6 h-6 text-white fill-white" />
+                    </div>
+                    <div className="absolute top-1 left-1">
+                      {video.search_type === "relevance" ? (
+                        <Badge className="text-[9px] px-1 py-0 bg-blue-500/90 text-white flex items-center gap-0.5">
+                          <Star className="w-2.5 h-2.5" />
+                          관련도
+                        </Badge>
+                      ) : (
+                        <Badge className="text-[9px] px-1 py-0 bg-orange-500/90 text-white flex items-center gap-0.5">
+                          <TrendingUp className="w-2.5 h-2.5" />
+                          인기
+                        </Badge>
+                      )}
+                    </div>
+                  </a>
+
+                  {/* 영상 정보 */}
+                  <div className="flex-1 min-w-0 space-y-1">
+                    <h4 className="text-sm font-medium text-foreground line-clamp-2 leading-snug">
+                      {video.title}
+                    </h4>
+                    <p className="text-xs text-muted-foreground font-medium">{video.channel}</p>
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span className="flex items-center gap-0.5">
+                        <Eye className="w-3 h-3" />
+                        {formatViewCount(video.view_count)}
+                      </span>
+                      <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
+                      <span className="flex items-center gap-0.5">
+                        <Clock className="w-3 h-3" />
+                        {formatDate(video.published_at)}
+                      </span>
+                    </div>
+                    <div className="mt-1">
+                      <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                        🔍 {video.search_keyword}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* 분석 토글 버튼 */}
+                  {hasAnalysis && (
+                    <button
+                      onClick={() => toggleExpand(video.video_id)}
+                      className="flex-shrink-0 mt-1 p-1 rounded hover:bg-muted/60 transition-colors"
+                      title="AI 분석 결과 보기"
+                    >
+                      {isExpanded ? (
+                        <ChevronUp className="w-4 h-4 text-violet-500" />
+                      ) : (
+                        <ChevronDown className="w-4 h-4 text-muted-foreground hover:text-violet-500" />
+                      )}
+                    </button>
+                  )}
+                </div>
+
+                {/* 분석 결과 (접이식) — 분석 페이지와 동일한 항목 */}
+                {isExpanded && hasAnalysis && (
+                  <div className="p-4 space-y-4 border-t border-border/30 bg-muted/10 animate-in slide-in-from-top-2 duration-200">
+                    {/* 성공이유 */}
+                    {video.strengths && video.strengths.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-emerald-500">
+                          <ThumbsUp className="w-3.5 h-3.5" />
+                          성공이유
+                        </div>
+                        <div className="bg-emerald-500/5 rounded-md p-2.5 space-y-1.5">
+                          {video.strengths.map((point: string, idx: number) => (
+                            <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mt-1.5 flex-shrink-0" />
+                              <span className="leading-snug">{point}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 부족한점 */}
+                    {video.weaknesses && video.weaknesses.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-red-400">
+                          <ThumbsDown className="w-3.5 h-3.5" />
+                          부족한점
+                        </div>
+                        <div className="bg-red-500/5 rounded-md p-2.5 space-y-1.5">
+                          {video.weaknesses.map((point: string, idx: number) => (
+                            <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                              <span className="w-1.5 h-1.5 rounded-full bg-red-400 mt-1.5 flex-shrink-0" />
+                              <span className="leading-snug">{point}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 적용포인트 */}
+                    {video.applicable_points && video.applicable_points.length > 0 && (
+                      <div className="space-y-1.5">
+                        <div className="flex items-center gap-1.5 text-xs font-semibold text-violet-500">
+                          <Crosshair className="w-3.5 h-3.5" />
+                          내 채널에 적용할 포인트
+                        </div>
+                        <div className="bg-violet-500/5 rounded-md p-2.5 space-y-1.5">
+                          {video.applicable_points.map((point: string, idx: number) => (
+                            <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                              <span className="w-1.5 h-1.5 rounded-full bg-violet-500 mt-1.5 flex-shrink-0" />
+                              <span className="leading-snug">{point}</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* 시청자 반응 */}
+                    {video.comment_insights && (
+                      <div className="space-y-3">
+                        {/* 주요 반응 */}
+                        {video.comment_insights.reactions && video.comment_insights.reactions.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-blue-400">
+                              <Users className="w-3.5 h-3.5" />
+                              주요 반응
+                            </div>
+                            <div className="bg-blue-500/5 rounded-md p-2.5 space-y-1.5">
+                              {video.comment_insights.reactions.map((reaction: string, idx: number) => (
+                                <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400 mt-1.5 flex-shrink-0" />
+                                  <span className="leading-snug">{reaction}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* 시청자가 원하는 콘텐츠 */}
+                        {video.comment_insights.needs && video.comment_insights.needs.length > 0 && (
+                          <div className="space-y-1.5">
+                            <div className="flex items-center gap-1.5 text-xs font-semibold text-pink-400">
+                              <Heart className="w-3.5 h-3.5" />
+                              시청자가 원하는 콘텐츠
+                            </div>
+                            <div className="bg-pink-500/5 rounded-md p-2.5 space-y-1.5">
+                              {video.comment_insights.needs.map((need: string, idx: number) => (
+                                <div key={idx} className="flex items-start gap-2 text-sm text-foreground/90">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-pink-400 mt-1.5 flex-shrink-0" />
+                                  <span className="leading-snug">{need}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 분석 버튼 (안 펼쳤을 때) */}
+                {hasAnalysis && !isExpanded && (
+                  <button
+                    onClick={() => toggleExpand(video.video_id)}
+                    className="w-full py-1.5 text-xs text-violet-500 hover:text-violet-400 hover:bg-muted/30 transition-colors border-t border-border/30 flex items-center justify-center gap-1"
+                  >
+                    <Zap className="w-3 h-3" />
+                    AI 분석 결과 보기
+                  </button>
                 )}
               </div>
-            </div>
-
-            {/* 영상 정보 */}
-            <div className="flex-1 min-w-0 space-y-1">
-              <h4 className="text-sm font-medium text-foreground group-hover:text-primary transition-colors line-clamp-2 leading-snug">
-                {video.title}
-              </h4>
-              <p className="text-xs text-muted-foreground font-medium">{video.channel}</p>
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="flex items-center gap-0.5">
-                  <Eye className="w-3 h-3" />
-                  {formatViewCount(video.view_count)}
-                </span>
-                <span className="w-1 h-1 rounded-full bg-muted-foreground/40" />
-                <span className="flex items-center gap-0.5">
-                  <Clock className="w-3 h-3" />
-                  {formatDate(video.published_at)}
-                </span>
-              </div>
-              <div className="mt-1">
-                <span className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                  🔍 {video.search_keyword}
-                </span>
-              </div>
-            </div>
-
-            <ExternalLink className="w-3.5 h-3.5 text-muted-foreground flex-shrink-0 mt-1 opacity-0 group-hover:opacity-100 transition-opacity" />
-          </a>
-        ))}
+            )
+          })
+        )}
       </CardContent>
     </Card>
   )
 }
+
+
+

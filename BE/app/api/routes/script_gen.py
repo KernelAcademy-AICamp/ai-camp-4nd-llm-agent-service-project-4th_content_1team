@@ -421,6 +421,7 @@ async def get_script_history(
                 item["references"] = source_map.get("references", [])
                 item["competitor_videos"] = source_map.get("competitor_videos", [])
                 item["citations"] = source_map.get("citations", [])
+                item["related_videos"] = source_map.get("related_videos", [])
             results.append(item)
 
         return {"success": True, "results": results}
@@ -480,6 +481,7 @@ async def get_script_by_id(
             result["references"] = source_map.get("references", [])
             result["competitor_videos"] = source_map.get("competitor_videos", [])
             result["citations"] = source_map.get("citations", [])
+            result["related_videos"] = source_map.get("related_videos", [])
 
         return result
 

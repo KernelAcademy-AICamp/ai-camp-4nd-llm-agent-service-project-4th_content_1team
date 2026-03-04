@@ -216,47 +216,71 @@ async def generate_script(
         try:
             from datetime import datetime, timezone
 
-            videos = yt_data.get("videos", []) or []
-            queries_used = yt_data.get("search_queries_used", []) or []
+            # ★ _search_related_videos_for_display()의 결과 사용 (쇼츠+관련성 필터 적용됨)
+            fetcher_related = yt_data.get("related_videos", []) or []
+            if fetcher_related:
+                related_videos = fetcher_related
+                logger.info(f"[Graph] related_videos (필터링됨) 사용: {len(related_videos)}개")
+            else:
+                # fallback: related_videos가 없으면 기존 videos에서 구성
+                videos = yt_data.get("videos", []) or []
+                queries_used = yt_data.get("search_queries_used", []) or []
+                for idx, v in enumerate(videos[:2]):
+                    vid = v.get("video_id")
+                    if not vid:
+                        continue
 
-            # 인기순(조회수) + 키워드 관련도(검색 쿼리) + 기간당 조회수(view_velocity) 계산
-            for idx, v in enumerate(videos[:2]):  # 상위 2개만 사용
-                vid = v.get("video_id")
-                if not vid:
-                    continue
+                    published_at = v.get("published_at") or ""
+                    view_count = int(v.get("view_count", 0) or 0)
 
-                published_at = v.get("published_at") or ""
-                view_count = int(v.get("view_count", 0) or 0)
+                    velocity = 0.0
+                    if published_at:
+                        try:
+                            pub_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                            days = max((datetime.now(timezone.utc) - pub_dt).days, 1)
+                            velocity = view_count / days
+                        except Exception:
+                            velocity = 0.0
 
-                velocity = 0.0
-                if published_at:
-                    try:
-                        pub_dt = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
-                        days = max((datetime.now(timezone.utc) - pub_dt).days, 1)
-                        velocity = view_count / days
-                    except Exception:
-                        velocity = 0.0
+                    search_keyword = queries_used[idx] if idx < len(queries_used) else ""
 
-                search_keyword = queries_used[idx] if idx < len(queries_used) else ""
-
-                related_videos.append(
-                    {
-                        "video_id": vid,
-                        "title": v.get("title", ""),
-                        "channel": v.get("channel_title", ""),
-                        "url": v.get("url") or f"https://www.youtube.com/watch?v={vid}",
-                        "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
-                        "view_count": view_count,
-                        "published_at": published_at,
-                        "view_velocity": round(velocity, 1),
-                        "search_keyword": search_keyword,
-                        "search_type": "popular",
-                    }
-                )
-
-            logger.info(f"[Graph] related_videos 구성: {len(related_videos)}개")
+                    related_videos.append(
+                        {
+                            "video_id": vid,
+                            "title": v.get("title", ""),
+                            "channel": v.get("channel_title", ""),
+                            "url": v.get("url") or f"https://www.youtube.com/watch?v={vid}",
+                            "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                            "view_count": view_count,
+                            "published_at": published_at,
+                            "view_velocity": round(velocity, 1),
+                            "search_keyword": search_keyword,
+                            "search_type": "popular",
+                        }
+                    )
+                logger.info(f"[Graph] related_videos (fallback) 구성: {len(related_videos)}개")
         except Exception as e:
             logger.warning(f"[Graph] related_videos 생성 실패: {e}")
+
+        # related_videos에 competitor 분석 결과 매칭 (같은 youtube_data에서 왔으므로 video_id 동일)
+        competitor_data = final_state.get("competitor_data") or {}
+        if competitor_data:
+            video_analyses = competitor_data.get("video_analyses", [])
+            # video_id → 분석 결과 매핑
+            analysis_map = {}
+            for va in video_analyses:
+                vid = va.get("video_id")
+                if vid:
+                    analysis_map[vid] = va
+            
+            for rv in related_videos:
+                analysis = analysis_map.get(rv["video_id"])
+                if analysis:
+                    rv["strengths"] = analysis.get("strengths", [])
+                    rv["weaknesses"] = analysis.get("weaknesses", [])
+                    rv["applicable_points"] = analysis.get("applicable_points", [])
+                    rv["comment_insights"] = analysis.get("comment_insights", {})
+                    logger.info(f"[Graph] related_video '{rv['title'][:30]}' 에 분석 결과 매칭 완료")
 
         # 전체 파이프라인 결과
         result = final_state["script_draft"].copy()

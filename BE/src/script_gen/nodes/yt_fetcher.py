@@ -4,6 +4,7 @@ YouTube Fetcher Node - 유튜브 영상 검색 에이전트
 """
 
 import logging
+import re
 from typing import Dict, Any, List
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -54,7 +55,7 @@ def yt_fetcher_node(state: Dict[str, Any]) -> Dict[str, Any]:
     related_videos = []
     try:
         logger.info(f"[YT Fetcher] 관련 영상 검색 시작 (키워드: {search_queries[:2]})")
-        related_videos = _search_related_videos_for_display(search_queries[:2])
+        related_videos = _search_related_videos_for_display(search_queries[:2], topic)
         logger.info(f"[YT Fetcher] 관련 영상 검색 완료: {len(related_videos)}개")
         for i, v in enumerate(related_videos):
             logger.info(
@@ -79,12 +80,13 @@ def yt_fetcher_node(state: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
+def _search_related_videos_for_display(keywords: List[str], topic: str = "") -> List[Dict]:
     """
     플래너 youtube_keywords로 UI 표시용 관련 영상 2개를 검색합니다.
 
     - keywords[0] → relevance 순 검색 → 첫 번째 유효 영상 (search_type="relevance")
     - keywords[1] → relevance 검색 후 view_velocity 정렬 → 1위 (search_type="popular")
+    - topic 기반 관련성 필터로 주제와 무관한 영상 제외
 
     Returns:
         최대 2개의 영상 dict (search_type 필드 포함)
@@ -98,6 +100,10 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
 
     logger.info(f"[관련 영상] API 키 존재: {bool(api_key)}")
     logger.info(f"[관련 영상] 검색 키워드: {keywords}")
+
+    # 주제에서 핵심 키워드 추출 (관련성 필터용)
+    topic_keywords = _extract_topic_keywords(topic) if topic else set()
+    logger.info(f"[관련 영상] 관련성 필터 키워드: {topic_keywords}")
 
     if not api_key:
         logger.warning("[관련 영상] YOUTUBE_API_KEY 없음 → 검색 불가")
@@ -119,6 +125,7 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                 maxResults=15,
                 type="video",
                 order="relevance",
+                regionCode="KR",
                 relevanceLanguage="ko",
                 videoDuration="medium",
             ).execute()
@@ -134,6 +141,7 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                     maxResults=15,
                     type="video",
                     order="relevance",
+                    regionCode="KR",
                     relevanceLanguage="ko",
                     videoDuration="long",
                 ).execute()
@@ -174,6 +182,11 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                     logger.debug(f"[관련 영상] 쇼츠 제외: '{snippet['title'][:30]}' ({duration_sec}s)")
                     continue
 
+                # 주제 관련성 체크
+                if topic_keywords and not _is_relevant(snippet["title"], topic_keywords):
+                    logger.debug(f"[관련 영상] 관련성 부족 제외: '{snippet['title'][:30]}'")
+                    continue
+
                 view_count = int(stats.get("viewCount", 0))
                 published_at = snippet.get("publishedAt", "")
                 velocity = 0.0
@@ -183,7 +196,9 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                         days = max((datetime.now(timezone.utc) - pub_date).days, 1)
                         velocity = view_count / days
                     except Exception:
-                        pass
+                        logger.debug(
+                            f"[관련 영상] published_at 파싱 실패: video_id={vid}, published_at={published_at}"
+                        )
 
                 candidates.append({
                     "video_id": vid,
@@ -198,7 +213,45 @@ def _search_related_videos_for_display(keywords: List[str]) -> List[Dict]:
                     "search_type": search_type,
                 })
 
-            logger.info(f"[관련 영상] '{keyword}' 유효 후보: {len(candidates)}개 (쇼츠 제외 후)")
+            logger.info(f"[관련 영상] '{keyword}' 유효 후보: {len(candidates)}개 (쇼츠+관련성 필터 후)")
+
+            # fallback: 관련성 필터로 모두 걸러지면, 쇼츠만 제외하고 재선택
+            if not candidates and topic_keywords:
+                logger.warning(f"[관련 영상] '{keyword}' 관련성 필터 후 후보 없음 → 필터 해제 재시도")
+                for item in items:
+                    vid = item["id"]["videoId"]
+                    if vid in seen_ids:
+                        continue
+                    snippet = item["snippet"]
+                    item_data = stats_map.get(vid, {})
+                    stats = item_data.get("statistics", {})
+                    duration_sec = _parse_duration_seconds(item_data.get("duration", ""))
+                    if duration_sec < 180:
+                        continue
+                    view_count = int(stats.get("viewCount", 0))
+                    published_at = snippet.get("publishedAt", "")
+                    velocity = 0.0
+                    if published_at:
+                        try:
+                            pub_date = datetime.fromisoformat(published_at.replace("Z", "+00:00"))
+                            days = max((datetime.now(timezone.utc) - pub_date).days, 1)
+                            velocity = view_count / days
+                        except Exception:
+                            logger.debug(
+                                f"[관련 영상] published_at 파싱 실패: video_id={vid}, published_at={published_at}"
+                            )
+                    candidates.append({
+                        "video_id": vid,
+                        "title": snippet["title"],
+                        "channel": snippet["channelTitle"],
+                        "url": f"https://www.youtube.com/watch?v={vid}",
+                        "thumbnail": f"https://img.youtube.com/vi/{vid}/mqdefault.jpg",
+                        "view_count": view_count,
+                        "published_at": published_at,
+                        "view_velocity": round(velocity, 1),
+                        "search_keyword": keyword,
+                        "search_type": search_type,
+                    })
 
             if not candidates:
                 logger.warning(f"[관련 영상] '{keyword}' 유효 후보 없음 → 스킵")
@@ -262,7 +315,9 @@ def _search_youtube_videos(queries: List[str], max_results: int = 5) -> List[Dic
                     part="snippet",
                     maxResults=max_results,
                     type="video",
-                    order="viewCount"
+                    order="viewCount",
+                    regionCode="KR",
+                    relevanceLanguage="ko",
                 )
                 res = req.execute()
                 
@@ -336,6 +391,22 @@ def _mock_youtube_search(query: str, max_results: int) -> List[Dict]:
 # =============================================================================
 # 헬퍼
 # =============================================================================
+
+def _extract_topic_keywords(topic: str) -> set:
+    """주제에서 핵심 키워드 추출 (2자 이상, 불용어 제외)"""
+    stop_words = {"은", "는", "이", "가", "을", "를", "의", "에", "와", "과", "도",
+                  "로", "으로", "에서", "까지", "부터", "보다", "처럼", "만큼",
+                  "vs", "and", "the", "for", "in", "of", "to", "all"}
+    words = re.split(r'[\s,!?~·:()\[\]{}"\'/]+', topic)
+    return {w for w in words if len(w) >= 2 and w.lower() not in stop_words}
+
+
+def _is_relevant(title: str, keywords: set) -> bool:
+    """영상 제목에 주제 키워드가 2개 이상 포함되면 관련 있음 판정 (다의어 오매칭 방지)"""
+    title_lower = title.lower()
+    match_count = sum(1 for kw in keywords if kw.lower() in title_lower)
+    return match_count >= 2
+
 
 def _parse_duration_seconds(duration: str) -> int:
     """ISO 8601 duration (PT#H#M#S) → 초 단위 정수로 변환.
