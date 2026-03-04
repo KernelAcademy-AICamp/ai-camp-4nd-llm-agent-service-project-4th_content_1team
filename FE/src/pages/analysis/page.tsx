@@ -1,15 +1,13 @@
 "use client"
 
 import { useState, useEffect } from "react"
-import { DashboardSidebar } from "../dashboard/components/sidebar"
 import { Card, CardContent, CardHeader, CardTitle } from "../../components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
 import { Input } from "../../components/ui/input"
 import { Button } from "../../components/ui/button"
 import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
-import { BarChart3, Users, Search, FileText, Loader2, Plus, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react"
+import { Users, Search, Loader2, Plus, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
   searchChannels,
@@ -300,8 +298,6 @@ export default function AnalysisPage() {
 
   return (
     <div className="min-h-screen bg-background flex">
-      <DashboardSidebar />
-
       <main className="flex-1 p-6 overflow-auto">
         <div className="max-w-[1400px] mx-auto space-y-6">
           {/* Header */}
@@ -312,43 +308,8 @@ export default function AnalysisPage() {
             </p>
           </div>
 
-          {/* Tabs */}
-          <Tabs defaultValue="competitor" className="w-full">
-            <TabsList className="grid w-full grid-cols-4 mb-6">
-              <TabsTrigger value="my-channel" className="gap-2">
-                <BarChart3 className="w-4 h-4" />
-                내 유튜브 분석
-              </TabsTrigger>
-              <TabsTrigger value="competitor" className="gap-2">
-                <Users className="w-4 h-4" />
-                경쟁 유튜버 분석
-              </TabsTrigger>
-              <TabsTrigger value="topics" className="gap-2">
-                <FileText className="w-4 h-4" />
-                주제 추천
-              </TabsTrigger>
-              <TabsTrigger value="trends" className="gap-2">
-                <BarChart3 className="w-4 h-4" />
-                실시간 트렌드
-              </TabsTrigger>
-            </TabsList>
-
-            {/* 내 유튜브 분석 */}
-            <TabsContent value="my-channel" className="space-y-6">
-              <Card className="border-border/50 bg-card/50 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-lg">내 채널 통계</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    구현 예정: 구독자 추이, 조회수 분석, 인기 영상 등
-                  </p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* 경쟁 유튜버 분석 */}
-            <TabsContent value="competitor" className="space-y-6">
+          {/* 경쟁 유튜버 분석 */}
+          <div className="space-y-6">
               <Card className="border-border/50 bg-card/50 backdrop-blur">
                 <CardHeader>
                   <CardTitle className="text-lg">경쟁 유튜버 추가</CardTitle>
@@ -571,36 +532,7 @@ export default function AnalysisPage() {
                   )}
                 </CardContent>
               </Card>
-            </TabsContent>
-
-            {/* 주제 추천 */}
-            <TabsContent value="topics" className="space-y-6">
-              <Card className="border-border/50 bg-card/50 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-lg">AI 주제 추천</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    구현 예정: 트렌드 기반 주제 추천
-                  </p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* 실시간 트렌드 */}
-            <TabsContent value="trends" className="space-y-6">
-              <Card className="border-border/50 bg-card/50 backdrop-blur">
-                <CardHeader>
-                  <CardTitle className="text-lg">실시간 트렌드</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-sm text-muted-foreground">
-                    구현 예정: 실시간 검색 트렌드, 급상승 키워드
-                  </p>
-                </CardContent>
-              </Card>
-            </TabsContent>
-          </Tabs>
+          </div>
         </div>
       </main>
     </div>

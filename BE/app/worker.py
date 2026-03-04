@@ -440,3 +440,114 @@ async def _update_all_competitor_videos_async():
         "updated_count": updated_count,
         "failed_count": failed_count
     }
+
+
+@celery_app.task(bind=True)
+def task_sync_user_competitor_videos(self, user_id: str):
+    """
+    [Celery Task] 로그인한 유저의 경쟁 채널 최신 영상 동기화
+
+    로그인 시 백그라운드로 실행되어 해당 유저가 등록한 경쟁 채널의
+    최신 영상 3개를 갱신합니다. 6시간 이내 이미 갱신된 채널은 스킵합니다.
+    """
+    try:
+        logger.info(f"[Task {self.request.id}] 유저 경쟁 채널 동기화 시작: user_id={user_id}")
+
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        from app.core.db import engine
+        loop.run_until_complete(engine.dispose())
+
+        try:
+            result = loop.run_until_complete(_sync_user_competitor_videos_async(user_id))
+        finally:
+            loop.close()
+
+        logger.info(f"[Task {self.request.id}] 유저 경쟁 채널 동기화 완료: {result}")
+        return result
+
+    except Exception as e:
+        logger.error(f"[Task {self.request.id}] 실행 실패: {e}", exc_info=True)
+        return {"success": False, "message": str(e), "updated_count": 0}
+
+
+async def _sync_user_competitor_videos_async(user_id: str):
+    """특정 유저의 경쟁 채널 최신 영상 동기화 (비동기)"""
+    from datetime import datetime, timezone, timedelta
+    from sqlalchemy import select
+
+    from app.core.db import AsyncSessionLocal
+    from app.models.competitor_channel import CompetitorChannel
+    from app.models.competitor_channel_video import CompetitorRecentVideo
+    from app.services.competitor_channel_service import CompetitorChannelService
+
+    COOLDOWN_HOURS = 6  # 6시간 이내 갱신된 채널은 스킵
+
+    updated_count = 0
+    skipped_count = 0
+    failed_count = 0
+    now = datetime.now(timezone.utc)
+
+    async with AsyncSessionLocal() as db:
+        result = await db.execute(
+            select(CompetitorChannel).where(CompetitorChannel.user_id == user_id)
+        )
+        channels = result.scalars().all()
+
+        if not channels:
+            logger.info(f"[유저 {user_id}] 등록된 경쟁 채널 없음, 스킵")
+            return {"success": True, "message": "경쟁 채널 없음", "updated_count": 0}
+
+        logger.info(f"[유저 {user_id}] 경쟁 채널 {len(channels)}개 동기화 시작")
+
+        for channel in channels:
+            try:
+                # 최근 갱신 여부 확인 (cooldown)
+                recent_check = await db.execute(
+                    select(CompetitorRecentVideo)
+                    .where(CompetitorRecentVideo.competitor_channel_id == channel.id)
+                    .order_by(CompetitorRecentVideo.created_at.desc())
+                    .limit(1)
+                )
+                latest_video = recent_check.scalar_one_or_none()
+
+                if latest_video and latest_video.created_at:
+                    created_at = latest_video.created_at
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=timezone.utc)
+                    age_seconds = (now - created_at).total_seconds()
+                    if age_seconds < COOLDOWN_HOURS * 3600:
+                        skipped_count += 1
+                        logger.debug(f"채널 '{channel.title}' 스킵 (최근 {age_seconds/3600:.1f}시간 전 갱신)")
+                        continue
+
+                # 최신 영상 갱신
+                await CompetitorChannelService._save_recent_videos(
+                    db, channel.id, channel.channel_id
+                )
+                await db.commit()
+                updated_count += 1
+                logger.info(f"채널 '{channel.title}' 영상 동기화 완료")
+
+            except Exception as e:
+                failed_count += 1
+                logger.error(f"채널 '{channel.title}' 동기화 실패: {e}")
+                await db.rollback()
+
+        # 영상 동기화 후 AI 분석 실행 (미분석 영상 대상, 세션 유지 중)
+        if updated_count > 0 or skipped_count > 0:
+            try:
+                logger.info(f"[유저 {user_id}] AI 분석 시작")
+                analyze_result = await CompetitorChannelService.auto_analyze_competitors(db, user_id)
+                logger.info(f"[유저 {user_id}] AI 분석 완료: {analyze_result}")
+            except Exception as e:
+                logger.warning(f"[유저 {user_id}] AI 분석 실패 (영상 동기화는 성공): {e}")
+
+    return {
+        "success": True,
+        "message": f"{updated_count}개 갱신, {skipped_count}개 스킵, {failed_count}개 실패",
+        "updated_count": updated_count,
+        "skipped_count": skipped_count,
+        "failed_count": failed_count,
+    }

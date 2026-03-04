@@ -1,5 +1,5 @@
 import { api } from '../client';
-import type { PersonaResponse, PersonaGenerateResponse, PersonaUpdateRequest } from '../types';
+import type { PersonaResponse, PersonaGenerateResponse, PersonaUpdateRequest, ManualPersonaRequest } from '../types';
 
 // 내 페르소나 조회
 export const getMyPersona = async (): Promise<PersonaResponse> => {
@@ -10,6 +10,12 @@ export const getMyPersona = async (): Promise<PersonaResponse> => {
 // 페르소나 생성 (채널 분석)
 export const generatePersona = async (): Promise<PersonaGenerateResponse> => {
     const response = await api.post('/personas/generate');
+    return response.data;
+};
+
+// 수동 온보딩 페르소나 생성 (Branch B)
+export const generateManualPersona = async (data: ManualPersonaRequest): Promise<PersonaGenerateResponse> => {
+    const response = await api.post('/personas/generate-from-manual', data);
     return response.data;
 };
 

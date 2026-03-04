@@ -23,3 +23,12 @@ class ChannelSearchResponse(BaseModel):
     """채널 검색 응답"""
     total_results: int
     channels: List[ChannelSearchResult]
+
+
+class ChannelStatusResponse(BaseModel):
+    """채널 상태 확인 응답 (온보딩 분기용)"""
+    has_channel: bool
+    channel_id: Optional[str] = None
+    video_count: int = 0
+    total_duration_minutes: float = 0.0
+    has_enough_videos: bool = False

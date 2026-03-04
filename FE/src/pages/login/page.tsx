@@ -9,15 +9,27 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../..
 import { Input } from "../../components/ui/input"
 import { Label } from "../../components/ui/label"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "../../components/ui/tabs"
-import { Play, Sparkles, TrendingUp, Calendar, ImageIcon } from "lucide-react"
+import { Play, Sparkles, TrendingUp, Calendar, ImageIcon, Loader2 } from "lucide-react"
 import { initiateGoogleLogin, getGoogleAuthCode } from "../../lib/googleAuth"
 import { googleLogin, getMyPersona } from "../../lib/api/index"
+import { useAuth } from "../../hooks/useAuth"
+import { useQueryClient } from "@tanstack/react-query"
 
 export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState("login")
   const navigate = useNavigate()
+  const queryClient = useQueryClient()
+  const { isAuthenticated, isLoading: isAuthLoading } = useAuth()
+
+  // OAuth 콜백 진행 중이 아닐 때만 기존 세션으로 /explore 리다이렉트
+  useEffect(() => {
+    const hasOAuthCode = !!getGoogleAuthCode()
+    if (!isAuthLoading && isAuthenticated && !hasOAuthCode) {
+      navigate('/explore', { replace: true })
+    }
+  }, [isAuthenticated, isAuthLoading, navigate])
 
   // 로그인 폼 상태
   const [loginEmail, setLoginEmail] = useState("")
@@ -50,11 +62,14 @@ export default function LoginPage() {
             localStorage.setItem('refreshToken', response.tokens.refreshToken)
           }
 
+          // 세션 캐시 갱신: ProtectedRoute가 최신 인증 상태를 받도록
+          await queryClient.invalidateQueries({ queryKey: ['current-user'] })
+
           // 페르소나 존재 확인 후 라우팅
           try {
             await getMyPersona()
-            // 페르소나가 있으면 대시보드로 이동
-            navigate('/dashboard')
+            // 페르소나가 있으면 주제 탐색으로 이동
+            navigate('/explore')
           } catch {
             // 페르소나가 없으면 온보딩으로 이동
             navigate('/onboarding')
@@ -122,6 +137,15 @@ export default function LoginPage() {
     } finally {
       setIsLoading(false)
     }
+  }
+
+  // 세션 확인 중 — 로그인 폼 노출 방지
+  if (isAuthLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    )
   }
 
   return (

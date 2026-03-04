@@ -72,6 +72,9 @@ def _topic_to_response(topic, topic_type: str) -> dict:
         "based_on_topic": topic.based_on_topic,
         "trend_basis": topic.trend_basis,
         "recommendation_reason": topic.recommendation_reason,
+        "recommendation_type": getattr(topic, "recommendation_type", None),
+        "recommendation_direction": getattr(topic, "recommendation_direction", None),
+        "source_layer": getattr(topic, "source_layer", None),
         "urgency": topic.urgency,
         "search_keywords": topic.search_keywords or [],
         "content_angles": topic.content_angles or [],
@@ -126,7 +129,7 @@ async def generate_trend_recommendations(
     """
     트렌드 기반 추천 생성 (일간).
 
-    - 10개 생성, 2개 표시
+    - 생성된 전체를 shown 상태로 저장
     - 기존 트렌드 추천은 삭제됨
     """
     channel_id = await _get_user_channel_id(db, current_user)
@@ -136,7 +139,7 @@ async def generate_trend_recommendations(
             db=db,
             channel_id=channel_id,
             count=10,
-            shown_count=2,
+            shown_count=10,
         )
 
         if not topics:

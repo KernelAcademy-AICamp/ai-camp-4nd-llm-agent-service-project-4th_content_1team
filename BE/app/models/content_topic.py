@@ -189,6 +189,19 @@ class TrendTopic(Base):
     based_on_topic = Column(String(100), nullable=True)
     trend_basis = Column(Text, nullable=True)
     recommendation_reason = Column(Text, nullable=True)
+    recommendation_type = Column(
+        String(20), nullable=True,
+        comment="viewer_needs | hit_pattern | trend_driven",
+    )  # 추천 관점 태그
+    recommendation_direction = Column(
+        Text, nullable=True,
+        comment="영상 방향성 제안 멘트",
+    )  # "구독자들이 원하는 AI 입문 콘텐츠, 이 주제로 화답해보는 건 어때요?"
+    source_layer = Column(
+        String(10), nullable=True,
+        comment="core | adjacent",
+    )  # 핵심 트렌드 vs 확장 트렌드
+
     urgency = Column(String(20), default="urgent")  # 트렌드는 기본 urgent
 
     # 검색 키워드 (단일 배열로 통합)
@@ -251,6 +264,9 @@ class TrendTopic(Base):
             "based_on_topic": self.based_on_topic,
             "trend_basis": self.trend_basis,
             "recommendation_reason": self.recommendation_reason,
+            "recommendation_type": self.recommendation_type,
+            "recommendation_direction": self.recommendation_direction,
+            "source_layer": self.source_layer,
             "urgency": self.urgency,
             "search_keywords": self.search_keywords,
             "content_angles": self.content_angles,

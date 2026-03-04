@@ -11,6 +11,7 @@ from app.schemas.channel import (
     ChannelSearchRequest,
     ChannelSearchResponse,
     ChannelSearchResult,
+    ChannelStatusResponse,
 )
 from app.schemas.competitor_channel import (
     CompetitorChannelCreate,
@@ -22,10 +23,60 @@ from app.schemas.competitor_channel import (
     CompetitorTopicsGenerateResponse,
 )
 from app.services.channel_service import ChannelService
+from app.services.channel_video_service import sync_channel_videos
 from app.services.competitor_channel_service import CompetitorChannelService
-from sqlalchemy import select
+from app.models.channel_video import YTChannelVideo
+from sqlalchemy import select, func
 
 router = APIRouter(prefix="/api/v1/channels", tags=["Channels"])
+
+
+@router.get("/me/status", response_model=ChannelStatusResponse)
+async def get_channel_status(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    현재 유저의 채널 상태 확인 (온보딩 분기 판단용)
+
+    1. 유저의 채널 존재 여부 확인
+    2. 채널이 있으면 영상 메타데이터 동기화 (sync_channel_videos)
+    3. 영상 수 + 총 길이로 자동분석 가능 여부 판단
+       - 15개 이상 & 90분 이상 → has_enough_videos = true
+    """
+    # 1. 유저의 채널 조회
+    stmt = select(YouTubeChannel).where(YouTubeChannel.user_id == current_user.id)
+    result = await db.execute(stmt)
+    channel = result.scalar_one_or_none()
+
+    if not channel:
+        return ChannelStatusResponse(has_channel=False)
+
+    # 2. 영상 메타데이터 동기화 (자막/LLM 분석 없이 가벼운 작업)
+    try:
+        await sync_channel_videos(db, channel.channel_id)
+    except Exception:
+        pass  # API 실패해도 기존 DB 데이터로 판단
+
+    # 3. 영상 수 + 총 duration 합산 쿼리
+    stats_stmt = select(
+        func.count(YTChannelVideo.id),
+        func.coalesce(func.sum(YTChannelVideo.duration_seconds), 0),
+    ).where(YTChannelVideo.channel_id == channel.channel_id)
+
+    stats_result = await db.execute(stats_stmt)
+    video_count, total_seconds = stats_result.one()
+
+    total_minutes = total_seconds / 60.0
+    has_enough = video_count >= 15 and total_minutes >= 90
+
+    return ChannelStatusResponse(
+        has_channel=True,
+        channel_id=channel.channel_id,
+        video_count=video_count,
+        total_duration_minutes=round(total_minutes, 1),
+        has_enough_videos=has_enough,
+    )
 
 
 @router.post("/search", response_model=ChannelSearchResponse)

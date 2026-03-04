@@ -884,9 +884,9 @@ class CompetitorChannelService:
         user_id: UUID,
     ) -> List[dict]:
         """
-        경쟁자 기반 주제 추천 (3개)
+        경쟁자 기반 주제 추천 (4개)
 
-        경쟁 채널 데이터 + 분석 결과를 종합하여 LLM으로 3개 주제를 추천합니다.
+        경쟁 채널 데이터 + 분석 결과를 종합하여 LLM으로 4개 주제를 추천합니다.
         결과는 ChannelTopic 테이블에 저장됩니다.
         """
         from app.models.channel_persona import ChannelPersona
@@ -989,18 +989,22 @@ class CompetitorChannelService:
             logger.warning(f"페르소나 조회 실패 (분석은 계속): {e}")
 
         # 5. LLM 프롬프트 구성
-        api_key = settings.openai_api_key
+        api_key = settings.anthropic_api_key
         if not api_key:
-            raise HTTPException(status_code=500, detail="OpenAI API 키가 설정되지 않았습니다.")
+            raise HTTPException(status_code=500, detail="Anthropic API 키가 설정되지 않았습니다.")
 
-        from langchain_openai import ChatOpenAI
+        from langchain_anthropic import ChatAnthropic
         from langchain_core.messages import HumanMessage
 
-        llm = ChatOpenAI(model="gpt-4.1", api_key=api_key)
+        llm = ChatAnthropic(model="claude-sonnet-4-5", api_key=api_key)
+
+        from datetime import date as _date
+        today_str = _date.today().strftime("%Y년 %m월 %d일")
 
         prompt = f"""당신은 유튜브 콘텐츠 전략 분석가입니다.
+오늘 날짜: {today_str} (반드시 이 날짜 기준으로 추천하세요. 2024년이 아닌 {today_str[:4]}년 현재 시점입니다.)
 
-아래 경쟁 유튜버 채널 데이터와 내 채널 페르소나를 종합 분석하여, 내 채널에 최적화된 콘텐츠 주제 3개를 추천해주세요.
+아래 경쟁 유튜버 채널 데이터와 내 채널 페르소나를 종합 분석하여, 내 채널에 최적화된 콘텐츠 주제 4개를 추천해주세요.
 
 [경쟁 채널 데이터]
 {competitor_context}
@@ -1011,7 +1015,7 @@ class CompetitorChannelService:
 1. 경쟁자들의 제목 패턴 추출 (숫자형, 질문형, 비교형 등)
 2. 콘텐츠 유형 분류 (튜토리얼, 뉴스해석, 실전빌드 등)
 3. 경쟁자들이 다루지 않는 콘텐츠 공백(gap) 발견
-4. 경쟁자 강점 반영 + 부족한점/남은 각도 보완 가능한 주제 3개 추천
+4. 경쟁자 강점 반영 + 부족한점/남은 각도 보완 가능한 주제 4개 추천
 
 중요 — 반드시 내 채널 페르소나를 기반으로 추천하세요:
 - 내 채널의 정체성(한줄 정의, 콘텐츠 스타일, 차별화 포인트)에 맞는 주제여야 합니다.
@@ -1035,14 +1039,40 @@ class CompetitorChannelService:
 - 쉽고 자연스러운 구어체 사용
 - 구체적이고 실용적으로 작성 (추상적 표현 금지)
 
-출력 형식 (JSON 배열만 출력, 다른 텍스트 없이):
+⚠️ 필수 규칙: 반드시 정확히 4개의 주제를 출력해야 합니다. 3개나 5개가 아닌 4개.
+
+출력 형식 (JSON 배열만 출력, 다른 텍스트 없이, 반드시 4개):
 [
   {{
-    "title": "영상 제목",
+    "title": "첫 번째 영상 제목",
     "recommendation_reason": "추천 이유",
     "content_angles": ["관점1", "관점2", "관점3"],
     "urgency": "normal",
-    "search_keywords": ["키워드1", "키워드2"],
+    "search_keywords": ["키워드1", "키워드2", "키워드3"],
+    "trend_basis": "유망 근거"
+  }},
+  {{
+    "title": "두 번째 영상 제목",
+    "recommendation_reason": "추천 이유",
+    "content_angles": ["관점1", "관점2", "관점3"],
+    "urgency": "normal",
+    "search_keywords": ["키워드1", "키워드2", "키워드3"],
+    "trend_basis": "유망 근거"
+  }},
+  {{
+    "title": "세 번째 영상 제목",
+    "recommendation_reason": "추천 이유",
+    "content_angles": ["관점1", "관점2", "관점3"],
+    "urgency": "urgent",
+    "search_keywords": ["키워드1", "키워드2", "키워드3"],
+    "trend_basis": "유망 근거"
+  }},
+  {{
+    "title": "네 번째 영상 제목",
+    "recommendation_reason": "추천 이유",
+    "content_angles": ["관점1", "관점2", "관점3"],
+    "urgency": "evergreen",
+    "search_keywords": ["키워드1", "키워드2", "키워드3"],
     "trend_basis": "유망 근거"
   }}
 ]"""
@@ -1059,10 +1089,24 @@ class CompetitorChannelService:
         if not isinstance(parsed, list) or len(parsed) == 0:
             raise HTTPException(status_code=500, detail="주제 추천 결과가 올바르지 않습니다.")
 
+        # 4개 미만이면 재시도 (최대 1회)
+        if len(parsed) < 4:
+            logger.warning(f"경쟁자 주제 추천이 {len(parsed)}개만 반환됨, 재시도...")
+            try:
+                res2 = llm.invoke([HumanMessage(content=prompt)])
+                content2 = res2.content.strip()
+                content2 = content2.replace("```json", "").replace("```", "").strip()
+                parsed2 = json.loads(content2)
+                if isinstance(parsed2, list) and len(parsed2) > len(parsed):
+                    parsed = parsed2
+                    logger.info(f"재시도 후 {len(parsed)}개 반환됨")
+            except Exception as e:
+                logger.warning(f"재시도 실패 (기존 결과 사용): {e}")
+
         # 5.5. 키워드 에이전트로 search_keywords 품질 향상
-        titles = [item.get("title", "") for item in parsed[:3]]
+        titles = [item.get("title", "") for item in parsed[:4]]
         keyword_results = await extract_keywords_batch(titles)
-        for item, new_keywords in zip(parsed[:3], keyword_results):
+        for item, new_keywords in zip(parsed[:4], keyword_results):
             if new_keywords:
                 item["search_keywords"] = new_keywords
 
@@ -1077,9 +1121,9 @@ class CompetitorChannelService:
         )
         await db.flush()
 
-        # 7. 새 ChannelTopic 3개 생성
+        # 7. 새 ChannelTopic 4개 생성
         created_topics = []
-        for idx, item in enumerate(parsed[:3]):
+        for idx, item in enumerate(parsed[:4]):
             topic = ChannelTopic(
                 channel_id=channel_id,
                 rank=idx + 1,

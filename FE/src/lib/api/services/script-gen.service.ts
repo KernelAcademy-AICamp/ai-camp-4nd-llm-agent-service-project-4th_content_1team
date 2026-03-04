@@ -165,3 +165,35 @@ export const getScriptById = async (topicRequestId: string): Promise<ScriptHisto
     const response = await api.get(`/script-gen/scripts/${topicRequestId}`);
     return response.data;
 };
+
+// 스크립트 목록 항목 타입
+export interface ScriptListItem {
+    id: string;
+    topic_request_id: string;
+    title: string;
+    created_at: string | null;
+    status: string;
+    thumbnail: string | null;
+    is_completed: boolean;
+}
+
+// 페이지네이션 정보 타입
+export interface PaginationInfo {
+    page: number;
+    page_size: number;
+    total_count: number;
+    total_pages: number;
+}
+
+// 스크립트 목록 응답 타입
+export interface ScriptListResponse {
+    success: boolean;
+    scripts: ScriptListItem[];
+    pagination: PaginationInfo;
+}
+
+// 스크립트 목록 조회 (페이지네이션)
+export const getScriptList = async (page: number = 1, pageSize: number = 8): Promise<ScriptListResponse> => {
+    const response = await api.get(`/script-gen/scripts/list?page=${page}&page_size=${pageSize}`);
+    return response.data;
+};
