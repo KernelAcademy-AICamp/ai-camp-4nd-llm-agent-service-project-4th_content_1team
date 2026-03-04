@@ -531,6 +531,18 @@ async def _sync_user_competitor_videos_async(user_id: str):
                 logger.info(f"채널 '{channel.title}' 영상 동기화 완료")
 
             except Exception as e:
+                from app.services.subtitle_service import YouTubeIPBlockedError
+                if isinstance(e, YouTubeIPBlockedError):
+                    logger.warning(f"[유저 {user_id}] YouTube IP 차단 감지 → 동기화 즉시 중단")
+                    await db.rollback()
+                    return {
+                        "success": False,
+                        "message": "YouTube IP 차단으로 동기화 중단",
+                        "updated_count": updated_count,
+                        "skipped_count": skipped_count,
+                        "failed_count": failed_count,
+                        "ip_blocked": True,
+                    }
                 failed_count += 1
                 logger.error(f"채널 '{channel.title}' 동기화 실패: {e}")
                 await db.rollback()

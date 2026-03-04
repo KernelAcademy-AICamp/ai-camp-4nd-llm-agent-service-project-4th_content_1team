@@ -24,6 +24,46 @@ from app.core.config import settings
 logger = logging.getLogger(__name__)
 
 
+class YouTubeIPBlockedError(Exception):
+    """YouTube IP 차단 에러 - 클라우드 IP 또는 과도한 요청으로 차단됨. 재시도 없이 즉시 중단."""
+    pass
+
+
+_IP_BLOCK_KEYWORDS = [
+    "blocking requests from your ip",
+    "ip has been blocked",
+    "ipblocked",
+    "requestblocked",
+]
+
+# ── Circuit Breaker ──────────────────────────────────────────────────────────
+# 한 번 IP 차단이 감지되면 이 워커 프로세스에서 이후 모든 자막 요청을 차단한다.
+_ip_blocked: bool = False
+
+
+def _mark_ip_blocked() -> None:
+    """IP 차단 플래그를 세우고 로그를 남긴다."""
+    global _ip_blocked
+    if not _ip_blocked:
+        _ip_blocked = True
+        logger.error(
+            "[SUBTITLE] ⛔ YouTube IP 차단 확정 → 이후 모든 자막 요청이 차단됩니다."
+        )
+
+
+def is_ip_blocked() -> bool:
+    """현재 IP 차단 상태 반환 (외부에서 확인용)."""
+    return _ip_blocked
+# ────────────────────────────────────────────────────────────────────────────
+
+
+def _is_ip_block_error(error: Exception) -> bool:
+    """IP 차단 에러 여부 판별."""
+    err_str = str(error).lower()
+    class_name = type(error).__name__.lower()
+    return any(kw in err_str or kw in class_name for kw in _IP_BLOCK_KEYWORDS)
+
+
 class SubtitleService:
     """
     yt-dlp 기반 YouTube 자막 추출 서비스.
@@ -128,6 +168,10 @@ class SubtitleService:
             logger.warning(f"[SUBTITLE] transcript-api: 영상 접근 불가 [{video_id}]")
             return {"video_id": video_id, "status": "failed", "source": "transcript-api", "tracks": [], "no_captions": True, "error": "Video unavailable"}
         except Exception as e:
+            if _is_ip_block_error(e):
+                logger.error(f"[SUBTITLE] YouTube IP 차단 감지 [{video_id}]: {e}")
+                _mark_ip_blocked()
+                raise YouTubeIPBlockedError(str(e))
             logger.warning(f"[SUBTITLE] transcript-api 실패 [{video_id}]: {type(e).__name__}: {e}")
             return {"video_id": video_id, "status": "failed", "source": "transcript-api", "tracks": [], "no_captions": True, "error": str(e)}
 
@@ -152,6 +196,22 @@ class SubtitleService:
             [{"video_id": "...", "status": "success", "tracks": [...]}]
         """
         results = []
+
+        # Circuit breaker: IP 차단 상태면 모든 요청 즉시 차단
+        if _ip_blocked:
+            logger.warning("[SUBTITLE] ⛔ IP 차단 상태 → 자막 요청 전체 스킵")
+            return [
+                {
+                    "video_id": vid,
+                    "status": "skipped",
+                    "source": "ip-blocked",
+                    "tracks": [],
+                    "no_captions": True,
+                    "error": "YouTube IP blocked",
+                }
+                for vid in video_ids
+            ]
+
         if not settings.youtube_subtitle_enabled:
             logger.info("[SUBTITLE] 자막 기능 비활성화 (YOUTUBE_SUBTITLE_ENABLED=false)")
             return [
@@ -201,7 +261,7 @@ class SubtitleService:
 
             for attempt in range(max_attempts):
                 proxy_url = SubtitleService._pick_proxy() if proxy_pool else None
-                
+
                 try:
                     result = await asyncio.to_thread(
                         SubtitleService._fetch_subtitle_with_ytdlp,
@@ -209,7 +269,7 @@ class SubtitleService:
                         languages,
                         proxy_url
                     )
-                    
+
                     cue_count = sum(len(t.get("cues", [])) for t in result.get("tracks", []))
                     if result.get("status") == "success" and cue_count > 0:
                         logger.info(
@@ -217,17 +277,19 @@ class SubtitleService:
                             f"attempt={attempt+1}, cues={cue_count}"
                         )
                         break
-                    
+
                     if result.get("no_captions") and not result.get("error"):
                         break
-                    
+
                     err = result.get("error", "")
                     if "429" in err or "Too Many Requests" in err or "sign in" in err.lower():
                         last_error = err
                         if attempt < max_attempts - 1:
                             await asyncio.sleep(2.0)
                             continue
-                        
+
+                except YouTubeIPBlockedError:
+                    raise  # IP 차단 → 재시도 없이 즉시 전파
                 except Exception as e:
                     last_error = str(e)
                     logger.error(f"[SUBTITLE] ✗ yt-dlp 예외 [{video_id}] {type(e).__name__}: {e}")
@@ -398,7 +460,12 @@ class SubtitleService:
         except yt_dlp.utils.DownloadError as e:
             error_msg = str(e)
             logger.error(f"[SUBTITLE] yt-dlp DownloadError [{video_id}]: {error_msg}")
-            
+
+            # IP 차단 에러 → 재시도 무의미, 즉시 전파
+            if _is_ip_block_error(e):
+                _mark_ip_blocked()
+                raise YouTubeIPBlockedError(error_msg)
+
             # 429나 sign in 에러는 프록시 전환으로 해결 가능
             if any(x in error_msg.lower() for x in ["429", "too many requests", "sign in"]):
                 return {

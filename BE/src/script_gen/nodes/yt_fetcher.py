@@ -304,8 +304,8 @@ def _search_youtube_videos(queries: List[str], max_results: int = 5) -> List[Dic
 
             api_key = os.getenv("YOUTUBE_API_KEY")
             if not api_key:
-                logger.warning("YOUTUBE_API_KEY Missing, using Mock")
-                videos = _mock_youtube_search(query, max_results)
+                logger.warning("YOUTUBE_API_KEY 없음 → 관련 영상 검색 건너뜀")
+                continue
             else:
                 logger.info(f"YouTube API 호출: {query}")
                 youtube = build("youtube", "v3", developerKey=api_key)
@@ -348,10 +348,7 @@ def _search_youtube_videos(queries: List[str], max_results: int = 5) -> List[Dic
             all_videos.extend(videos)
             
         except Exception as e:
-            logger.warning(f"쿼리 '{query}' 검색 실패: {e}")
-            # 실패 시 Mock으로 폴백 (테스트 안전성)
-            videos = _mock_youtube_search(query, max_results)
-            all_videos.extend(videos)
+            logger.warning(f"쿼리 '{query}' 관련 영상 검색 실패 (quota 초과 등): {e}")
             continue
     
     # 중복 제거 (video_id 기준)
