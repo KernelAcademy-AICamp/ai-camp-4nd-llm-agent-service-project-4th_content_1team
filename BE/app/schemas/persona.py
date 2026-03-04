@@ -85,6 +85,17 @@ class PersonaUpdateRequest(BaseModel):
     preferred_subcategories: Optional[List[str]] = Field(None, description="선호 서브카테고리 (사용자 선택)")
 
 
+class ManualPersonaRequest(BaseModel):
+    """수동 온보딩 4단계 입력값."""
+
+    categories: List[str] = Field(..., min_length=1, max_length=2, description="카테고리 (1~2개)")
+    gender: str = Field(..., description="타겟 성별: male / female / any")
+    age_group: str = Field(..., description="타겟 연령대: 10-19, 20-29, 30-39, 40-49, 50+")
+    benchmark_channel_ids: Optional[List[str]] = Field(None, description="벤치마크 채널 ID (최대 3개, 선택)")
+    topic_keywords: List[str] = Field(..., min_length=1, max_length=5, description="주제 키워드 (1~5개)")
+    style_keywords: List[str] = Field(..., min_length=1, max_length=5, description="스타일 키워드 (1~5개)")
+
+
 class PersonaGenerateResponse(BaseModel):
     """페르소나 생성 응답."""
 

@@ -5,12 +5,14 @@ from src.topic_rec.state import TrendItem
 
 HN_SEARCH_BY_DATE = "https://hn.algolia.com/api/v1/search_by_date"
 
-def fetch_hn_trends(days=1, max_pages=2):
+def fetch_hn_trends(days=1, max_pages=2, keywords=None):
     cutoff_ts = int((datetime.now(timezone.utc) - timedelta(days=days)).timestamp())
     all_trends = []
 
     for page in range(max_pages):
         params = {"tags": "story", "hitsPerPage": 50, "page": page}
+        if keywords:
+            params["query"] = " OR ".join(keywords)
         try:
             r = requests.get(HN_SEARCH_BY_DATE, params=params, timeout=10)
             r.raise_for_status()
