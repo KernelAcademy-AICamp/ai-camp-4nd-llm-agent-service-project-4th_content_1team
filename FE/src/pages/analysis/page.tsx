@@ -108,6 +108,7 @@ function VideoAnalysisResults({ video }: { video: CompetitorChannelVideo }) {
 }
 
 export default function AnalysisPage() {
+  const [activeTab, setActiveTab] = useState("my-channel")
   const [searchQuery, setSearchQuery] = useState("")
   const [shouldSearch, setShouldSearch] = useState(false)
   const [analyzingVideoId, setAnalyzingVideoId] = useState<string | null>(null)
@@ -122,7 +123,7 @@ export default function AnalysisPage() {
     staleTime: 1000 * 60 * 5,
   })
 
-  // 등록된 경쟁 채널 목록
+  // 등록된 경쟁 채널 목록 (경쟁 채널 탭일 때만 조회)
   const { data: competitorList, isLoading: isLoadingList, error: listError } = useQuery({
     queryKey: ['competitor-channels'],
     queryFn: async () => {
@@ -132,6 +133,7 @@ export default function AnalysisPage() {
       return result
     },
     staleTime: 1000 * 60 * 5,
+    enabled: activeTab === "competitor",
   })
 
   // 페이지 진입 시 최신 영상 자동 갱신 (분석 중이 아닐 때만 invalidate)
@@ -149,8 +151,10 @@ export default function AnalysisPage() {
   })
 
   useEffect(() => {
-    refreshMutation.mutate()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeTab === "competitor") {
+      refreshMutation.mutate()
+    }
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 경쟁 채널 추가 mutation
   const addMutation = useMutation({
@@ -311,7 +315,7 @@ export default function AnalysisPage() {
           </div>
 
           {/* 탭 */}
-          <Tabs defaultValue="my-channel">
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
             <TabsList className="w-full h-12 bg-muted/50 border border-border/50 rounded-xl p-1">
               <TabsTrigger
                 value="my-channel"

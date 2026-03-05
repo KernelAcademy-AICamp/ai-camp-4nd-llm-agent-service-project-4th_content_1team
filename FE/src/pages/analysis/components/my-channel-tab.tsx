@@ -72,7 +72,7 @@ export function MyChannelTab() {
   }
 
   const mainTopics = persona.main_topics || []
-  const contentStyles = persona.content_style ? persona.content_style.split(",") : []
+  const contentStyles = persona.content_style ? persona.content_style.split(",").map(s => s.trim()).filter(Boolean) : []
   const toneSamples = persona.tone_samples || []
   const hitPatterns = persona.hit_patterns || []
   const videoTypes = persona.video_types || {}

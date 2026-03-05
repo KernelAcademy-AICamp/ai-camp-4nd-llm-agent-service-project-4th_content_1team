@@ -96,21 +96,29 @@ def sample_transcript(transcript: str) -> str:
     긴 자막을 앞+중간+뒤에서 샘플링하여 축약.
 
     5000자 이하: 그대로 반환
-    5000자 초과: 앞 1500자 + 중간 1500자 + 뒤 2000자 = 5000자
+    5000자 초과: 구분자 포함 정확히 MAX_TRANSCRIPT_LENGTH 이내로 샘플링
 
-    - 앞: 인트로/훅/인사말 패턴
-    - 중간: 본론 전개 방식
-    - 뒤: 마무리/CTA 패턴
+    - 앞 (~30%): 인트로/훅/인사말 패턴
+    - 중간 (~30%): 본론 전개 방식
+    - 뒤 (~40%): 마무리/CTA 패턴
     """
     if len(transcript) <= MAX_TRANSCRIPT_LENGTH:
         return transcript
 
-    front = transcript[:1500]
-    mid_start = (len(transcript) - 1500) // 2
-    middle = transcript[mid_start:mid_start + 1500]
-    back = transcript[-2000:]
+    separator = "\n\n[...중간 생략...]\n\n"
+    sep_total = len(separator) * 2
+    budget = MAX_TRANSCRIPT_LENGTH - sep_total
 
-    return f"{front}\n\n[...중간 생략...]\n\n{middle}\n\n[...중간 생략...]\n\n{back}"
+    front_len = int(budget * 0.30)
+    mid_len = int(budget * 0.30)
+    back_len = budget - front_len - mid_len
+
+    front = transcript[:front_len]
+    mid_start = (len(transcript) - mid_len) // 2
+    middle = transcript[mid_start:mid_start + mid_len]
+    back = transcript[-back_len:]
+
+    return f"{front}{separator}{middle}{separator}{back}"
 
 
 # ============================================================================
@@ -929,7 +937,7 @@ async def analyze_hit_vs_low_comparison(
 
     from langchain_openai import ChatOpenAI
 
-    llm = ChatOpenAI(model="gpt-4o", api_key=openai_key, temperature=0.3)
+    llm = ChatOpenAI(model="gpt-4o", api_key=openai_key, temperature=0.3, timeout=60, max_retries=0)
     logger.info("[VideoAnalyzer] 비교 분석: GPT-4o 사용")
 
     for attempt in range(max_retries):
