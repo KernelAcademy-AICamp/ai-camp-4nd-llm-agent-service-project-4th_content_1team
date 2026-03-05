@@ -7,6 +7,8 @@ import { Button } from "../../components/ui/button"
 import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs"
+import { MyChannelTab } from "./components/my-channel-tab"
 import { Users, Search, Loader2, Plus, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
@@ -106,6 +108,7 @@ function VideoAnalysisResults({ video }: { video: CompetitorChannelVideo }) {
 }
 
 export default function AnalysisPage() {
+  const [activeTab, setActiveTab] = useState("my-channel")
   const [searchQuery, setSearchQuery] = useState("")
   const [shouldSearch, setShouldSearch] = useState(false)
   const [analyzingVideoId, setAnalyzingVideoId] = useState<string | null>(null)
@@ -120,7 +123,7 @@ export default function AnalysisPage() {
     staleTime: 1000 * 60 * 5,
   })
 
-  // 등록된 경쟁 채널 목록
+  // 등록된 경쟁 채널 목록 (경쟁 채널 탭일 때만 조회)
   const { data: competitorList, isLoading: isLoadingList, error: listError } = useQuery({
     queryKey: ['competitor-channels'],
     queryFn: async () => {
@@ -130,6 +133,7 @@ export default function AnalysisPage() {
       return result
     },
     staleTime: 1000 * 60 * 5,
+    enabled: activeTab === "competitor",
   })
 
   // 페이지 진입 시 최신 영상 자동 갱신 (분석 중이 아닐 때만 invalidate)
@@ -147,8 +151,10 @@ export default function AnalysisPage() {
   })
 
   useEffect(() => {
-    refreshMutation.mutate()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeTab === "competitor") {
+      refreshMutation.mutate()
+    }
+  }, [activeTab]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // 경쟁 채널 추가 mutation
   const addMutation = useMutation({
@@ -308,6 +314,28 @@ export default function AnalysisPage() {
             </p>
           </div>
 
+          {/* 탭 */}
+          <Tabs value={activeTab} onValueChange={setActiveTab}>
+            <TabsList className="w-full h-12 bg-muted/50 border border-border/50 rounded-xl p-1">
+              <TabsTrigger
+                value="my-channel"
+                className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all"
+              >
+                내 채널 분석
+              </TabsTrigger>
+              <TabsTrigger
+                value="competitor"
+                className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all"
+              >
+                경쟁 채널 분석
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="my-channel">
+              <MyChannelTab />
+            </TabsContent>
+
+            <TabsContent value="competitor">
           {/* 경쟁 유튜버 분석 */}
           <div className="space-y-6">
               <Card className="border-border/50 bg-card/50 backdrop-blur">
@@ -533,6 +561,8 @@ export default function AnalysisPage() {
                 </CardContent>
               </Card>
           </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </main>
     </div>

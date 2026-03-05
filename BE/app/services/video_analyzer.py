@@ -86,6 +86,42 @@ class ChannelVideoSummary:
 
 
 # ============================================================================
+# 자막 샘플링 (긴 자막 → 앞+중간+뒤 추출)
+# ============================================================================
+
+MAX_TRANSCRIPT_LENGTH = 5000  # 이 길이 이하면 그대로 사용
+
+def sample_transcript(transcript: str) -> str:
+    """
+    긴 자막을 앞+중간+뒤에서 샘플링하여 축약.
+
+    5000자 이하: 그대로 반환
+    5000자 초과: 구분자 포함 정확히 MAX_TRANSCRIPT_LENGTH 이내로 샘플링
+
+    - 앞 (~30%): 인트로/훅/인사말 패턴
+    - 중간 (~30%): 본론 전개 방식
+    - 뒤 (~40%): 마무리/CTA 패턴
+    """
+    if len(transcript) <= MAX_TRANSCRIPT_LENGTH:
+        return transcript
+
+    separator = "\n\n[...중간 생략...]\n\n"
+    sep_total = len(separator) * 2
+    budget = MAX_TRANSCRIPT_LENGTH - sep_total
+
+    front_len = int(budget * 0.30)
+    mid_len = int(budget * 0.30)
+    back_len = budget - front_len - mid_len
+
+    front = transcript[:front_len]
+    mid_start = (len(transcript) - mid_len) // 2
+    middle = transcript[mid_start:mid_start + mid_len]
+    back = transcript[-back_len:]
+
+    return f"{front}{separator}{middle}{separator}{back}"
+
+
+# ============================================================================
 # Performance Score 계산
 # ============================================================================
 
@@ -559,7 +595,7 @@ async def analyze_videos_batch(
         except Exception as e:
             logger.error(f"[VideoAnalyzer] hit 배치 실패: {e}")
 
-        await asyncio.sleep(10.0)  # Gemini rate limit 방지
+        await asyncio.sleep(20.0)  # Gemini rate limit 방지 (TPM 고려)
 
     # 2. low 배치 분석 (개별 분석 + 공통 패턴 + 말투 후보)
     if low_videos:
@@ -574,7 +610,7 @@ async def analyze_videos_batch(
         except Exception as e:
             logger.error(f"[VideoAnalyzer] low 배치 실패: {e}")
 
-        await asyncio.sleep(10.0)  # Gemini rate limit 방지
+        await asyncio.sleep(20.0)  # Gemini rate limit 방지 (TPM 고려)
 
     # 3. latest 배치 분석 (개별 분석 + 공통 패턴 + 말투 후보)
     if latest_videos:
@@ -607,6 +643,9 @@ async def _analyze_batch_with_llm(
     # 프롬프트 구성
     videos_text = ""
     for idx, (video, transcript) in enumerate(batch, 1):
+        # 자막 샘플링 (긴 자막 → 앞+중간+뒤 추출)
+        sampled = sample_transcript(transcript)
+
         # 댓글 텍스트 구성
         comments = comments_map.get(video.id, [])
         comments_text = ""
@@ -627,7 +666,7 @@ async def _analyze_batch_with_llm(
 - 길이: {video.duration_seconds // 60}분 {video.duration_seconds % 60}초
 
 자막:
-{transcript}
+{sampled}
 
 시청자 댓글 (좋아요 순 상위):
 {comments_text if comments_text else "(댓글 없음)"}
@@ -811,9 +850,9 @@ async def analyze_hit_vs_low_comparison(
         low_viewer_data = []
     if latest_viewer_data is None:
         latest_viewer_data = []
-    api_key = settings.gemini_api_key
-    if not api_key:
-        logger.error("[VideoAnalyzer] Gemini API 키 없음")
+    openai_key = settings.openai_api_key
+    if not openai_key:
+        logger.error("[VideoAnalyzer] OpenAI API 키 없음 (비교 분석용)")
         return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
 
     if not hit_patterns and not low_patterns and not tone_candidates:
@@ -896,77 +935,56 @@ async def analyze_hit_vs_low_comparison(
 - current_viewer_needs: 최신 영상 댓글을 중심으로 현재 시청자가 원하는 것 3-5개 (가장 중요!)
 """
 
+    from langchain_openai import ChatOpenAI
+
+    llm = ChatOpenAI(model="gpt-4o", api_key=openai_key, temperature=0.3, timeout=60, max_retries=0)
+    logger.info("[VideoAnalyzer] 비교 분석: GPT-4o 사용")
+
     for attempt in range(max_retries):
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                resp = await client.post(
-                    f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={api_key}",
-                    json={
-                        "contents": [{"parts": [{"text": prompt}]}],
-                        "generationConfig": {
-                            "temperature": 0.3,
-                            "maxOutputTokens": 2048,
-                            "responseMimeType": "application/json",
-                        },
-                    },
-                )
+            response = await llm.ainvoke(prompt)
+            raw = response.content
+            if isinstance(raw, list):
+                text = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in raw).strip()
+            else:
+                text = str(raw).strip()
 
-                if resp.status_code == 429:
-                    wait_time = (attempt + 1) * 5  # 5초, 10초, 15초
-                    logger.warning(f"[VideoAnalyzer] 비교 분석 429 에러, {wait_time}초 대기 후 재시도 ({attempt+1}/{max_retries})")
-                    await asyncio.sleep(wait_time)
-                    continue
+            # JSON 파싱
+            text = re.sub(r'^```json\s*', '', text)
+            text = re.sub(r'^```\s*', '', text)
+            text = re.sub(r'\s*```$', '', text)
 
-                if resp.status_code != 200:
-                    logger.error(f"[VideoAnalyzer] 비교 분석 API 에러: {resp.status_code}")
-                    return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
+            response_data = json.loads(text)
 
-                data = resp.json()
-                candidates = data.get("candidates", [])
-                if not candidates:
-                    logger.error("[VideoAnalyzer] 비교 분석 응답에 candidates 없음")
-                    return {"tone_manner": "", "tone_samples": [], "success_formula": "", "viewer_likes": [], "viewer_dislikes": [], "current_viewer_needs": []}
+            success_formula = response_data.get("success_formula", "")
+            tone_manner = response_data.get("tone_manner", "")
+            tone_samples = response_data.get("tone_samples", [])
+            viewer_likes = response_data.get("viewer_likes", [])
+            viewer_dislikes = response_data.get("viewer_dislikes", [])
+            current_viewer_needs = response_data.get("current_viewer_needs", [])
 
-                text = candidates[0]["content"]["parts"][0]["text"]
+            logger.info(
+                f"[VideoAnalyzer] 비교 분석 완료 (GPT-4o): "
+                f"성공공식 있음={bool(success_formula)}, "
+                f"tone_manner 있음={bool(tone_manner)}, "
+                f"tone_samples={len(tone_samples)}개, "
+                f"viewer_likes={len(viewer_likes)}개, "
+                f"viewer_dislikes={len(viewer_dislikes)}개, "
+                f"current_needs={len(current_viewer_needs)}개"
+            )
 
-                # JSON 파싱
-                text = text.strip()
-                text = re.sub(r'^```json\s*', '', text)
-                text = re.sub(r'^```\s*', '', text)
-                text = re.sub(r'\s*```$', '', text)
-
-                response_data = json.loads(text)
-
-                success_formula = response_data.get("success_formula", "")
-                tone_manner = response_data.get("tone_manner", "")
-                tone_samples = response_data.get("tone_samples", [])
-                # 시청자 분석 (NEW)
-                viewer_likes = response_data.get("viewer_likes", [])
-                viewer_dislikes = response_data.get("viewer_dislikes", [])
-                current_viewer_needs = response_data.get("current_viewer_needs", [])
-
-                logger.info(
-                    f"[VideoAnalyzer] 비교 분석 완료: "
-                    f"성공공식 있음={bool(success_formula)}, "
-                    f"tone_manner 있음={bool(tone_manner)}, "
-                    f"tone_samples={len(tone_samples)}개, "
-                    f"viewer_likes={len(viewer_likes)}개, "
-                    f"viewer_dislikes={len(viewer_dislikes)}개, "
-                    f"current_needs={len(current_viewer_needs)}개"
-                )
-
-                return {
-                    "tone_manner": tone_manner,
-                    "tone_samples": tone_samples,
-                    "success_formula": success_formula,
-                    "viewer_likes": viewer_likes,
-                    "viewer_dislikes": viewer_dislikes,
-                    "current_viewer_needs": current_viewer_needs,
-                }
+            return {
+                "tone_manner": tone_manner,
+                "tone_samples": tone_samples,
+                "success_formula": success_formula,
+                "viewer_likes": viewer_likes,
+                "viewer_dislikes": viewer_dislikes,
+                "current_viewer_needs": current_viewer_needs,
+            }
 
         except (json.JSONDecodeError, Exception) as e:
             error_type = "JSON 파싱 실패" if isinstance(e, json.JSONDecodeError) else "분석 실패"
-            logger.error(f"[VideoAnalyzer] 비교 분석 {error_type}: {e}")
+            logger.error(f"[VideoAnalyzer] 비교 분석 {error_type} (GPT-4o): {e}")
             if attempt < max_retries - 1:
                 wait_time = (attempt + 1) * 5
                 logger.warning(f"[VideoAnalyzer] 비교 분석 {wait_time}초 대기 후 재시도")
@@ -1246,8 +1264,7 @@ async def analyze_channel_videos(
         else:  # latest
             latest_viewer_data.append(viewer_item)
 
-    # 4. 비교 분석 (success_formula + tone_manner + tone_samples + 시청자 분석)
-    await asyncio.sleep(10.0)  # Gemini rate limit 방지
+    # 4. 비교 분석 (success_formula + tone_manner + tone_samples + 시청자 분석) - GPT-4o 사용
     comparison_result = await analyze_hit_vs_low_comparison(
         hit_patterns=hit_patterns,
         low_patterns=low_patterns,
