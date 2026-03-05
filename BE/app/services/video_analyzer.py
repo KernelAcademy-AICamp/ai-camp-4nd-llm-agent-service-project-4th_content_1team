@@ -943,7 +943,11 @@ async def analyze_hit_vs_low_comparison(
     for attempt in range(max_retries):
         try:
             response = await llm.ainvoke(prompt)
-            text = response.content.strip()
+            raw = response.content
+            if isinstance(raw, list):
+                text = "".join(block.get("text", "") if isinstance(block, dict) else str(block) for block in raw).strip()
+            else:
+                text = str(raw).strip()
 
             # JSON 파싱
             text = re.sub(r'^```json\s*', '', text)
