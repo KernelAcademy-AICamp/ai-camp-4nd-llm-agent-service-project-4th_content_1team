@@ -34,11 +34,11 @@ export interface AnalysisResultData {
 }
 
 /* Section Card */
-interface SectionCardProps {
+export interface SectionCardProps {
   children: React.ReactNode
 }
 
-function SectionCard({ children }: SectionCardProps) {
+export function SectionCard({ children }: SectionCardProps) {
   return (
     <div className="rounded-xl border border-[rgba(255,255,255,0.06)] bg-[rgba(255,255,255,0.02)] p-5 md:p-6">
       {children}
@@ -47,12 +47,12 @@ function SectionCard({ children }: SectionCardProps) {
 }
 
 /* Section Header */
-interface SectionHeaderProps {
+export interface SectionHeaderProps {
   title: string
   subtitle: string
 }
 
-function SectionHeader({ title, subtitle }: SectionHeaderProps) {
+export function SectionHeader({ title, subtitle }: SectionHeaderProps) {
   return (
     <div className="mb-5">
       <h2 className="text-lg font-bold text-foreground mb-1">{title}</h2>
@@ -62,12 +62,12 @@ function SectionHeader({ title, subtitle }: SectionHeaderProps) {
 }
 
 /* 토글 섹션 */
-interface ToggleSectionProps {
+export interface ToggleSectionProps {
   title: string
   children: React.ReactNode
 }
 
-function ToggleSection({ title, children }: ToggleSectionProps) {
+export function ToggleSection({ title, children }: ToggleSectionProps) {
   const [isOpen, setIsOpen] = useState(false)
 
   const handleToggle = () => {

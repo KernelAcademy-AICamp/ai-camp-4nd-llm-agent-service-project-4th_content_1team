@@ -7,6 +7,8 @@ import { Button } from "../../components/ui/button"
 import { Badge } from "../../components/ui/badge"
 import { Avatar, AvatarFallback, AvatarImage } from "../../components/ui/avatar"
 import { ScrollArea } from "../../components/ui/scroll-area"
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "../../components/ui/tabs"
+import { MyChannelTab } from "./components/my-channel-tab"
 import { Users, Search, Loader2, Plus, Sparkles, CheckCircle2, AlertTriangle, Lightbulb, MessageSquare } from "lucide-react"
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query"
 import {
@@ -308,6 +310,28 @@ export default function AnalysisPage() {
             </p>
           </div>
 
+          {/* 탭 */}
+          <Tabs defaultValue="my-channel">
+            <TabsList className="w-full h-12 bg-muted/50 border border-border/50 rounded-xl p-1">
+              <TabsTrigger
+                value="my-channel"
+                className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all"
+              >
+                내 채널 분석
+              </TabsTrigger>
+              <TabsTrigger
+                value="competitor"
+                className="flex-1 h-full rounded-lg text-sm font-semibold data-[state=active]:bg-primary data-[state=active]:text-primary-foreground data-[state=active]:shadow-md transition-all"
+              >
+                경쟁 채널 분석
+              </TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="my-channel">
+              <MyChannelTab />
+            </TabsContent>
+
+            <TabsContent value="competitor">
           {/* 경쟁 유튜버 분석 */}
           <div className="space-y-6">
               <Card className="border-border/50 bg-card/50 backdrop-blur">
@@ -533,6 +557,8 @@ export default function AnalysisPage() {
                 </CardContent>
               </Card>
           </div>
+            </TabsContent>
+          </Tabs>
         </div>
       </main>
     </div>
